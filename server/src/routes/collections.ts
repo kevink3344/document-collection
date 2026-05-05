@@ -22,7 +22,7 @@ function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string
     const candidate = `${base}-${suffix}`
     const exists = db
       .prepare('SELECT 1 FROM collections WHERE slug = ? LIMIT 1')
-      .get(candidate) as { 1: number } | undefined
+      .get(candidate) as unknown as { 1: number } | undefined
     if (!exists) return candidate
   }
   return `${base}-${crypto.randomUUID()}`
@@ -236,7 +236,7 @@ router.get('/public/:slug', (req: Request, res: Response) => {
   const db = getDb()
   const c = db
     .prepare(`${COL_SELECT} WHERE c.slug = ?`)
-    .get(req.params.slug) as DbCollection | undefined
+    .get(req.params.slug) as unknown as DbCollection | undefined
 
   if (!c) {
     res.status(404).json({ error: 'Collection not found' })
@@ -254,7 +254,7 @@ router.post('/public/:slug/responses', (req: Request, res: Response) => {
   const db = getDb()
   const col = db
     .prepare('SELECT id, anonymous FROM collections WHERE slug = ?')
-    .get(req.params.slug) as { id: number; anonymous: number } | undefined
+    .get(req.params.slug) as unknown as { id: number; anonymous: number } | undefined
 
   if (!col) {
     res.status(404).json({ error: 'Collection not found' })
@@ -379,7 +379,12 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
 
     const c = db
       .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as DbCollection
+      .get(id) as unknown as DbCollection | undefined
+    if (!c) {
+      db.exec('ROLLBACK')
+      res.status(500).json({ error: 'Failed to load created collection' })
+      return
+    }
     const [fields, colsByField] = fetchFields(id)
     res.status(201).json(toApiCollection(c, fields, colsByField))
   } catch (err) {
@@ -403,7 +408,7 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
   const db = getDb()
   const c = db
     .prepare(`${COL_SELECT} WHERE c.id = ?`)
-    .get(id) as DbCollection | undefined
+    .get(id) as unknown as DbCollection | undefined
 
   if (!c) {
     res.status(404).json({ error: 'Collection not found' })
@@ -467,7 +472,12 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 
     const c = db
       .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as DbCollection
+      .get(id) as unknown as DbCollection | undefined
+    if (!c) {
+      db.exec('ROLLBACK')
+      res.status(500).json({ error: 'Failed to load updated collection' })
+      return
+    }
     const [fields, colsByField] = fetchFields(id)
     res.json(toApiCollection(c, fields, colsByField))
   } catch (err) {
