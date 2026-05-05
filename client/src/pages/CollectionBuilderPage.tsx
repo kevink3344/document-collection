@@ -17,7 +17,7 @@ import {
   getCollection,
   updateCollection,
 } from '../api/collections'
-import type { FieldType, TableColumn } from '../types'
+import type { ColType, FieldType, TableColumn } from '../types'
 import TableWizardModal from '../components/collections/TableWizardModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
@@ -60,6 +60,25 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   signature: 'Signature',
   confirmation: 'Confirmation (Checkbox)',
   custom_table: 'Custom Table',
+}
+
+function normalizeFieldType(type: string): FieldType {
+  const valid = new Set<FieldType>([
+    'short_text',
+    'long_text',
+    'single_choice',
+    'multiple_choice',
+    'attachment',
+    'signature',
+    'confirmation',
+    'custom_table',
+  ])
+  return valid.has(type as FieldType) ? (type as FieldType) : 'short_text'
+}
+
+function normalizeColType(colType: string): ColType {
+  const valid = new Set<ColType>(['text', 'number', 'date', 'checkbox'])
+  return valid.has(colType as ColType) ? (colType as ColType) : 'text'
 }
 
 const CATEGORIES = ['General', 'Security', 'Safety', 'Budget', 'Health', 'HR', 'Operations']
@@ -128,12 +147,15 @@ export default function CollectionBuilderPage() {
           col.fields.length > 0
             ? col.fields.map(f => ({
                 _key: uid(),
-                type: f.type,
+                type: normalizeFieldType(f.type),
                 label: f.label,
                 page: f.page ?? 1,
                 required: f.required,
                 options: f.options ?? [],
-                tableColumns: f.tableColumns ?? [],
+                tableColumns: (f.tableColumns ?? []).map(tc => ({
+                  ...tc,
+                  colType: normalizeColType(tc.colType),
+                })),
               }))
             : [blankField()]
         )
@@ -254,12 +276,16 @@ export default function CollectionBuilderPage() {
       fields: fields
         .filter(f => f.label.trim() !== '')
         .map((f, i) => ({
-          type: f.type,
+          type: normalizeFieldType(f.type),
           label: f.label.trim(),
           page: Math.max(1, Math.floor(f.page || 1)),
           required: f.required,
           options: f.options.filter(o => o.trim() !== ''),
-          tableColumns: f.tableColumns.map((c, ci) => ({ ...c, sortOrder: ci })),
+          tableColumns: f.tableColumns.map((c, ci) => ({
+            ...c,
+            colType: normalizeColType(c.colType),
+            sortOrder: ci,
+          })),
           sortOrder: i,
         })),
     }
