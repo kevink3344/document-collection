@@ -6,6 +6,7 @@ import CollectionsPage from './pages/CollectionsPage'
 import CollectionBuilderPage from './pages/CollectionBuilderPage'
 import CollectionFillPage from './pages/CollectionFillPage'
 import RecordsPage from './pages/RecordsPage'
+import DashboardPage from './pages/DashboardPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -33,14 +34,7 @@ export default function App() {
           <Route path="/collections/new" element={<CollectionBuilderPage />} />
           <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
           <Route path="/records" element={<RecordsPage />} />
-          <Route
-            path="/dashboard"
-            element={
-              <div className="text-[#64748B] dark:text-[#94A3B8] text-sm">
-                Dashboard coming soon.
-              </div>
-            }
-          />
+          <Route path="/dashboard" element={<DashboardPage />} />
         </Route>
       </Route>
 

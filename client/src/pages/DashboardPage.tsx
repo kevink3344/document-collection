@@ -1,0 +1,161 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ClipboardList, Layers } from 'lucide-react'
+import { listCollections } from '../api/collections'
+import type { Collection } from '../types'
+
+const CATEGORY_COLORS: Record<string, { card: string; badge: string }> = {
+  Security: {
+    card: 'border-red-200 dark:border-red-800',
+    badge: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  },
+  Safety: {
+    card: 'border-orange-200 dark:border-orange-800',
+    badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  },
+  General: {
+    card: 'border-slate-200 dark:border-slate-700',
+    badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+  },
+  Budget: {
+    card: 'border-green-200 dark:border-green-800',
+    badge: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  },
+  Health: {
+    card: 'border-blue-200 dark:border-blue-800',
+    badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  },
+}
+
+const FALLBACK = {
+  card: 'border-indigo-200 dark:border-indigo-800',
+  badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+}
+
+interface CategoryStat {
+  category: string
+  collections: Collection[]
+  totalResponses: number
+}
+
+export default function DashboardPage() {
+  const navigate = useNavigate()
+  const [collections, setCollections] = useState<Collection[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listCollections()
+      .then(setCollections)
+      .catch(err => setError((err as Error).message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const stats = useMemo((): CategoryStat[] => {
+    const map = new Map<string, Collection[]>()
+    collections.forEach(col => {
+      const key = col.category ?? 'Uncategorised'
+      const arr = map.get(key) ?? []
+      arr.push(col)
+      map.set(key, arr)
+    })
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([category, cols]) => ({
+        category,
+        collections: cols,
+        totalResponses: cols.reduce((sum, c) => sum + (c.responseCount ?? 0), 0),
+      }))
+  }, [collections])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-40 text-[#64748B]">
+        Loading…
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-4 text-red-700 dark:text-red-400 text-sm">
+        {error}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Dashboard</h1>
+        <p className="text-sm text-[#64748B] mt-0.5">Collections grouped by category.</p>
+      </div>
+
+      {stats.length === 0 ? (
+        <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-10 text-center">
+          <Layers size={40} className="mx-auto mb-3 text-[#CBD5E1]" />
+          <p className="text-sm text-[#64748B]">No collections yet. Create one to get started.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+          {stats.map(({ category, collections: cols, totalResponses }) => {
+            const colors = CATEGORY_COLORS[category] ?? FALLBACK
+            return (
+              <div
+                key={category}
+                className={`bg-white dark:bg-[#1E293B] border-2 ${colors.card} rounded-lg p-5 flex flex-col gap-4`}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${colors.badge}`}
+                  >
+                    {category}
+                  </span>
+                  <span className="text-xs text-[#64748B]">
+                    {cols.length} collection{cols.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {/* Totals */}
+                <div className="flex gap-4">
+                  <div className="flex-1 bg-[#F8FAFC] dark:bg-[#0F172A] rounded p-3 text-center">
+                    <p className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">{cols.length}</p>
+                    <p className="text-xs text-[#64748B] mt-0.5">Collections</p>
+                  </div>
+                  <div className="flex-1 bg-[#F8FAFC] dark:bg-[#0F172A] rounded p-3 text-center">
+                    <p className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">{totalResponses}</p>
+                    <p className="text-xs text-[#64748B] mt-0.5">Submissions</p>
+                  </div>
+                </div>
+
+                {/* Collection list */}
+                <ul className="space-y-1.5">
+                  {cols.map(col => (
+                    <li key={col.id}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/collections/${col.id}/edit`)}
+                        className="w-full flex items-center justify-between gap-2 text-left px-2.5 py-2 rounded hover:bg-[#F1F5F9] dark:hover:bg-[#0F172A] transition-colors group"
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <ClipboardList size={14} className="shrink-0 text-[#94A3B8]" />
+                          <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] truncate group-hover:text-[#2563EB]">
+                            {col.title}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs text-[#64748B]">
+                          {col.responseCount ?? 0} submitted
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
