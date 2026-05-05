@@ -37,9 +37,9 @@ const healthHandler = (_req: express.Request, res: express.Response) => {
 app.get('/api/health', healthHandler)
 app.get('/health', healthHandler)
 
-// ── Static client (production) ────────────────────────────
+// ── Static client (when available) ─────────────────────────
 const clientDist = path.join(__dirname, '../public')
-if (IS_PROD && fs.existsSync(clientDist)) {
+if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist))
   // SPA fallback — all non-API routes serve index.html
   app.get('*', (_req, res) => {
