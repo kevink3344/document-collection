@@ -138,7 +138,7 @@ export default function CollectionBuilderPage() {
         )
       })
       .catch(err => setLoadError((err as Error).message))
-      .then(() => { loadedRef.current = true })
+      .then(() => { setTimeout(() => { loadedRef.current = true }, 0) })
   }, [id, isEdit])
 
   // ── Field helpers ─────────────────────────────────────────
