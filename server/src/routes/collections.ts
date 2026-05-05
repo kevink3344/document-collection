@@ -220,6 +220,51 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
   })
 }
 
+function normaliseIncomingFields(fields: FieldInput[]): string {
+  return JSON.stringify(
+    fields.map((f, i) => ({
+      type: f.type,
+      label: (f.label ?? '').trim(),
+      page: Math.max(1, Math.floor(f.page ?? 1)),
+      required: !!f.required,
+      options: (f.options ?? []).map(o => o.trim()).filter(Boolean),
+      tableColumns: (f.tableColumns ?? []).map((c, ci) => ({
+        name: (c.name ?? '').trim(),
+        colType: c.colType,
+        sortOrder: c.sortOrder ?? ci,
+      })),
+      sortOrder: f.sortOrder ?? i,
+    }))
+  )
+}
+
+function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableColumn[]>): string {
+  return JSON.stringify(
+    fields.map((f, i) => ({
+      type: f.type,
+      label: f.label,
+      page: f.page_number,
+      required: f.required === 1,
+      options: (() => {
+        try {
+          const parsed = f.options ? JSON.parse(f.options) as unknown : []
+          return Array.isArray(parsed)
+            ? parsed.map(v => String(v).trim()).filter(Boolean)
+            : []
+        } catch {
+          return []
+        }
+      })(),
+      tableColumns: (colsByField.get(f.id) ?? []).map(col => ({
+        name: col.name,
+        colType: col.col_type,
+        sortOrder: col.sort_order,
+      })),
+      sortOrder: f.sort_order ?? i,
+    }))
+  )
+}
+
 const COL_SELECT = `
   SELECT c.*, u.name AS creator_name
   FROM collections c
@@ -446,6 +491,25 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 
   db.exec('BEGIN')
   try {
+    const { n: responseCount } = db
+      .prepare('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ?')
+      .get(id) as unknown as { n: number }
+
+    if (responseCount > 0) {
+      const [existingFields, existingColsByField] = fetchFields(id)
+      const incomingFields = body.fields ?? []
+      const sameStructure =
+        normaliseDbFields(existingFields, existingColsByField)
+        === normaliseIncomingFields(incomingFields)
+      if (!sameStructure) {
+        db.exec('ROLLBACK')
+        res.status(409).json({
+          error: 'Cannot modify form fields after responses have been submitted. You can still update title, description, and settings.',
+        })
+        return
+      }
+    }
+
     db.prepare(
       `UPDATE collections
        SET title = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
@@ -464,9 +528,11 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       id
     )
 
-    // Replace fields (CASCADE deletes columns too)
-    db.prepare('DELETE FROM collection_fields WHERE collection_id = ?').run(id)
-    if (body.fields?.length) insertFields(id, body.fields)
+    // For collections with existing responses, keep existing fields to preserve FK integrity.
+    if (responseCount === 0) {
+      db.prepare('DELETE FROM collection_fields WHERE collection_id = ?').run(id)
+      if (body.fields?.length) insertFields(id, body.fields)
+    }
 
     db.exec('COMMIT')
 
