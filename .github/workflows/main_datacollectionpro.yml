@@ -22,18 +22,45 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            server/package-lock.json
 
-      - name: npm install, build, and test
+      - name: Install root dependencies
         run: |
-          npm install
-          npm run build --if-present
-          npm run test --if-present
+          npm ci --include=dev
+
+      - name: Install client dependencies
+        run: npm ci --prefix client --include=dev
+
+      - name: Install server dependencies
+        run: npm ci --prefix server --include=dev
+
+      - name: Build client
+        run: npm run build --prefix client
+
+      - name: Build server
+        run: npm run build --prefix server
+
+      - name: Copy client dist into server/public
+        run: |
+          mkdir -p server/public
+          cp -r client/dist/. server/public/
+
+      - name: Prune server to production dependencies
+        run: npm ci --prefix server --omit=dev
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          path: |
+            server/dist/
+            server/public/
+            server/package.json
+            server/node_modules/
 
   deploy:
     runs-on: ubuntu-latest
@@ -44,6 +71,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
+          path: deploy
       
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
@@ -51,5 +79,5 @@ jobs:
         with:
           app-name: 'datacollectionpro'
           slot-name: 'Production'
-          package: .
+          package: deploy
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_CB79E97B0E854D60B07A3DF4739EC53D }}
