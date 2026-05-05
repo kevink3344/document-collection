@@ -158,7 +158,7 @@ function buildSubmissionTrendline(responses: CollectionResponse[]): TrendlineDat
 
   responses.forEach(response => {
     const normalized = response.submittedAt.includes('T')
-      ? response.submittedAt
+              const summaryCards = useMemo((): SummaryCard[] => {
       : response.submittedAt.replace(' ', 'T') + 'Z'
     const date = new Date(normalized)
 
@@ -460,7 +460,7 @@ export default function RecordsPage() {
     return map
   }, [selectedCollection])
 
-  const summaryCards = useMemo(() => {
+  const summaryCards = useMemo((): SummaryCard[] => {
     if (!selectedCollection || responses.length === 0) return [] as SummaryCard[]
 
     const valuesByField = new Map<number, Map<number, string | null>>()
