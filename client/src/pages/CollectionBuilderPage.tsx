@@ -108,6 +108,7 @@ export default function CollectionBuilderPage() {
   // Used to skip autosave on initial load
   const loadedRef = useRef(false)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [loadTick, setLoadTick] = useState(0)
 
   // Load existing collection when editing
   useEffect(() => {
@@ -136,9 +137,9 @@ export default function CollectionBuilderPage() {
               }))
             : [blankField()]
         )
+        setLoadTick(t => t + 1)
       })
       .catch(err => setLoadError((err as Error).message))
-      .then(() => { setTimeout(() => { loadedRef.current = true }, 0) })
   }, [id, isEdit])
 
   // ── Field helpers ─────────────────────────────────────────
@@ -232,6 +233,11 @@ export default function CollectionBuilderPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, description, category, dateDue, coverPhotoUrl, anonymous, instructions, instructionsDocUrl, fields])
+
+  // Mark as loaded AFTER the autosave effect has already run (effects run in definition order)
+  useEffect(() => {
+    if (loadTick > 0) loadedRef.current = true
+  }, [loadTick])
 
   // ── Save ──────────────────────────────────────────────────
 
