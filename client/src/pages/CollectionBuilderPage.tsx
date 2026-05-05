@@ -855,12 +855,12 @@ function FieldCard({
         <div className="pl-7">
           <button
             onClick={onConfigureTable}
-            className="flex items-center gap-1.5 text-xs bg-[#F1F5F9] dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] text-[#64748B] hover:text-[#2563EB] px-3 py-1.5 rounded transition-colors"
+            className="flex items-center gap-1.5 text-xs bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-3 py-1.5 rounded transition-colors"
           >
             <Settings2 size={13} />
             Configure Columns
             {field.tableColumns.length > 0 && (
-              <span className="ml-1 text-[#2563EB] font-medium">
+              <span className="ml-1 text-white font-medium">
                 ({field.tableColumns.length})
               </span>
             )}
