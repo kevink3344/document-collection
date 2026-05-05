@@ -5,6 +5,10 @@ import { useTheme } from '../../contexts/ThemeContext'
 import { useAuth } from '../../contexts/AuthContext'
 import type { UserRole } from '../../types'
 
+interface TopNavBarProps {
+  onAppIconClick?: () => void
+}
+
 const ROLE_LABELS: Record<UserRole, string> = {
   administrator: 'Administrator',
   team_manager: 'Team Manager',
@@ -16,7 +20,7 @@ const NAV_BTN =
   'hover:text-[#1E293B] dark:hover:text-[#F1F5F9] ' +
   'hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors'
 
-export default function TopNavBar() {
+export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
   const { theme, toggle } = useTheme()
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
@@ -42,7 +46,12 @@ export default function TopNavBar() {
     <header className="h-12 shrink-0 flex items-center justify-between px-4 md:px-6 border-b border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A]">
 
       {/* Left: Logo + Title */}
-      <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={onAppIconClick}
+        className="flex items-center gap-3"
+        aria-label="Toggle navigation menu"
+      >
         <div className="w-7 h-7 bg-[#2563EB] flex items-center justify-center text-white font-bold font-mono text-[10px] tracking-wider shrink-0">
           DC
         </div>
@@ -52,7 +61,7 @@ export default function TopNavBar() {
         <span className="font-semibold text-sm text-[#1E293B] dark:text-[#F1F5F9] sm:hidden font-mono">
           DCP
         </span>
-      </div>
+      </button>
 
       {/* Right: Icon actions */}
       <div className="flex items-center gap-0.5">

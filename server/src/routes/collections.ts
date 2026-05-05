@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
+import jwt from 'jsonwebtoken'
 import { getDb } from '../database/db'
-import { authenticateToken } from '../middleware/auth'
+import { authenticateToken, JWT_SECRET } from '../middleware/auth'
 
 const router = Router()
 
@@ -40,6 +41,7 @@ interface DbCollection {
   id: number
   slug: string
   title: string
+  status: 'draft' | 'published'
   description: string | null
   category: string | null
   created_by: number
@@ -107,6 +109,7 @@ interface FieldInput {
 
 interface CollectionBody {
   title: string
+  status?: 'draft' | 'published'
   description?: string
   category?: string
   dateDue?: string
@@ -128,6 +131,7 @@ function toApiCollection(
     id: c.id,
     slug: c.slug,
     title: c.title,
+    status: c.status,
     description: c.description,
     category: c.category,
     createdBy: c.created_by,
@@ -157,6 +161,22 @@ function toApiCollection(
             }))
           : null,
     })),
+  }
+}
+
+function resolveRequestedStatus(body: CollectionBody): 'draft' | 'published' {
+  return body.status === 'published' ? 'published' : 'draft'
+}
+
+function hasValidAuthToken(req: Request): boolean {
+  const authHeader = req.headers.authorization
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!token) return false
+  try {
+    jwt.verify(token, JWT_SECRET)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -279,11 +299,13 @@ const COL_SELECT = `
  */
 router.get('/public/:slug', (req: Request, res: Response) => {
   const db = getDb()
+  const previewRequested = req.query.preview === 'true'
+  const isAuthedPreview = previewRequested && hasValidAuthToken(req)
   const c = db
     .prepare(`${COL_SELECT} WHERE c.slug = ?`)
     .get(req.params.slug) as unknown as DbCollection | undefined
 
-  if (!c) {
+  if (!c || (c.status !== 'published' && !isAuthedPreview)) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
@@ -298,11 +320,16 @@ router.get('/public/:slug', (req: Request, res: Response) => {
 router.post('/public/:slug/responses', (req: Request, res: Response) => {
   const db = getDb()
   const col = db
-    .prepare('SELECT id, anonymous FROM collections WHERE slug = ?')
-    .get(req.params.slug) as unknown as { id: number; anonymous: number } | undefined
+    .prepare('SELECT id, anonymous, status FROM collections WHERE slug = ?')
+    .get(req.params.slug) as unknown as { id: number; anonymous: number; status: 'draft' | 'published' } | undefined
 
   if (!col) {
     res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  if (col.status !== 'published') {
+    res.status(409).json({ error: 'This collection is still a draft and cannot accept responses.' })
     return
   }
 
@@ -400,13 +427,14 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
     const r = db
       .prepare(
         `INSERT INTO collections
-           (slug, title, description, category, created_by, date_due, cover_photo_url,
+           (slug, title, status, description, category, created_by, date_due, cover_photo_url,
             instructions, instructions_doc_url, anonymous)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         slug,
         body.title.trim(),
+        resolveRequestedStatus(body),
         body.description?.trim() ?? null,
         body.category ?? null,
         req.user!.sub,
@@ -512,12 +540,13 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 
     db.prepare(
       `UPDATE collections
-       SET title = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
+       SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
            instructions = ?, instructions_doc_url = ?, anonymous = ?,
            updated_at = datetime('now')
        WHERE id = ?`
     ).run(
       body.title.trim(),
+      resolveRequestedStatus(body),
       body.description?.trim() ?? null,
       body.category ?? null,
       body.dateDue ?? null,

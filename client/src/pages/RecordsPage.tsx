@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Calendar, ClipboardList, Mail, User } from 'lucide-react'
+import { Calendar, ClipboardList, Mail, User, Download } from 'lucide-react'
 import { getCollection, getResponses, listCollections } from '../api/collections'
 import type { Collection, CollectionField, CollectionResponse } from '../types'
 
@@ -24,6 +24,15 @@ interface SummaryCard {
   totalLabel: string
   data: SummaryDatum[]
 }
+
+interface TableSummaryCard {
+  fieldId: number
+  label: string
+  columns: string[]
+  rows: Array<Record<string, string>>
+}
+
+const SURVEY_ID_COLUMN = 'Survey Id'
 
 const CHART_COLORS = ['#2563EB', '#0F766E', '#D97706', '#DC2626', '#7C3AED', '#0891B2']
 
@@ -432,6 +441,38 @@ function renderResponseValue(field: CollectionField | undefined, value: string |
   return <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9] whitespace-pre-wrap">{raw}</p>
 }
 
+function toCsvCell(value: string): string {
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+function toCsv(table: TableSummaryCard): string {
+  const header = table.columns.map(toCsvCell).join(',')
+  const lines = table.rows.map(row =>
+    table.columns.map(col => toCsvCell(row[col] ?? '')).join(',')
+  )
+  return [header, ...lines].join('\n')
+}
+
+function downloadCsv(table: TableSummaryCard): void {
+  const filenameBase = table.label.trim() || `table-${table.fieldId}`
+  const safeFilename = filenameBase
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || `table-${table.fieldId}`
+  const blob = new Blob([toCsv(table)], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${safeFilename}-entries.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export default function RecordsPage() {
   const [collections, setCollections] = useState<Collection[]>([])
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null)
@@ -658,6 +699,47 @@ export default function RecordsPage() {
       .filter((card): card is SummaryCard => card !== null)
   }, [responses, selectedCollection])
 
+  const tableSummaryCards = useMemo((): TableSummaryCard[] => {
+    if (!selectedCollection || responses.length === 0) return []
+
+    return selectedCollection.fields
+      .filter(field => field.type === 'custom_table' && field.id !== undefined)
+      .map(field => {
+        const fieldId = field.id as number
+        const tableColumns = (field.tableColumns ?? []).map(col => col.name)
+        const columns = [SURVEY_ID_COLUMN, ...tableColumns]
+        const rows: Array<Record<string, string>> = []
+
+        responses.forEach(response => {
+          const answer = response.values.find(v => v.fieldId === fieldId)
+          if (!answer?.value) return
+          try {
+            const parsed = JSON.parse(answer.value) as Array<Record<string, unknown>>
+            if (!Array.isArray(parsed)) return
+            parsed.forEach(rawRow => {
+              if (!rawRow || typeof rawRow !== 'object') return
+              const normalized: Record<string, string> = {}
+              normalized[SURVEY_ID_COLUMN] = String(response.id)
+              tableColumns.forEach(column => {
+                const value = rawRow[column]
+                normalized[column] = value == null ? '' : String(value)
+              })
+              rows.push(normalized)
+            })
+          } catch {
+            // Ignore malformed custom table payloads.
+          }
+        })
+
+        return {
+          fieldId,
+          label: field.label,
+          columns,
+          rows,
+        }
+      })
+  }, [responses, selectedCollection])
+
   if (loadingCollections) {
     return (
       <div className="flex items-center justify-center h-40 text-[#64748B]">
@@ -776,6 +858,73 @@ export default function RecordsPage() {
           <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5">
             <TrendlineChart responses={responses} />
           </section>
+
+          {tableSummaryCards.map(table => (
+            <section
+              key={`table-summary-${table.fieldId}`}
+              className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-4"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-xl text-[#1E293B] dark:text-[#F1F5F9]">{table.label}</h3>
+                  <p className="text-sm uppercase tracking-wide text-[#64748B]">
+                    Custom table
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="px-3 py-2 rounded bg-[#F8FAFC] dark:bg-[#0F172A] border border-[#E2E8F0] dark:border-[#334155] text-sm text-[#1E293B] dark:text-[#F1F5F9]">
+                    Total Count: <span className="font-semibold">{table.rows.length}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadCsv(table)}
+                    disabled={table.rows.length === 0}
+                    className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-3 py-2 rounded transition-colors"
+                  >
+                    <Download size={14} />
+                    Export CSV
+                  </button>
+                </div>
+              </div>
+
+              {table.columns.length <= 1 ? (
+                <p className="text-sm text-[#64748B]">This table has no configured columns.</p>
+              ) : table.rows.length === 0 ? (
+                <p className="text-sm text-[#64748B]">No table rows submitted yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        {table.columns.map(column => (
+                          <th
+                            key={column}
+                            className="text-left text-xs font-medium text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-2 py-1.5 bg-[#F8FAFC] dark:bg-[#0F172A]"
+                          >
+                            {column}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {table.rows.map((row, rowIndex) => (
+                        <tr key={`${table.fieldId}-${rowIndex}`}>
+                          {table.columns.map(column => (
+                            <td
+                              key={column}
+                              className="border border-[#E2E8F0] dark:border-[#334155] px-2 py-1.5 text-[#1E293B] dark:text-[#F1F5F9]"
+                            >
+                              {row[column] || '—'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          ))}
 
           {summaryCards.length === 0 ? (
             <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-8 text-center">

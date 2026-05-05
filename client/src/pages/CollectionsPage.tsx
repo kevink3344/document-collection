@@ -15,6 +15,12 @@ import { listCollections, deleteCollection } from '../api/collections'
 import { htmlToPlainText } from '../utils/richText'
 import type { Collection } from '../types'
 
+function statusBadgeClass(status: Collection['status']) {
+  return status === 'published'
+    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   Security: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   Safety: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
@@ -148,14 +154,21 @@ export default function CollectionsPage() {
             <div className="p-4 flex flex-col flex-1 gap-3">
               {/* Category + title */}
               <div className="space-y-1">
-                {col.category && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {col.category && (
+                    <span
+                      className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${categoryBadge(col.category)}`}
+                    >
+                      <Tag size={9} />
+                      {col.category}
+                    </span>
+                  )}
                   <span
-                    className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${categoryBadge(col.category)}`}
+                    className={`inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${statusBadgeClass(col.status)}`}
                   >
-                    <Tag size={9} />
-                    {col.category}
+                    {col.status}
                   </span>
-                )}
+                </div>
                 <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight">
                   {col.title}
                 </h2>
@@ -191,8 +204,9 @@ export default function CollectionsPage() {
               <div className="mt-auto pt-2 border-t border-[#F1F5F9] dark:border-[#334155] flex items-center gap-2">
                 <button
                   onClick={() => copyShareLink(col.slug)}
-                  title="Copy share link"
-                  className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors"
+                  title={col.status === 'published' ? 'Copy share link' : 'Publish to enable share link'}
+                  disabled={col.status !== 'published'}
+                  className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors disabled:opacity-40"
                 >
                   <Copy size={13} />
                   Copy Link

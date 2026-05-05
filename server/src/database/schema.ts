@@ -18,6 +18,8 @@ export function createSchema(db: DatabaseSync): void {
       id                   INTEGER PRIMARY KEY AUTOINCREMENT,
       slug                 TEXT    UNIQUE NOT NULL,
       title                TEXT    NOT NULL,
+      status               TEXT    NOT NULL DEFAULT 'draft'
+                           CHECK(status IN ('draft', 'published')),
       description          TEXT,
       category             TEXT,
       created_by           INTEGER NOT NULL REFERENCES users(id),

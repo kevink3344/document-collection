@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle } from 'lucide-react'
+import { Calendar, Tag, User, CheckCircle, AlertCircle } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { sanitizeRichText } from '../utils/richText'
@@ -257,7 +257,7 @@ export default function CollectionFillPage() {
 
   useEffect(() => {
     if (!slug) return
-    getPublicCollection(slug)
+    getPublicCollection(slug, { preview: isPreview })
       .then(col => {
         setCollection(col)
         setCurrentPageIdx(0)
@@ -271,7 +271,7 @@ export default function CollectionFillPage() {
       })
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
-  }, [slug])
+  }, [slug, isPreview])
 
   function setValue(fieldId: number, val: string) {
     setValues(prev => ({ ...prev, [fieldId]: val }))
@@ -386,7 +386,10 @@ export default function CollectionFillPage() {
     return (
       <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A] flex items-center justify-center">
         <div className="text-center space-y-2">
-          <p className="text-red-500 text-sm">{error ?? 'Collection not found.'}</p>
+          <AlertCircle size={34} className="text-amber-500 mx-auto" />
+          <p className="text-red-500 text-sm">
+            Collection not found or in Draft status. Publish your collection to accept responses.
+          </p>
         </div>
       </div>
     )

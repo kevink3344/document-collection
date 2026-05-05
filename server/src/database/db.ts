@@ -35,6 +35,12 @@ function runMigrations(db: DatabaseSync): void {
     console.log('[db] Migration: added collections.description')
   }
 
+  if (!collectionColNames.has('status')) {
+    db.exec(`ALTER TABLE collections ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'`)
+    db.exec(`UPDATE collections SET status = 'published'`)
+    console.log('[db] Migration: added collections.status and backfilled existing rows')
+  }
+
   const existingFieldCols = db
     .prepare(`PRAGMA table_info(collection_fields)`)
     .all() as unknown as { name: string }[]

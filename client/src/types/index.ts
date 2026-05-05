@@ -27,6 +27,7 @@ export type FieldType =
   | 'custom_table'
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox'
+export type CollectionStatus = 'draft' | 'published'
 
 export interface TableColumn {
   id?: number
@@ -50,6 +51,7 @@ export interface Collection {
   id: number
   slug: string
   title: string
+  status: CollectionStatus
   description: string | null
   category: string | null
   createdBy: number

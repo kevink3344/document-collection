@@ -17,7 +17,7 @@ import {
   getCollection,
   updateCollection,
 } from '../api/collections'
-import type { ColType, FieldType, TableColumn } from '../types'
+import type { ColType, CollectionStatus, FieldType, TableColumn } from '../types'
 import TableWizardModal from '../components/collections/TableWizardModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
@@ -107,6 +107,7 @@ export default function CollectionBuilderPage() {
   const [dateDue, setDateDue] = useState('')
   const [coverPhotoUrl, setCoverPhotoUrl] = useState('')
   const [anonymous, setAnonymous] = useState(false)
+  const [status, setStatus] = useState<CollectionStatus>('draft')
 
   // Instructions section
   const [instructions, setInstructions] = useState('')
@@ -141,6 +142,7 @@ export default function CollectionBuilderPage() {
         setDateDue(col.dateDue ?? '')
         setCoverPhotoUrl(col.coverPhotoUrl ?? '')
         setAnonymous(col.anonymous)
+        setStatus(col.status ?? 'draft')
         setInstructions(col.instructions ?? '')
         setInstructionsDocUrl(col.instructionsDocUrl ?? '')
         setFields(
@@ -254,7 +256,7 @@ export default function CollectionBuilderPage() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, description, category, dateDue, coverPhotoUrl, anonymous, instructions, instructionsDocUrl, fields])
+  }, [title, description, category, dateDue, coverPhotoUrl, anonymous, status, instructions, instructionsDocUrl, fields])
 
   // Mark as loaded AFTER the autosave effect has already run (effects run in definition order)
   useEffect(() => {
@@ -263,9 +265,10 @@ export default function CollectionBuilderPage() {
 
   // ── Save ──────────────────────────────────────────────────
 
-  function buildPayload() {
+  function buildPayload(statusOverride: CollectionStatus = status) {
     return {
       title: title.trim(),
+      status: statusOverride,
       description: description.trim() || undefined,
       category: category.trim() || undefined,
       dateDue: dateDue || undefined,
@@ -291,7 +294,13 @@ export default function CollectionBuilderPage() {
     }
   }
 
-  async function doSave({ silent = false } = {}) {
+  async function doSave({
+    silent = false,
+    statusOverride,
+  }: {
+    silent?: boolean
+    statusOverride?: CollectionStatus
+  } = {}) {
     if (!title.trim()) {
       if (!silent) setSaveError('Title is required.')
       return
@@ -300,9 +309,10 @@ export default function CollectionBuilderPage() {
     else setAutoSaveStatus('saving')
     try {
       const saved = isEdit
-        ? await updateCollection(parseInt(id!, 10), buildPayload())
-        : await createCollection(buildPayload())
+        ? await updateCollection(parseInt(id!, 10), buildPayload(statusOverride))
+        : await createCollection(buildPayload(statusOverride))
       setCollectionSlug(saved.slug)
+      setStatus(saved.status)
       if (!isEdit) {
         navigate(`/collections/${saved.id}/edit`, { replace: true })
       }
@@ -324,6 +334,12 @@ export default function CollectionBuilderPage() {
       return
     }
     await doSave({ silent: false })
+  }
+
+  async function handlePublishToggle() {
+    const nextStatus: CollectionStatus = status === 'published' ? 'draft' : 'published'
+    setStatus(nextStatus)
+    await doSave({ silent: false, statusOverride: nextStatus })
   }
 
   // ── Wizard field ──────────────────────────────────────────
@@ -367,6 +383,16 @@ export default function CollectionBuilderPage() {
             <h1 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
               {isEdit ? 'Edit Collection' : 'New Collection'}
             </h1>
+            <span
+              className={[
+                'text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded border',
+                status === 'published'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-700'
+                  : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700',
+              ].join(' ')}
+            >
+              {status}
+            </span>
           </div>
           <div className="flex items-center gap-3">
             {isEdit && autoSaveStatus !== 'idle' && (
@@ -393,6 +419,22 @@ export default function CollectionBuilderPage() {
                 Preview
               </button>
             )}
+            <button
+              onClick={handlePublishToggle}
+              disabled={saving}
+              className={[
+                'text-sm font-medium px-3 py-1.5 rounded transition-colors disabled:opacity-60 border',
+                status === 'published'
+                  ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300 dark:bg-amber-900/20 dark:hover:bg-amber-900/30'
+                  : 'border-[#16A34A] text-white bg-[#16A34A] hover:bg-[#15803D]',
+              ].join(' ')}
+            >
+              {saving
+                ? 'Working...'
+                : status === 'published'
+                ? 'Move to Draft'
+                : 'Publish'}
+            </button>
             <button
               onClick={handleSave}
               disabled={saving}
@@ -513,6 +555,20 @@ export default function CollectionBuilderPage() {
                   className={INPUT}
                 />
               </div>
+              <div>
+                <label htmlFor={`${formId}-status`} className={LABEL}>
+                  Status
+                </label>
+                <select
+                  id={`${formId}-status`}
+                  value={status}
+                  onChange={e => setStatus(e.target.value as CollectionStatus)}
+                  className={INPUT}
+                >
+                  <option value="draft">Draft</option>
+                  <option value="published">Published</option>
+                </select>
+              </div>
               <div className="sm:col-span-2 flex items-center gap-3">
                 <input
                   id={`${formId}-anon`}
@@ -592,7 +648,9 @@ export default function CollectionBuilderPage() {
           {detailsTab === 'share' && (
             <div className="space-y-3">
               <p className="text-xs text-[#64748B]">
-                Share this URL with staff or anonymous users to fill out the form.
+                {status === 'published'
+                  ? 'Share this URL with staff or anonymous users to fill out the form.'
+                  : 'This collection is currently a draft. Publish it before sharing the live link.'}
               </p>
               <div className="flex items-center gap-2">
                 <input
@@ -604,7 +662,7 @@ export default function CollectionBuilderPage() {
                 <button
                   type="button"
                   onClick={copyShareLink}
-                  disabled={!collectionSlug}
+                  disabled={!collectionSlug || status !== 'published'}
                   className="inline-flex items-center gap-1 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-50 text-white text-sm px-3 py-2 rounded transition-colors"
                 >
                   <Copy size={14} />
@@ -791,33 +849,35 @@ function FieldCard({
       </div>
 
       {/* Row 2: label + required */}
-      <div className="flex items-center gap-2 pl-7">
+      <div className="pl-7 space-y-2">
         <input
           type="text"
           placeholder="Field label"
           value={field.label}
           onChange={e => onUpdate({ label: e.target.value })}
-          className={`${FIELD_INPUT} flex-1`}
+          className={`${FIELD_INPUT} w-full`}
         />
-        <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer shrink-0">
-          <input
-            type="checkbox"
-            checked={field.required}
-            onChange={e => onUpdate({ required: e.target.checked })}
-            className="accent-[#2563EB] w-3.5 h-3.5"
-          />
-          Required
-        </label>
-        <label className="flex items-center gap-1 text-xs text-[#64748B] shrink-0">
-          Page
-          <input
-            type="number"
-            min={1}
-            value={field.page}
-            onChange={e => onUpdate({ page: Math.max(1, Number(e.target.value) || 1) })}
-            className={`${FIELD_INPUT} w-16`}
-          />
-        </label>
+        <div className="flex items-center gap-4 flex-wrap">
+          <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={field.required}
+              onChange={e => onUpdate({ required: e.target.checked })}
+              className="accent-[#2563EB] w-3.5 h-3.5"
+            />
+            Required
+          </label>
+          <label className="flex items-center gap-1 text-xs text-[#64748B]">
+            Page
+            <input
+              type="number"
+              min={1}
+              value={field.page}
+              onChange={e => onUpdate({ page: Math.max(1, Number(e.target.value) || 1) })}
+              className={`${FIELD_INPUT} w-16`}
+            />
+          </label>
+        </div>
       </div>
 
       {/* Choice options */}

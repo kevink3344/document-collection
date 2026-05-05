@@ -1,4 +1,4 @@
-import type { Collection, CollectionField, CollectionResponse } from '../types'
+import type { Collection, CollectionField, CollectionResponse, CollectionStatus } from '../types'
 
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem('dcp-token')
@@ -10,6 +10,7 @@ function authHeaders(): HeadersInit {
 
 export interface CollectionPayload {
   title: string
+  status: CollectionStatus
   description?: string
   category?: string
   dateDue?: string
@@ -38,8 +39,16 @@ export async function getCollection(id: number): Promise<Collection> {
   return handleResponse<Collection>(res)
 }
 
-export async function getPublicCollection(slug: string): Promise<Collection> {
-  const res = await fetch(`/api/collections/public/${slug}`)
+export async function getPublicCollection(
+  slug: string,
+  options?: { preview?: boolean }
+): Promise<Collection> {
+  const params = new URLSearchParams()
+  if (options?.preview) params.set('preview', 'true')
+  const url = `/api/collections/public/${slug}${params.size > 0 ? `?${params.toString()}` : ''}`
+  const res = await fetch(url, {
+    headers: options?.preview ? authHeaders() : undefined,
+  })
   return handleResponse<Collection>(res)
 }
 

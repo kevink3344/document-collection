@@ -35,7 +35,6 @@ const FALLBACK = {
 interface CategoryStat {
   category: string
   collections: Collection[]
-  totalResponses: number
 }
 
 export default function DashboardPage() {
@@ -64,7 +63,6 @@ export default function DashboardPage() {
       .map(([category, cols]) => ({
         category,
         collections: cols,
-        totalResponses: cols.reduce((sum, c) => sum + (c.responseCount ?? 0), 0),
       }))
   }, [collections])
 
@@ -98,7 +96,7 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-          {stats.map(({ category, collections: cols, totalResponses }) => {
+          {stats.map(({ category, collections: cols }) => {
             const colors = CATEGORY_COLORS[category] ?? FALLBACK
             return (
               <div
@@ -106,27 +104,21 @@ export default function DashboardPage() {
                 className={`bg-white dark:bg-[#1E293B] border-2 ${colors.card} rounded-lg p-5 flex flex-col gap-4`}
               >
                 {/* Header */}
-                <div className="flex items-center justify-between">
+                <div className="space-y-2">
                   <span
-                    className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${colors.badge}`}
+                    className={`inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${colors.badge}`}
                   >
+                    Category
+                  </span>
+                  <h2 className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9] leading-tight">
                     {category}
-                  </span>
-                  <span className="text-xs text-[#64748B]">
-                    {cols.length} collection{cols.length !== 1 ? 's' : ''}
-                  </span>
+                  </h2>
                 </div>
 
-                {/* Totals */}
-                <div className="flex gap-4">
-                  <div className="flex-1 bg-[#F8FAFC] dark:bg-[#0F172A] rounded p-3 text-center">
-                    <p className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">{cols.length}</p>
-                    <p className="text-xs text-[#64748B] mt-0.5">Collections</p>
-                  </div>
-                  <div className="flex-1 bg-[#F8FAFC] dark:bg-[#0F172A] rounded p-3 text-center">
-                    <p className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">{totalResponses}</p>
-                    <p className="text-xs text-[#64748B] mt-0.5">Submissions</p>
-                  </div>
+                {/* Collection count */}
+                <div className="bg-[#F8FAFC] dark:bg-[#0F172A] rounded p-3 text-center">
+                  <p className="text-3xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">{cols.length}</p>
+                  <p className="text-xs text-[#64748B] mt-0.5">Collections</p>
                 </div>
 
                 {/* Collection list */}
@@ -143,9 +135,6 @@ export default function DashboardPage() {
                           <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] truncate group-hover:text-[#2563EB]">
                             {col.title}
                           </span>
-                        </span>
-                        <span className="shrink-0 text-xs text-[#64748B]">
-                          {col.responseCount ?? 0} submitted
                         </span>
                       </button>
                     </li>
