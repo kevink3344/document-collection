@@ -474,14 +474,14 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       .prepare(`${COL_SELECT} WHERE c.id = ?`)
       .get(id) as unknown as DbCollection | undefined
     if (!c) {
-      db.exec('ROLLBACK')
+      // COMMIT already succeeded; just report the unexpected state
       res.status(500).json({ error: 'Failed to load updated collection' })
       return
     }
     const [fields, colsByField] = fetchFields(id)
     res.json(toApiCollection(c, fields, colsByField))
   } catch (err) {
-    db.exec('ROLLBACK')
+    try { db.exec('ROLLBACK') } catch { /* ignore if already committed */ }
     console.error('[collections] update:', err)
     res.status(500).json({ error: 'Failed to update collection' })
   }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ChangeEvent } from 'react'
+import { useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -98,11 +98,16 @@ export default function CollectionBuilderPage() {
 
   // UI state
   const [saving, setSaving] = useState(false)
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [wizardField, setWizardField] = useState<string | null>(null) // _key of field being configured
   const [collectionSlug, setCollectionSlug] = useState<string | null>(null)
   const [detailsTab, setDetailsTab] = useState<'general' | 'photo' | 'share'>('general')
+
+  // Used to skip autosave on initial load
+  const loadedRef = useRef(false)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Load existing collection when editing
   useEffect(() => {
@@ -133,7 +138,8 @@ export default function CollectionBuilderPage() {
         )
       })
       .catch(err => setLoadError((err as Error).message))
-  }, [id])
+      .then(() => { loadedRef.current = true })
+  }, [id, isEdit])
 
   // ── Field helpers ─────────────────────────────────────────
 
@@ -212,50 +218,77 @@ export default function CollectionBuilderPage() {
     reader.readAsDataURL(file)
   }
 
+  // ── Autosave (edit mode only) ────────────────────────────
+
+  useEffect(() => {
+    if (!isEdit || !loadedRef.current) return
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      if (!title.trim()) return
+      void doSave({ silent: true })
+    }, 2000)
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, description, category, dateDue, coverPhotoUrl, anonymous, instructions, instructionsDocUrl, fields])
+
   // ── Save ──────────────────────────────────────────────────
+
+  function buildPayload() {
+    return {
+      title: title.trim(),
+      description: description.trim() || undefined,
+      category: category.trim() || undefined,
+      dateDue: dateDue || undefined,
+      coverPhotoUrl: coverPhotoUrl.trim() || undefined,
+      instructions: instructions || undefined,
+      instructionsDocUrl: instructionsDocUrl.trim() || undefined,
+      anonymous,
+      fields: fields
+        .filter(f => f.label.trim() !== '')
+        .map((f, i) => ({
+          type: f.type,
+          label: f.label.trim(),
+          page: Math.max(1, Math.floor(f.page || 1)),
+          required: f.required,
+          options: f.options.filter(o => o.trim() !== ''),
+          tableColumns: f.tableColumns.map((c, ci) => ({ ...c, sortOrder: ci })),
+          sortOrder: i,
+        })),
+    }
+  }
+
+  async function doSave({ silent = false } = {}) {
+    if (!title.trim()) {
+      if (!silent) setSaveError('Title is required.')
+      return
+    }
+    if (!silent) { setSaving(true); setSaveError(null) }
+    else setAutoSaveStatus('saving')
+    try {
+      const saved = isEdit
+        ? await updateCollection(parseInt(id!, 10), buildPayload())
+        : await createCollection(buildPayload())
+      setCollectionSlug(saved.slug)
+      if (silent) {
+        setAutoSaveStatus('saved')
+        setTimeout(() => setAutoSaveStatus('idle'), 2500)
+      }
+    } catch (err) {
+      if (silent) setAutoSaveStatus('error')
+      else setSaveError((err as Error).message)
+    } finally {
+      if (!silent) setSaving(false)
+    }
+  }
 
   async function handleSave() {
     if (!title.trim()) {
       setSaveError('Title is required.')
       return
     }
-    setSaving(true)
-    setSaveError(null)
-    try {
-      const payload = {
-        title: title.trim(),
-        description: description.trim() || undefined,
-        category: category.trim() || undefined,
-        dateDue: dateDue || undefined,
-        coverPhotoUrl: coverPhotoUrl.trim() || undefined,
-        instructions: instructions || undefined,
-        instructionsDocUrl: instructionsDocUrl.trim() || undefined,
-        anonymous,
-        fields: fields
-          .filter(f => f.label.trim() !== '')
-          .map((f, i) => ({
-            type: f.type,
-            label: f.label.trim(),
-            page: Math.max(1, Math.floor(f.page || 1)),
-            required: f.required,
-            options: f.options.filter(o => o.trim() !== ''),
-            tableColumns: f.tableColumns.map((c, ci) => ({ ...c, sortOrder: ci })),
-            sortOrder: i,
-          })),
-      }
-
-      const saved = isEdit
-        ? await updateCollection(parseInt(id!, 10), payload)
-        : await createCollection(payload)
-
-      setCollectionSlug(saved.slug)
-
-      window.open(`/fill/${saved.slug}?preview=true`, '_blank', 'noopener')
-    } catch (err) {
-      setSaveError((err as Error).message)
-    } finally {
-      setSaving(false)
-    }
+    await doSave({ silent: false })
   }
 
   // ── Wizard field ──────────────────────────────────────────
@@ -300,7 +333,18 @@ export default function CollectionBuilderPage() {
               {isEdit ? 'Edit Collection' : 'New Collection'}
             </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {isEdit && autoSaveStatus !== 'idle' && (
+              <span className={`text-xs ${
+                autoSaveStatus === 'saving' ? 'text-[#94A3B8]' :
+                autoSaveStatus === 'saved'  ? 'text-green-600 dark:text-green-400' :
+                'text-red-500'
+              }`}>
+                {autoSaveStatus === 'saving' ? 'Auto-saving…' :
+                 autoSaveStatus === 'saved'  ? 'Saved' :
+                 'Auto-save failed'}
+              </span>
+            )}
             {isEdit && (
               <button
                 onClick={() => {
@@ -308,7 +352,7 @@ export default function CollectionBuilderPage() {
                   window.open(`/fill/${collectionSlug}?preview=true`, '_blank', 'noopener')
                 }}
                 disabled={!collectionSlug}
-                className="flex items-center gap-1.5 text-sm text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-3 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors"
+                className="flex items-center gap-1.5 text-sm text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-3 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-40"
               >
                 <Eye size={14} />
                 Preview
@@ -320,7 +364,7 @@ export default function CollectionBuilderPage() {
               className="flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
             >
               <Save size={14} />
-              {saving ? 'Saving…' : 'Save & Preview'}
+              {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
