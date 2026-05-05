@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import type { User, UserRole } from '../types'
@@ -40,15 +40,6 @@ const STATS = [
   { value: '12', label: 'ACTIVE' },
 ]
 
-const TEAMS = [
-  'Alpha Team',
-  'Beta Team',
-  'Gamma Team',
-  'Delta Team',
-  'Epsilon Team',
-  'Zeta Team',
-]
-
 const INPUT_CLASS =
   'w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] ' +
   'text-[#1E293B] dark:text-[#F1F5F9] placeholder-[#94A3B8] dark:placeholder-[#475569] ' +
@@ -66,9 +57,6 @@ export default function LoginPage() {
 
   const [regName, setRegName] = useState('')
   const [regEmail, setRegEmail] = useState('')
-  const [regTeam, setRegTeam] = useState('')
-  const [regRole, setRegRole] = useState('')
-  const [registering, setRegistering] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSelectSignIn = async () => {
@@ -88,36 +76,6 @@ export default function LoginPage() {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
       setSigningIn(false)
-    }
-  }
-
-  const handleRegister = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!regName.trim() || !regEmail.trim()) {
-      setError('Name and email are required')
-      return
-    }
-    setRegistering(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: regName.trim(),
-          email: regEmail.trim(),
-          role: regRole || 'user',
-          organization: regTeam || undefined,
-        }),
-      })
-      const data = await res.json() as { token: string; user: User; error?: string }
-      if (!res.ok) throw new Error(data.error ?? 'Registration failed')
-      signIn(data.user, data.token)
-      navigate('/')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed')
-    } finally {
-      setRegistering(false)
     }
   }
 
@@ -215,7 +173,7 @@ export default function LoginPage() {
             Register New Account
           </p>
 
-          <form onSubmit={handleRegister} className="space-y-3">
+          <div className="space-y-3">
             <input
               type="text"
               placeholder="Full name"
@@ -230,34 +188,14 @@ export default function LoginPage() {
               onChange={e => setRegEmail(e.target.value)}
               className={INPUT_CLASS}
             />
-            <select
-              value={regTeam}
-              onChange={e => setRegTeam(e.target.value)}
-              className={INPUT_CLASS + ' cursor-pointer'}
-            >
-              <option value="">Select team (optional)</option>
-              {TEAMS.map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-            <select
-              value={regRole}
-              onChange={e => setRegRole(e.target.value)}
-              className={INPUT_CLASS + ' cursor-pointer'}
-            >
-              <option value="">Select user type (optional)</option>
-              <option value="administrator">Administrator</option>
-              <option value="team_manager">Team Manager</option>
-              <option value="user">User</option>
-            </select>
             <button
-              type="submit"
-              disabled={registering}
-              className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-semibold py-2.5 text-sm tracking-wide rounded-[2px] transition-colors disabled:opacity-50"
+              type="button"
+              disabled
+              className="w-full bg-[#2563EB] text-white font-semibold py-2.5 text-sm tracking-wide rounded-[2px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {registering ? 'Creating account…' : 'Register & Sign In'}
+              Register & Sign In
             </button>
-          </form>
+          </div>
         </div>
       </div>
     </div>
