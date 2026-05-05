@@ -29,13 +29,13 @@ jobs:
             server/package-lock.json
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --include=dev
 
       - name: Install client dependencies
-        run: npm ci --prefix client
+        run: npm ci --prefix client --include=dev
 
       - name: Install server dependencies
-        run: npm ci --prefix server
+        run: npm ci --prefix server --include=dev
 
       - name: Build client
         run: npm run build --prefix client
