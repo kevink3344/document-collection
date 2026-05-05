@@ -6,6 +6,7 @@ import { setupDatabase } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
+import collectionsRouter from './routes/collections'
 
 const app = express()
 const PORT = process.env.PORT ?? 4000
@@ -15,7 +16,8 @@ const IS_PROD = process.env.NODE_ENV === 'production'
 if (!IS_PROD) {
   app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'] }))
 }
-app.use(express.json())
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // ── Database ─────────────────────────────────────────────────
 setupDatabase()
@@ -24,13 +26,16 @@ setupDatabase()
 setupSwagger(app)
 
 // ── Routes ───────────────────────────────────────────────────
-app.use('/api/auth',  authRouter)
+app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
+app.use('/api/collections', collectionsRouter)
 
-// Health check
-app.get('/api/health', (_req, res) => {
+// Health checks for API clients and platform probes
+const healthHandler = (_req: express.Request, res: express.Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
-})
+}
+app.get('/api/health', healthHandler)
+app.get('/health', healthHandler)
 
 // ── Static client (production) ────────────────────────────
 const clientDist = path.join(__dirname, '../public')

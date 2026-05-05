@@ -1,22 +1,50 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
+import CollectionsPage from './pages/CollectionsPage'
+import CollectionBuilderPage from './pages/CollectionBuilderPage'
+import CollectionFillPage from './pages/CollectionFillPage'
+import RecordsPage from './pages/RecordsPage'
+
+function RequireAuth() {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  return <Outlet />
+}
 
 export default function App() {
   const { user } = useAuth()
 
   return (
     <Routes>
+      {/* Public */}
       <Route
         path="/login"
-        element={!user ? <LoginPage /> : <Navigate to="/" replace />}
+        element={!user ? <LoginPage /> : <Navigate to="/collections" replace />}
       />
-      <Route
-        path="/"
-        element={user ? <HomePage /> : <Navigate to="/login" replace />}
-      />
-      <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
+      <Route path="/fill/:slug" element={<CollectionFillPage />} />
+
+      {/* Protected shell */}
+      <Route element={<RequireAuth />}>
+        <Route element={<HomePage />}>
+          <Route index element={<Navigate to="/collections" replace />} />
+          <Route path="/collections" element={<CollectionsPage />} />
+          <Route path="/collections/new" element={<CollectionBuilderPage />} />
+          <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
+          <Route path="/records" element={<RecordsPage />} />
+          <Route
+            path="/dashboard"
+            element={
+              <div className="text-[#64748B] dark:text-[#94A3B8] text-sm">
+                Dashboard coming soon.
+              </div>
+            }
+          />
+        </Route>
+      </Route>
+
+      <Route path="*" element={<Navigate to={user ? '/collections' : '/login'} replace />} />
     </Routes>
   )
 }

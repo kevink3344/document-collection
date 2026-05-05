@@ -13,3 +13,62 @@ export interface AuthResponse {
   token: string
   user: User
 }
+
+// ── Collections ───────────────────────────────────────────────
+
+export type FieldType =
+  | 'short_text'
+  | 'long_text'
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'attachment'
+  | 'signature'
+  | 'confirmation'
+  | 'custom_table'
+
+export type ColType = 'text' | 'number' | 'date' | 'checkbox'
+
+export interface TableColumn {
+  id?: number
+  name: string
+  colType: ColType
+  sortOrder: number
+}
+
+export interface CollectionField {
+  id?: number
+  type: FieldType
+  label: string
+  page: number
+  required: boolean
+  options: string[] | null
+  sortOrder: number
+  tableColumns: TableColumn[] | null
+}
+
+export interface Collection {
+  id: number
+  slug: string
+  title: string
+  description: string | null
+  category: string | null
+  createdBy: number
+  createdByName: string | null
+  dateDue: string | null
+  coverPhotoUrl: string | null
+  instructions: string | null
+  instructionsDocUrl: string | null
+  anonymous: boolean
+  createdAt: string
+  updatedAt: string
+  fields: CollectionField[]
+  responseCount?: number
+}
+
+export interface CollectionResponse {
+  id: number
+  respondentName: string | null
+  respondentEmail: string | null
+  submittedAt: string
+  values: { fieldId: number; value: string | null }[]
+}
