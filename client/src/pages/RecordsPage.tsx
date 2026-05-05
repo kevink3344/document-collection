@@ -393,7 +393,30 @@ function renderResponseValue(field: CollectionField | undefined, value: string |
     }
   }
 
-  if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('data:')) {
+  const isUrlLike = raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('data:')
+  const isImageLike = raw.startsWith('data:image/') || /\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(raw)
+
+  if (field?.type === 'signature' && isUrlLike && isImageLike) {
+    return (
+      <div className="space-y-2">
+        <img
+          src={raw}
+          alt="Submitted signature"
+          className="max-h-40 w-auto border border-[#CBD5E1] dark:border-[#334155] bg-white rounded"
+        />
+        <a
+          href={raw}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-[#2563EB] hover:underline"
+        >
+          Open full image
+        </a>
+      </div>
+    )
+  }
+
+  if (isUrlLike) {
     return (
       <a
         href={raw}
