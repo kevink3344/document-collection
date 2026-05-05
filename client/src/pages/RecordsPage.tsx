@@ -11,10 +11,15 @@ interface SummaryDatum {
   color: string
 }
 
+type SummaryFieldType = Extract<
+  CollectionField['type'],
+  'single_choice' | 'multiple_choice' | 'confirmation' | 'signature' | 'attachment'
+>
+
 interface SummaryCard {
   fieldId: number
   label: string
-  fieldType: CollectionField['type']
+  fieldType: SummaryFieldType
   total: number
   totalLabel: string
   data: SummaryDatum[]
@@ -158,13 +163,15 @@ function buildSubmissionTrendline(responses: CollectionResponse[]): TrendlineDat
 
   responses.forEach(response => {
     const normalized = response.submittedAt.includes('T')
-              const summaryCards = useMemo((): SummaryCard[] => {
+      ? response.submittedAt
       : response.submittedAt.replace(' ', 'T') + 'Z'
     const date = new Date(normalized)
 
     if (!Number.isNaN(date.getTime())) {
-      const dateStr = date.toISOString().split('T')[0]
-      countByDate.set(dateStr, (countByDate.get(dateStr) ?? 0) + 1)
+      const [dateStr] = date.toISOString().split('T')
+      if (dateStr) {
+        countByDate.set(dateStr, (countByDate.get(dateStr) ?? 0) + 1)
+      }
     }
   })
 
@@ -202,7 +209,7 @@ function TrendlineChart({ responses }: { responses: CollectionResponse[] }) {
 
   const pathD =
     points.length > 0
-      ? `M ${points.map((p, i) => `${p.x} ${p.y}`).join(' L ')}`
+      ? `M ${points.map(p => `${p.x} ${p.y}`).join(' L ')}`
       : ''
 
   return (
