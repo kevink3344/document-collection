@@ -1,0 +1,15 @@
+{
+  "name": "data-collection-pro",
+  "version": "1.0.0",
+  "description": "Data Collection Pro — Enterprise data management application",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names \"client,server\" -c \"cyan,yellow\" \"npm --prefix client run dev\" \"npm --prefix server run dev\"",
+    "install:all": "npm install && npm --prefix client install && npm --prefix server install",
+    "build": "npm --prefix client run build && npm --prefix server run build && xcopy /E /I /Y client\\dist server\\public",
+    "start": "npm --prefix server run start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
