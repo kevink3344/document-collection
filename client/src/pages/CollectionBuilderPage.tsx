@@ -277,6 +277,9 @@ export default function CollectionBuilderPage() {
         ? await updateCollection(parseInt(id!, 10), buildPayload())
         : await createCollection(buildPayload())
       setCollectionSlug(saved.slug)
+      if (!isEdit) {
+        navigate(`/collections/${saved.id}/edit`, { replace: true })
+      }
       if (silent) {
         setAutoSaveStatus('saved')
         setTimeout(() => setAutoSaveStatus('idle'), 2500)
