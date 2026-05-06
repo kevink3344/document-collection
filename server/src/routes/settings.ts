@@ -24,7 +24,7 @@ interface DbSetting {
  *         required: true
  *         schema:
  *           type: string
- *           enum: [login_message]
+ *           enum: [login_message, login_subtitle]
  *         description: The setting key to retrieve
  *     responses:
  *       200:
@@ -74,7 +74,7 @@ router.get('/:key', (req: Request, res: Response) => {
  *         required: true
  *         schema:
  *           type: string
- *           enum: [login_message]
+ *           enum: [login_message, login_subtitle]
  *     requestBody:
  *       required: true
  *       content:
