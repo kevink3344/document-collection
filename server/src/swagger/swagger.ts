@@ -1,4 +1,5 @@
 import { type Express } from 'express'
+import path from 'path'
 import swaggerJsdoc from 'swagger-jsdoc'
 import swaggerUi from 'swagger-ui-express'
 
@@ -8,6 +9,11 @@ const SWAGGER_SERVER_URL =
   (process.env.WEBSITE_HOSTNAME
     ? `https://${process.env.WEBSITE_HOSTNAME}`
     : `http://localhost:${PORT}`)
+const SWAGGER_APIS = [
+  path.resolve(__dirname, '../routes/*.js'),
+  path.resolve(__dirname, '../routes/*.ts'),
+  path.resolve(process.cwd(), 'src/routes/*.ts'),
+]
 
 const options: swaggerJsdoc.Options = {
   definition: {
@@ -174,7 +180,7 @@ const options: swaggerJsdoc.Options = {
       { name: 'Settings',    description: 'App-wide settings (login message, etc.)' },
     ],
   },
-  apis: ['./src/routes/*.ts'],
+  apis: SWAGGER_APIS,
 }
 
 export function setupSwagger(app: Express): void {
