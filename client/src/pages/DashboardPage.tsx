@@ -2,35 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ClipboardList, Layers } from 'lucide-react'
 import { listCollections } from '../api/collections'
+import { getCategoryColorClasses } from '../utils/categoryColors'
 import type { Collection } from '../types'
-
-const CATEGORY_COLORS: Record<string, { card: string; badge: string }> = {
-  Security: {
-    card: 'border-red-200 dark:border-red-800',
-    badge: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  },
-  Safety: {
-    card: 'border-orange-200 dark:border-orange-800',
-    badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-  },
-  General: {
-    card: 'border-slate-200 dark:border-slate-700',
-    badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
-  },
-  Budget: {
-    card: 'border-green-200 dark:border-green-800',
-    badge: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  },
-  Health: {
-    card: 'border-blue-200 dark:border-blue-800',
-    badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  },
-}
-
-const FALLBACK = {
-  card: 'border-indigo-200 dark:border-indigo-800',
-  badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
-}
 
 interface CategoryStat {
   category: string
@@ -97,7 +70,7 @@ export default function DashboardPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
           {stats.map(({ category, collections: cols }) => {
-            const colors = CATEGORY_COLORS[category] ?? FALLBACK
+            const colors = getCategoryColorClasses(category)
             return (
               <div
                 key={category}
@@ -106,7 +79,7 @@ export default function DashboardPage() {
                 {/* Header */}
                 <div className="space-y-2">
                   <span
-                    className={`inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${colors.badge}`}
+                    className={`inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-[2px] ${colors.badge}`}
                   >
                     Category
                   </span>

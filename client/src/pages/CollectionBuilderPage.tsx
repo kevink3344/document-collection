@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -17,6 +17,8 @@ import {
   getCollection,
   updateCollection,
 } from '../api/collections'
+import { listCategories } from '../api/categories'
+import type { Category } from '../types'
 import type { ColType, CollectionStatus, FieldType, TableColumn } from '../types'
 import TableWizardModal from '../components/collections/TableWizardModal'
 import RichTextEditor from '../components/common/RichTextEditor'
@@ -81,8 +83,6 @@ function normalizeColType(colType: string): ColType {
   return valid.has(colType as ColType) ? (colType as ColType) : 'text'
 }
 
-const CATEGORIES = ['General', 'Security', 'Safety', 'Budget', 'Health', 'HR', 'Operations']
-
 // ── Shared style tokens ───────────────────────────────────────
 
 const INPUT =
@@ -124,6 +124,9 @@ export default function CollectionBuilderPage() {
   const [wizardField, setWizardField] = useState<string | null>(null) // _key of field being configured
   const [collectionSlug, setCollectionSlug] = useState<string | null>(null)
   const [detailsTab, setDetailsTab] = useState<'general' | 'photo' | 'share'>('general')
+  const [categories, setCategories] = useState<Category[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [categoriesError, setCategoriesError] = useState<string | null>(null)
 
   // Used to skip autosave on initial load
   const loadedRef = useRef(false)
@@ -165,6 +168,13 @@ export default function CollectionBuilderPage() {
       })
       .catch(err => setLoadError((err as Error).message))
   }, [id, isEdit])
+
+  useEffect(() => {
+    listCategories()
+      .then(setCategories)
+      .catch(err => setCategoriesError((err as Error).message))
+      .finally(() => setCategoriesLoading(false))
+  }, [])
 
   // ── Field helpers ─────────────────────────────────────────
 
@@ -341,6 +351,14 @@ export default function CollectionBuilderPage() {
     setStatus(nextStatus)
     await doSave({ silent: false, statusOverride: nextStatus })
   }
+
+  const categoryOptions = useMemo(() => {
+    const names = categories.map(item => item.name)
+    if (category && !names.some(name => name.toLowerCase() === category.toLowerCase())) {
+      return [...names, category]
+    }
+    return names
+  }, [categories, category])
 
   // ── Wizard field ──────────────────────────────────────────
 
@@ -528,20 +546,29 @@ export default function CollectionBuilderPage() {
                 <label htmlFor={`${formId}-category`} className={LABEL}>
                   Category
                 </label>
-                <input
+                <select
                   id={`${formId}-category`}
-                  type="text"
-                  list={`${formId}-category-list`}
-                  placeholder="e.g. Safety"
                   value={category}
                   onChange={e => setCategory(e.target.value)}
                   className={INPUT}
-                />
-                <datalist id={`${formId}-category-list`}>
-                  {CATEGORIES.map(c => (
-                    <option key={c} value={c} />
+                  disabled={categoriesLoading || categoryOptions.length === 0}
+                >
+                  <option value="">Select a category</option>
+                  {categoryOptions.map(name => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
                   ))}
-                </datalist>
+                </select>
+                {categoriesError ? (
+                  <p className="mt-1 text-xs text-red-500">{categoriesError}</p>
+                ) : (
+                  <p className="mt-1 text-xs text-[#64748B]">
+                    {categoriesLoading
+                      ? 'Loading categories…'
+                      : 'Categories are managed in Settings.'}
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor={`${formId}-due`} className={LABEL}>

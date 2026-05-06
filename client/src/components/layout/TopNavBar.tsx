@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Settings, Sun, Moon, UserCircle, LogOut } from 'lucide-react'
+import { Bell, Sun, Moon, UserCircle, LogOut, Folder } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../../contexts/ThemeContext'
 import { useAuth } from '../../contexts/AuthContext'
@@ -52,8 +52,8 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
         className="flex items-center gap-3"
         aria-label="Toggle navigation menu"
       >
-        <div className="w-7 h-7 bg-[#2563EB] flex items-center justify-center text-white font-bold font-mono text-[10px] tracking-wider shrink-0">
-          DC
+        <div className="w-7 h-7 bg-[#2563EB] flex items-center justify-center text-white shrink-0 rounded-[2px]">
+          <Folder size={15} strokeWidth={2.25} />
         </div>
         <span className="font-semibold text-sm text-[#1E293B] dark:text-[#F1F5F9] hidden sm:block tracking-tight">
           Data Collection Pro
@@ -66,9 +66,9 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
       {/* Right: Icon actions */}
       <div className="flex items-center gap-0.5">
 
-        {/* Settings */}
-        <button className={NAV_BTN} title="Settings" aria-label="Settings">
-          <Settings size={15} />
+        {/* Notifications */}
+        <button className={NAV_BTN} title="Notifications" aria-label="Notifications">
+          <Bell size={15} />
         </button>
 
         {/* Theme toggle */}

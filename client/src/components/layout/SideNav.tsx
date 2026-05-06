@@ -4,10 +4,10 @@ import {
   Database,
   FileText,
   BarChart3,
-  Users,
   Settings,
   X,
 } from 'lucide-react'
+import { useAuth } from '../../contexts/AuthContext'
 import type { LucideIcon } from 'lucide-react'
 
 interface SideNavProps {
@@ -26,7 +26,6 @@ const NAV_ITEMS: NavItem[] = [
   { icon: Database,        label: 'Collections', to: '/collections' },
   { icon: FileText,        label: 'Records',     to: '/records'     },
   { icon: BarChart3,       label: 'Reports',     to: '/reports'     },
-  { icon: Users,           label: 'Users',       to: '/users'       },
   { icon: Settings,        label: 'Settings',    to: '/settings'    },
 ]
 
@@ -34,11 +33,17 @@ export default function SideNav({
   mobileDrawerOpen = false,
   onCloseMobileDrawer,
 }: SideNavProps) {
+  const { user } = useAuth()
+  const visibleNavItems =
+    user?.role === 'user'
+      ? NAV_ITEMS.filter(item => !['/records', '/reports', '/settings'].includes(item.to))
+      : NAV_ITEMS
+
   return (
     <>
       {/* ── Desktop sidebar ─────────────────────────────── */}
       <nav className="hidden md:flex flex-col w-14 lg:w-48 shrink-0 border-r border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A] py-2">
-        {NAV_ITEMS.map(item => {
+        {visibleNavItems.map(item => {
           const Icon = item.icon
           return (
             <NavLink
@@ -83,7 +88,7 @@ export default function SideNav({
               </button>
             </div>
             <nav className="pt-2">
-              {NAV_ITEMS.map(item => {
+              {visibleNavItems.map(item => {
                 const Icon = item.icon
                 return (
                   <NavLink
@@ -112,7 +117,7 @@ export default function SideNav({
 
       {/* ── Mobile bottom tab bar ───────────────────────── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A]">
-        {NAV_ITEMS.slice(0, 5).map(item => {
+        {visibleNavItems.map(item => {
           const Icon = item.icon
           return (
             <NavLink

@@ -6,6 +6,7 @@ import { setupDatabase } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
+import categoriesRouter from './routes/categories'
 import collectionsRouter from './routes/collections'
 
 const app = express()
@@ -28,6 +29,7 @@ setupSwagger(app)
 // ── Routes ───────────────────────────────────────────────────
 app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
+app.use('/api/categories', categoriesRouter)
 app.use('/api/collections', collectionsRouter)
 
 // Health checks for API clients and platform probes

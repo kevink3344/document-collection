@@ -7,6 +7,7 @@ import CollectionBuilderPage from './pages/CollectionBuilderPage'
 import CollectionFillPage from './pages/CollectionFillPage'
 import RecordsPage from './pages/RecordsPage'
 import DashboardPage from './pages/DashboardPage'
+import SettingsPage from './pages/SettingsPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
           <Route path="/records" element={<RecordsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 

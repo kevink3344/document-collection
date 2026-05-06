@@ -10,19 +10,59 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    try {
-      const stored = localStorage.getItem('dcp-user')
-      return stored ? (JSON.parse(stored) as User) : null
-    } catch {
-      return null
-    }
-  })
+interface StoredSession {
+  user: User | null
+  token: string | null
+}
 
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem('dcp-token')
-  )
+function parseJwtExpiry(token: string): number | null {
+  try {
+    const [, payload] = token.split('.')
+    if (!payload) return null
+
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const decoded = JSON.parse(atob(padded)) as { exp?: unknown }
+
+    return typeof decoded.exp === 'number' ? decoded.exp : null
+  } catch {
+    return null
+  }
+}
+
+function loadStoredSession(): StoredSession {
+  try {
+    const rawUser = localStorage.getItem('dcp-user')
+    const rawToken = localStorage.getItem('dcp-token')
+
+    if (!rawUser || !rawToken) {
+      localStorage.removeItem('dcp-user')
+      localStorage.removeItem('dcp-token')
+      return { user: null, token: null }
+    }
+
+    const expiresAt = parseJwtExpiry(rawToken)
+    if (!expiresAt || expiresAt * 1000 <= Date.now()) {
+      localStorage.removeItem('dcp-user')
+      localStorage.removeItem('dcp-token')
+      return { user: null, token: null }
+    }
+
+    return {
+      user: JSON.parse(rawUser) as User,
+      token: rawToken,
+    }
+  } catch {
+    localStorage.removeItem('dcp-user')
+    localStorage.removeItem('dcp-token')
+    return { user: null, token: null }
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const initialSession = loadStoredSession()
+  const [user, setUser] = useState<User | null>(initialSession.user)
+  const [token, setToken] = useState<string | null>(initialSession.token)
 
   const signIn = (u: User, t: string) => {
     setUser(u)

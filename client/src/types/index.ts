@@ -74,3 +74,9 @@ export interface CollectionResponse {
   submittedAt: string
   values: { fieldId: number; value: string | null }[]
 }
+
+export interface Category {
+  id: number
+  name: string
+  sortOrder: number
+}

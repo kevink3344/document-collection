@@ -14,6 +14,15 @@ export function createSchema(db: DatabaseSync): void {
   `)
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS collections (
       id                   INTEGER PRIMARY KEY AUTOINCREMENT,
       slug                 TEXT    UNIQUE NOT NULL,
@@ -81,20 +90,46 @@ export function createSchema(db: DatabaseSync): void {
 }
 
 export function seedData(db: DatabaseSync): void {
-  const row = db.prepare('SELECT COUNT(*) AS n FROM users').get() as unknown as { n: number }
-  if (row.n > 0) return
+  const userRow = db.prepare('SELECT COUNT(*) AS n FROM users').get() as unknown as { n: number }
 
-  const insert = db.prepare(
-    'INSERT INTO users (name, email, role) VALUES (?, ?, ?)'
+  if (userRow.n === 0) {
+    const insertUser = db.prepare(
+      'INSERT INTO users (name, email, role) VALUES (?, ?, ?)'
+    )
+
+    db.exec('BEGIN')
+    try {
+      insertUser.run('Jon Rivera',  'jon@datacollectionpro.com',   'administrator')
+      insertUser.run('Sarah Chen',  'sarah@datacollectionpro.com', 'team_manager')
+      insertUser.run('Mike Torres', 'mike@datacollectionpro.com',  'user')
+      db.exec('COMMIT')
+      console.log('[db] Seed users inserted')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+  }
+
+  const categories = [
+    'General',
+    'Budget',
+    'Finance',
+    'Safety',
+    'Security',
+    'Health',
+    'HR',
+    'Operations',
+  ]
+  const insertCategory = db.prepare(
+    'INSERT OR IGNORE INTO categories (name, sort_order) VALUES (?, ?)'
   )
 
   db.exec('BEGIN')
   try {
-    insert.run('Jon Rivera',  'jon@datacollectionpro.com',   'administrator')
-    insert.run('Sarah Chen',  'sarah@datacollectionpro.com', 'team_manager')
-    insert.run('Mike Torres', 'mike@datacollectionpro.com',  'user')
+    categories.forEach((name, index) => {
+      insertCategory.run(name, index)
+    })
     db.exec('COMMIT')
-    console.log('[db] Seed users inserted')
   } catch (err) {
     db.exec('ROLLBACK')
     throw err

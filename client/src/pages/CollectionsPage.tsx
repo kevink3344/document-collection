@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { listCollections, deleteCollection } from '../api/collections'
 import { htmlToPlainText } from '../utils/richText'
+import { getCategoryColorClasses } from '../utils/categoryColors'
 import type { Collection } from '../types'
 
 function statusBadgeClass(status: Collection['status']) {
@@ -21,20 +22,9 @@ function statusBadgeClass(status: Collection['status']) {
     : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Security: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  Safety: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-  General: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
-  Budget: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  Health: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-}
-
 function categoryBadge(cat: string | null) {
   if (!cat) return ''
-  return (
-    CATEGORY_COLORS[cat] ??
-    'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
-  )
+  return getCategoryColorClasses(cat).badge
 }
 
 export default function CollectionsPage() {
@@ -157,7 +147,7 @@ export default function CollectionsPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   {col.category && (
                     <span
-                      className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${categoryBadge(col.category)}`}
+                      className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-[2px] ${categoryBadge(col.category)}`}
                     >
                       <Tag size={9} />
                       {col.category}

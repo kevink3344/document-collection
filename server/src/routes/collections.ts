@@ -120,6 +120,26 @@ interface CollectionBody {
   fields?: FieldInput[]
 }
 
+function normalizeCategory(category: string | undefined): string | null {
+  const normalized = category?.trim() ?? ''
+  return normalized ? normalized : null
+}
+
+function ensureCategoryExists(category: string | null): string | null {
+  if (!category) return null
+
+  const db = getDb()
+  const existing = db
+    .prepare('SELECT name FROM categories WHERE lower(name) = lower(?)')
+    .get(category) as unknown as { name: string } | undefined
+
+  if (!existing) {
+    throw new Error('Selected category does not exist')
+  }
+
+  return existing.name
+}
+
 // ── Serialisers ───────────────────────────────────────────────
 
 function toApiCollection(
@@ -421,6 +441,14 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
 
   const db = getDb()
   const slug = generateUniqueSlug(db, body.title)
+  let category: string | null
+
+  try {
+    category = ensureCategoryExists(normalizeCategory(body.category))
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message })
+    return
+  }
 
   db.exec('BEGIN')
   try {
@@ -436,7 +464,7 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
         body.title.trim(),
         resolveRequestedStatus(body),
         body.description?.trim() ?? null,
-        body.category ?? null,
+        category,
         req.user!.sub,
         body.dateDue ?? null,
         body.coverPhotoUrl ?? null,
@@ -508,6 +536,15 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
+  let category: string | null
+
+  try {
+    category = ensureCategoryExists(normalizeCategory(body.category))
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message })
+    return
+  }
+
   const db = getDb()
   const exists = db
     .prepare('SELECT id FROM collections WHERE id = ?')
@@ -548,7 +585,7 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       body.title.trim(),
       resolveRequestedStatus(body),
       body.description?.trim() ?? null,
-      body.category ?? null,
+      category,
       body.dateDue ?? null,
       body.coverPhotoUrl ?? null,
       body.instructions ?? null,
