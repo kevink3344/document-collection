@@ -8,6 +8,7 @@ import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import categoriesRouter from './routes/categories'
 import collectionsRouter from './routes/collections'
+import settingsRouter from './routes/settings'
 
 const app = express()
 const PORT = process.env.PORT ?? 4000
@@ -31,6 +32,7 @@ app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/categories', categoriesRouter)
 app.use('/api/collections', collectionsRouter)
+app.use('/api/settings', settingsRouter)
 
 // Health checks for API clients and platform probes
 const healthHandler = (_req: express.Request, res: express.Response) => {
