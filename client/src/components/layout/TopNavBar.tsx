@@ -10,6 +10,7 @@ import {
 import { useTheme } from '../../contexts/ThemeContext'
 import { useAuth } from '../../contexts/AuthContext'
 import type { AppNotification, UserRole } from '../../types'
+import { timeAgo } from '../../utils/timeAgo'
 
 interface TopNavBarProps {
   onAppIconClick?: () => void
@@ -22,7 +23,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 }
 
 const NAV_BTN =
-  'w-8 h-8 flex items-center justify-center text-[#64748B] rounded-[2px] ' +
+  'w-10 h-10 flex items-center justify-center text-[#64748B] rounded-[2px] ' +
   'hover:text-[#1E293B] dark:hover:text-[#F1F5F9] ' +
   'hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors'
 
@@ -102,7 +103,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
   }
 
   return (
-    <header className="h-12 shrink-0 flex items-center justify-between px-4 md:px-6 border-b border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A]">
+    <header className="h-[60px] shrink-0 flex items-center justify-between px-4 border-b border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A]">
 
       {/* Left: Logo + Title */}
       <button
@@ -111,13 +112,13 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
         className="flex items-center gap-3"
         aria-label="Toggle navigation menu"
       >
-        <div className="w-7 h-7 bg-[#2563EB] flex items-center justify-center text-white shrink-0 rounded-[2px]">
-          <Folder size={15} strokeWidth={2.25} />
+        <div className="w-[35px] h-[35px] bg-[#2563EB] flex items-center justify-center text-white shrink-0 rounded-[2px]">
+          <Folder size={19} strokeWidth={2.25} />
         </div>
-        <span className="font-semibold text-sm text-[#1E293B] dark:text-[#F1F5F9] hidden sm:block tracking-tight">
+        <span className="font-semibold text-[17.5px] text-[#1E293B] dark:text-[#F1F5F9] hidden sm:block tracking-tight">
           Data Collection Pro
         </span>
-        <span className="font-semibold text-sm text-[#1E293B] dark:text-[#F1F5F9] sm:hidden font-mono">
+        <span className="font-semibold text-[17.5px] text-[#1E293B] dark:text-[#F1F5F9] sm:hidden font-mono">
           DCP
         </span>
       </button>
@@ -143,7 +144,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
               })
             }}
           >
-            <Bell size={15} />
+            <Bell size={19} />
             {unreadCount > 0 && (
               <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#DC2626] text-white text-[10px] leading-4 font-semibold text-center">
                 {unreadCount > 9 ? '9+' : unreadCount}
@@ -217,6 +218,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
                         <p className="text-[11px] text-[#64748B] mt-0.5 leading-relaxed">
                           {item.message}
                         </p>
+                        <p className="text-[10px] text-[#94A3B8] mt-1">{timeAgo(item.createdAt)}</p>
                       </div>
                     </div>
                   </button>
@@ -246,7 +248,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           aria-label="Toggle colour theme"
         >
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+          {theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}
         </button>
 
         {/* User profile */}
@@ -261,7 +263,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
             aria-label="User profile"
             aria-expanded={profileOpen}
           >
-            <UserCircle size={15} />
+            <UserCircle size={19} />
           </button>
 
           {profileOpen && user && (
@@ -278,7 +280,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
                 onClick={handleSignOut}
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
               >
-                <LogOut size={12} />
+                <LogOut size={15} />
                 Sign out
               </button>
             </div>

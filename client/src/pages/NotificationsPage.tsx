@@ -8,6 +8,7 @@ import {
 } from '../api/notifications'
 import { useAuth } from '../contexts/AuthContext'
 import type { AppNotification } from '../types'
+import { timeAgo } from '../utils/timeAgo'
 
 export default function NotificationsPage() {
   const { user } = useAuth()
@@ -106,6 +107,7 @@ export default function NotificationsPage() {
                   <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{item.title}</p>
                   <p className="text-sm text-[#475569] dark:text-[#94A3B8] mt-1">{item.message}</p>
                   <p className="text-xs text-[#64748B] mt-1">Due: {item.dueDate}</p>
+                  <p className="text-xs text-[#94A3B8] mt-0.5">{timeAgo(item.createdAt)}</p>
                   </div>
                 </div>
 
