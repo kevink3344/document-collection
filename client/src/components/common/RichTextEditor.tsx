@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Bold,
   Italic,
@@ -45,14 +45,17 @@ export default function RichTextEditor({
   minHeightClassName = 'min-h-[120px]',
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
+  const [showHtml, setShowHtml] = useState(false)
 
   useEffect(() => {
+    if (showHtml) return
+
     const el = editorRef.current
     if (!el) return
     if (el.innerHTML !== value) {
       el.innerHTML = value || ''
     }
-  }, [value])
+  }, [showHtml, value])
 
   function exec(command: string, commandValue?: string) {
     const el = editorRef.current
@@ -98,20 +101,40 @@ export default function RichTextEditor({
             className="w-6 h-6 p-0 border border-[#E2E8F0] dark:border-[#334155] rounded bg-transparent"
           />
         </label>
+        <button
+          type="button"
+          onClick={() => setShowHtml(current => !current)}
+          className="ml-auto px-2.5 py-1 text-xs font-medium rounded border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#CBD5E1] hover:bg-[#F1F5F9] dark:hover:bg-[#0F172A]"
+        >
+          {showHtml ? 'Hide HTML' : 'View HTML'}
+        </button>
       </div>
 
-      <div
-        ref={editorRef}
-        contentEditable
-        suppressContentEditableWarning
-        onInput={e => onChange((e.currentTarget as HTMLDivElement).innerHTML)}
-        data-placeholder={placeholder ?? 'Type here...'}
-        className={[
-          'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] focus:outline-none',
-          minHeightClassName,
-          'empty:before:content-[attr(data-placeholder)] empty:before:text-[#94A3B8] empty:before:pointer-events-none',
-        ].join(' ')}
-      />
+      {showHtml ? (
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          spellCheck={false}
+          placeholder="Edit HTML source..."
+          className={[
+            'w-full px-3 py-2 text-sm font-mono text-[#1E293B] dark:text-[#F1F5F9] bg-white dark:bg-[#0F172A] focus:outline-none resize-y',
+            minHeightClassName,
+          ].join(' ')}
+        />
+      ) : (
+        <div
+          ref={editorRef}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={e => onChange((e.currentTarget as HTMLDivElement).innerHTML)}
+          data-placeholder={placeholder ?? 'Type here...'}
+          className={[
+            'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] focus:outline-none',
+            minHeightClassName,
+            'empty:before:content-[attr(data-placeholder)] empty:before:text-[#94A3B8] empty:before:pointer-events-none',
+          ].join(' ')}
+        />
+      )}
     </div>
   )
 }

@@ -863,7 +863,7 @@ export default function CollectionFillPage() {
               </h2>
               {collection.instructions ? (
                 <div
-                  className="text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                  className="text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed [overflow-wrap:anywhere] [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-[#2563EB] [&_a]:underline [&_a]:hover:text-blue-700"
                   dangerouslySetInnerHTML={{
                     __html: sanitizeRichText(collection.instructions),
                   }}
