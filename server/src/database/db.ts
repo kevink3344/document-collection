@@ -50,4 +50,53 @@ function runMigrations(db: DatabaseSync): void {
     db.exec(`ALTER TABLE collection_fields ADD COLUMN page_number INTEGER NOT NULL DEFAULT 1`)
     console.log('[db] Migration: added collection_fields.page_number')
   }
+
+  const existingTableColCols = db
+    .prepare(`PRAGMA table_info(collection_table_columns)`)
+    .all() as unknown as { name: string }[]
+  const tableColNames = new Set(existingTableColCols.map(c => c.name))
+
+  const tableSqlRow = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_table_columns'`)
+    .get() as unknown as { sql: string } | undefined
+  const supportsListType = tableSqlRow?.sql?.includes("'list'") ?? false
+  const hasListOptionsColumn = tableColNames.has('list_options')
+
+  if (!supportsListType || !hasListOptionsColumn) {
+    db.exec('BEGIN')
+    try {
+      db.exec('ALTER TABLE collection_table_columns RENAME TO collection_table_columns_old')
+      db.exec(`
+        CREATE TABLE collection_table_columns (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          field_id     INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
+          name         TEXT    NOT NULL,
+          col_type     TEXT    NOT NULL DEFAULT 'text'
+                               CHECK(col_type IN ('text','number','date','checkbox','list')),
+          list_options TEXT,
+          sort_order   INTEGER NOT NULL DEFAULT 0
+        )
+      `)
+      db.exec(`
+        INSERT INTO collection_table_columns (id, field_id, name, col_type, list_options, sort_order)
+        SELECT
+          id,
+          field_id,
+          name,
+          CASE
+            WHEN col_type IN ('text','number','date','checkbox','list') THEN col_type
+            ELSE 'text'
+          END,
+          NULL,
+          sort_order
+        FROM collection_table_columns_old
+      `)
+      db.exec('DROP TABLE collection_table_columns_old')
+      db.exec('COMMIT')
+      console.log('[db] Migration: rebuilt collection_table_columns for list type support')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+  }
 }

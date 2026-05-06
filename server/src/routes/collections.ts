@@ -35,7 +35,7 @@ type FieldType =
   | 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice'
   | 'attachment' | 'signature' | 'confirmation' | 'custom_table'
 
-type ColType = 'text' | 'number' | 'date' | 'checkbox'
+type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 
 interface DbCollection {
   id: number
@@ -71,6 +71,7 @@ interface DbTableColumn {
   field_id: number
   name: string
   col_type: ColType
+  list_options: string | null
   sort_order: number
 }
 
@@ -94,6 +95,7 @@ interface DbResponseValue {
 interface TableColumnInput {
   name: string
   colType: ColType
+  listOptions?: string[]
   sortOrder?: number
 }
 
@@ -177,6 +179,10 @@ function toApiCollection(
               id: col.id,
               name: col.name,
               colType: col.col_type,
+              listOptions:
+                col.col_type === 'list' && col.list_options
+                  ? (JSON.parse(col.list_options) as string[])
+                  : null,
               sortOrder: col.sort_order,
             }))
           : null,
@@ -252,9 +258,17 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
       const fieldId = r.lastInsertRowid as number
       field.tableColumns.forEach((col, ci) => {
         db.prepare(
-          `INSERT INTO collection_table_columns (field_id, name, col_type, sort_order)
-           VALUES (?, ?, ?, ?)`
-        ).run(fieldId, col.name, col.colType, col.sortOrder ?? ci)
+          `INSERT INTO collection_table_columns (field_id, name, col_type, list_options, sort_order)
+           VALUES (?, ?, ?, ?, ?)`
+        ).run(
+          fieldId,
+          col.name,
+          col.colType,
+          col.colType === 'list'
+            ? JSON.stringify((col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean))
+            : null,
+          col.sortOrder ?? ci
+        )
       })
     }
   })
@@ -271,6 +285,10 @@ function normaliseIncomingFields(fields: FieldInput[]): string {
       tableColumns: (f.tableColumns ?? []).map((c, ci) => ({
         name: (c.name ?? '').trim(),
         colType: c.colType,
+        listOptions:
+          c.colType === 'list'
+            ? (c.listOptions ?? []).map(opt => opt.trim()).filter(Boolean)
+            : [],
         sortOrder: c.sortOrder ?? ci,
       })),
       sortOrder: f.sortOrder ?? i,
@@ -298,6 +316,17 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
       tableColumns: (colsByField.get(f.id) ?? []).map(col => ({
         name: col.name,
         colType: col.col_type,
+        listOptions: (() => {
+          if (col.col_type !== 'list') return []
+          try {
+            const parsed = col.list_options ? (JSON.parse(col.list_options) as unknown) : []
+            return Array.isArray(parsed)
+              ? parsed.map(v => String(v).trim()).filter(Boolean)
+              : []
+          } catch {
+            return []
+          }
+        })(),
         sortOrder: col.sort_order,
       })),
       sortOrder: f.sort_order ?? i,

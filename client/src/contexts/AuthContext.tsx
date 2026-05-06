@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { User } from '../types'
+import { AUTH_EXPIRED_EVENT } from '../api/authEvents'
 
 interface AuthContextValue {
   user: User | null
@@ -77,6 +78,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('dcp-user')
     localStorage.removeItem('dcp-token')
   }
+
+  useEffect(() => {
+    const onAuthExpired = () => {
+      signOut()
+    }
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired)
+  }, [])
 
   return (
     <AuthContext.Provider value={{ user, token, signIn, signOut }}>

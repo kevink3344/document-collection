@@ -26,13 +26,14 @@ export type FieldType =
   | 'confirmation'
   | 'custom_table'
 
-export type ColType = 'text' | 'number' | 'date' | 'checkbox'
+export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'
 
 export interface TableColumn {
   id?: number
   name: string
   colType: ColType
+  listOptions?: string[] | null
   sortOrder: number
 }
 

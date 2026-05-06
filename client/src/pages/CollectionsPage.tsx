@@ -14,6 +14,7 @@ import {
 import { listCollections, deleteCollection } from '../api/collections'
 import { htmlToPlainText } from '../utils/richText'
 import { getCategoryColorClasses } from '../utils/categoryColors'
+import { useToast } from '../contexts/ToastContext'
 import type { Collection } from '../types'
 
 function statusBadgeClass(status: Collection['status']) {
@@ -29,6 +30,7 @@ function categoryBadge(cat: string | null) {
 
 export default function CollectionsPage() {
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [collections, setCollections] = useState<Collection[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -52,8 +54,9 @@ export default function CollectionsPage() {
     try {
       await deleteCollection(col.id)
       setCollections(prev => prev.filter(c => c.id !== col.id))
+      showToast('Collection deleted', 'success')
     } catch (err) {
-      alert((err as Error).message)
+      showToast((err as Error).message, 'error')
     } finally {
       setDeleting(null)
     }
@@ -63,9 +66,9 @@ export default function CollectionsPage() {
     const url = `${window.location.origin}/fill/${slug}`
     try {
       await navigator.clipboard.writeText(url)
-      alert('Share link copied to clipboard')
+      showToast('Share link copied to clipboard', 'success')
     } catch {
-      alert(`Copy this link: ${url}`)
+      showToast(`Copy failed. Share URL: ${url}`, 'info')
     }
   }
 

@@ -24,6 +24,7 @@ import TableWizardModal from '../components/collections/TableWizardModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { htmlToPlainText } from '../utils/richText'
+import { useToast } from '../contexts/ToastContext'
 
 // ── Local builder types ───────────────────────────────────────
 
@@ -79,7 +80,7 @@ function normalizeFieldType(type: string): FieldType {
 }
 
 function normalizeColType(colType: string): ColType {
-  const valid = new Set<ColType>(['text', 'number', 'date', 'checkbox'])
+  const valid = new Set<ColType>(['text', 'number', 'date', 'checkbox', 'list'])
   return valid.has(colType as ColType) ? (colType as ColType) : 'text'
 }
 
@@ -99,6 +100,7 @@ export default function CollectionBuilderPage() {
   const navigate = useNavigate()
   const formId = useId()
   const isEdit = !!id
+  const { showToast } = useToast()
 
   // Metadata
   const [title, setTitle] = useState('')
@@ -160,6 +162,10 @@ export default function CollectionBuilderPage() {
                 tableColumns: (f.tableColumns ?? []).map(tc => ({
                   ...tc,
                   colType: normalizeColType(tc.colType),
+                  listOptions:
+                    tc.colType === 'list'
+                      ? (tc.listOptions ?? []).map(opt => String(opt).trim()).filter(Boolean)
+                      : null,
                 })),
               }))
             : [blankField()]
@@ -235,9 +241,9 @@ export default function CollectionBuilderPage() {
     const url = `${window.location.origin}/fill/${collectionSlug}`
     try {
       await navigator.clipboard.writeText(url)
-      alert('Share link copied to clipboard')
+      showToast('Share link copied to clipboard', 'success')
     } catch {
-      alert(`Copy this link: ${url}`)
+      showToast(`Copy failed. Share URL: ${url}`, 'info')
     }
   }
 
@@ -297,6 +303,10 @@ export default function CollectionBuilderPage() {
           tableColumns: f.tableColumns.map((c, ci) => ({
             ...c,
             colType: normalizeColType(c.colType),
+            listOptions:
+              normalizeColType(c.colType) === 'list'
+                ? (c.listOptions ?? []).map(opt => opt.trim()).filter(Boolean)
+                : null,
             sortOrder: ci,
           })),
           sortOrder: i,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle, AlertCircle } from 'lucide-react'
+import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { sanitizeRichText } from '../utils/richText'
@@ -136,19 +136,35 @@ function CustomTableInput({
   field,
   value,
   onChange,
+  disabled,
 }: {
   field: CollectionField
   value: string
   onChange: (v: string) => void
+  disabled: boolean
 }) {
   const columns = field.tableColumns ?? []
   const [rows, setRows] = useState<TableRow[]>(() => {
     try {
-      return value ? (JSON.parse(value) as TableRow[]) : [{}]
+      const parsed = value ? (JSON.parse(value) as TableRow[]) : []
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : [{}]
     } catch {
       return [{}]
     }
   })
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [draftRows, setDraftRows] = useState<TableRow[]>([])
+  const [hasDraftChanges, setHasDraftChanges] = useState(false)
+
+  useEffect(() => {
+    if (editorOpen) return
+    try {
+      const parsed = value ? (JSON.parse(value) as TableRow[]) : []
+      setRows(Array.isArray(parsed) && parsed.length > 0 ? parsed : [{}])
+    } catch {
+      setRows([{}])
+    }
+  }, [value, editorOpen])
 
   const update = useCallback(
     (newRows: TableRow[]) => {
@@ -162,71 +178,420 @@ function CustomTableInput({
     update(rows.map((r, i) => (i === rowIdx ? { ...r, [col]: val } : r)))
   }
 
+  function getListOptions(colName: string): string[] {
+    const column = columns.find(c => c.name === colName)
+    if (!column || column.colType !== 'list') return []
+    return (column.listOptions ?? []).map(opt => opt.trim()).filter(Boolean)
+  }
+
+  function openEditor() {
+    setDraftRows(rows.map(row => ({ ...row })))
+    setHasDraftChanges(false)
+    setEditorOpen(true)
+  }
+
+  function closeEditor() {
+    if (hasDraftChanges) {
+      const shouldDiscard = window.confirm('Discard unsaved table edits?')
+      if (!shouldDiscard) return
+    }
+    setEditorOpen(false)
+  }
+
+  function setDraftCell(rowIdx: number, col: string, val: string) {
+    setDraftRows(prev => prev.map((row, i) => (i === rowIdx ? { ...row, [col]: val } : row)))
+    setHasDraftChanges(true)
+  }
+
+  function addDraftRow() {
+    setDraftRows(prev => [...prev, {}])
+    setHasDraftChanges(true)
+  }
+
+  function removeDraftRow(rowIdx: number) {
+    setDraftRows(prev => {
+      if (prev.length === 1) return prev
+      return prev.filter((_, i) => i !== rowIdx)
+    })
+    setHasDraftChanges(true)
+  }
+
+  function saveDraftRows() {
+    update(draftRows.length > 0 ? draftRows : [{}])
+    setEditorOpen(false)
+    setHasDraftChanges(false)
+  }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr>
-            {columns.map(col => (
-              <th
-                key={col.name}
-                className="text-left text-xs font-medium text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-2 py-1.5 bg-[#F8FAFC] dark:bg-[#0F172A]"
-              >
-                {col.name}
-              </th>
-            ))}
-            <th className="w-8 border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A]" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri}>
-              {columns.map(col => (
-                <td
-                  key={col.name}
-                  className="border border-[#E2E8F0] dark:border-[#334155] p-1"
-                >
-                  {col.colType === 'checkbox' ? (
-                    <input
-                      type="checkbox"
-                      checked={row[col.name] === 'true'}
-                      onChange={e =>
-                        setCell(ri, col.name, e.target.checked ? 'true' : 'false')
-                      }
-                      className="accent-[#2563EB] w-4 h-4"
-                    />
-                  ) : (
-                    <input
-                      type={col.colType === 'number' ? 'number' : col.colType === 'date' ? 'date' : 'text'}
-                      value={row[col.name] ?? ''}
-                      onChange={e => setCell(ri, col.name, e.target.value)}
-                      className="w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
-                    />
-                  )}
-                </td>
+    <>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-[#64748B]">{rows.length} row{rows.length !== 1 ? 's' : ''}</p>
+          <button
+            type="button"
+            onClick={openEditor}
+            disabled={disabled}
+            className="inline-flex items-center gap-1.5 text-xs border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#CBD5E1] px-2.5 py-1 rounded-[2px] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-50"
+          >
+            <Maximize2 size={12} />
+            Spreadsheet mode
+          </button>
+        </div>
+
+        <div className="overflow-x-auto border border-[#E2E8F0] dark:border-[#334155] rounded-[2px]">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr>
+                {columns.map(col => (
+                  <th
+                    key={col.name}
+                    className="text-left text-xs font-medium text-[#64748B] border-b border-[#E2E8F0] dark:border-[#334155] px-2 py-1.5 bg-[#F8FAFC] dark:bg-[#0F172A]"
+                  >
+                    {col.name}
+                  </th>
+                ))}
+                <th className="w-8 border-b border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A]" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri}>
+                  {columns.map(col => (
+                    <td
+                      key={col.name}
+                      className="border-b border-[#E2E8F0] dark:border-[#334155] p-1"
+                    >
+                      {col.colType === 'checkbox' ? (
+                        <input
+                          type="checkbox"
+                          checked={row[col.name] === 'true'}
+                          onChange={e =>
+                            setCell(ri, col.name, e.target.checked ? 'true' : 'false')
+                          }
+                          className="accent-[#2563EB] w-4 h-4"
+                          disabled={disabled}
+                        />
+                      ) : (
+                        col.colType === 'list' ? (
+                          <select
+                            value={row[col.name] ?? ''}
+                            onChange={e => setCell(ri, col.name, e.target.value)}
+                            className="w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
+                            disabled={disabled}
+                          >
+                            <option value="">Select…</option>
+                            {getListOptions(col.name).map(option => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={col.colType === 'number' ? 'number' : col.colType === 'date' ? 'date' : 'text'}
+                            value={row[col.name] ?? ''}
+                            onChange={e => setCell(ri, col.name, e.target.value)}
+                            className="w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
+                            disabled={disabled}
+                          />
+                        )
+                      )}
+                    </td>
+                  ))}
+                  <td className="border-b border-[#E2E8F0] dark:border-[#334155] text-center">
+                    <button
+                      type="button"
+                      onClick={() => update(rows.filter((_, i) => i !== ri))}
+                      disabled={rows.length === 1 || disabled}
+                      className="text-[#94A3B8] hover:text-red-500 disabled:opacity-30 transition-colors text-xs px-1"
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
               ))}
-              <td className="border border-[#E2E8F0] dark:border-[#334155] text-center">
-                <button
-                  type="button"
-                  onClick={() => update(rows.filter((_, i) => i !== ri))}
-                  disabled={rows.length === 1}
-                  className="text-[#94A3B8] hover:text-red-500 disabled:opacity-30 transition-colors text-xs px-1"
-                >
-                  ×
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <button
-        type="button"
-        onClick={() => update([...rows, {}])}
-        className="mt-2 text-xs text-[#2563EB] hover:underline"
-      >
-        + Add row
-      </button>
-    </div>
+            </tbody>
+          </table>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => update([...rows, {}])}
+          className="text-xs text-[#2563EB] hover:underline"
+          disabled={disabled}
+        >
+          + Add row
+        </button>
+      </div>
+
+      {editorOpen && (
+        <div className="fixed inset-0 z-50 bg-[#FAFAFA] dark:bg-[#0F172A] flex flex-col">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A]">
+            <div>
+              <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{field.label}</h3>
+              <p className="text-xs text-[#64748B]">Spreadsheet mode</p>
+            </div>
+            <button
+              type="button"
+              onClick={closeEditor}
+              className="w-8 h-8 rounded-[2px] flex items-center justify-center text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B]"
+              aria-label="Close spreadsheet mode"
+            >
+              <X size={15} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto p-4 space-y-3">
+            {columns.length > 3 && (
+              <p className="text-xs text-[#64748B] md:hidden">
+                Mobile view uses row cards for easier editing with many columns.
+              </p>
+            )}
+
+            {columns.length > 3 ? (
+              <>
+                <div className="md:hidden space-y-3">
+                  {draftRows.map((row, rowIndex) => (
+                    <div
+                      key={`card-row-${rowIndex}`}
+                      className="rounded-[2px] border border-[#E2E8F0] dark:border-[#334155] p-3 space-y-2 bg-[#F8FAFC] dark:bg-[#0F172A]"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-[#64748B]">Row {rowIndex + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeDraftRow(rowIndex)}
+                          disabled={draftRows.length === 1}
+                          className="text-xs text-red-500 disabled:opacity-30"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      {columns.map(col => (
+                        <label key={col.name} className="block space-y-1">
+                          <span className="text-xs text-[#64748B]">{col.name}</span>
+                          {col.colType === 'checkbox' ? (
+                            <input
+                              type="checkbox"
+                              checked={row[col.name] === 'true'}
+                              onChange={e =>
+                                setDraftCell(
+                                  rowIndex,
+                                  col.name,
+                                  e.target.checked ? 'true' : 'false'
+                                )
+                              }
+                              className="accent-[#2563EB] w-4 h-4"
+                            />
+                          ) : (
+                            col.colType === 'list' ? (
+                              <select
+                                value={row[col.name] ?? ''}
+                                onChange={e => setDraftCell(rowIndex, col.name, e.target.value)}
+                                className={INPUT}
+                              >
+                                <option value="">Select…</option>
+                                {getListOptions(col.name).map(option => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type={col.colType === 'number' ? 'number' : col.colType === 'date' ? 'date' : 'text'}
+                                value={row[col.name] ?? ''}
+                                onChange={e => setDraftCell(rowIndex, col.name, e.target.value)}
+                                className={INPUT}
+                              />
+                            )
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="min-w-full w-max text-sm border-collapse">
+                    <thead className="sticky top-0 z-10">
+                      <tr>
+                        {columns.map(col => (
+                          <th
+                            key={col.name}
+                            className="text-left text-xs font-medium text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-2 py-1.5 bg-[#F8FAFC] dark:bg-[#0F172A]"
+                          >
+                            {col.name}
+                          </th>
+                        ))}
+                        <th className="w-16 border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A]" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {draftRows.map((row, rowIndex) => (
+                        <tr key={`table-row-${rowIndex}`}>
+                          {columns.map(col => (
+                            <td key={col.name} className="border border-[#E2E8F0] dark:border-[#334155] p-1">
+                              {col.colType === 'checkbox' ? (
+                                <input
+                                  type="checkbox"
+                                  checked={row[col.name] === 'true'}
+                                  onChange={e =>
+                                    setDraftCell(
+                                      rowIndex,
+                                      col.name,
+                                      e.target.checked ? 'true' : 'false'
+                                    )
+                                  }
+                                  className="accent-[#2563EB] w-4 h-4"
+                                />
+                              ) : (
+                                col.colType === 'list' ? (
+                                  <select
+                                    value={row[col.name] ?? ''}
+                                    onChange={e => setDraftCell(rowIndex, col.name, e.target.value)}
+                                    className="min-w-[140px] w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
+                                  >
+                                    <option value="">Select…</option>
+                                    {getListOptions(col.name).map(option => (
+                                      <option key={option} value={option}>
+                                        {option}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={col.colType === 'number' ? 'number' : col.colType === 'date' ? 'date' : 'text'}
+                                    value={row[col.name] ?? ''}
+                                    onChange={e => setDraftCell(rowIndex, col.name, e.target.value)}
+                                    className="min-w-[140px] w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
+                                  />
+                                )
+                              )}
+                            </td>
+                          ))}
+                          <td className="border border-[#E2E8F0] dark:border-[#334155] text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeDraftRow(rowIndex)}
+                              disabled={draftRows.length === 1}
+                              className="text-[#94A3B8] hover:text-red-500 disabled:opacity-30 transition-colors text-xs px-1"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full w-max text-sm border-collapse">
+                  <thead className="sticky top-0 z-10">
+                    <tr>
+                      {columns.map(col => (
+                        <th
+                          key={col.name}
+                          className="text-left text-xs font-medium text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-2 py-1.5 bg-[#F8FAFC] dark:bg-[#0F172A]"
+                        >
+                          {col.name}
+                        </th>
+                      ))}
+                      <th className="w-16 border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A]" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {draftRows.map((row, rowIndex) => (
+                      <tr key={`simple-row-${rowIndex}`}>
+                        {columns.map(col => (
+                          <td key={col.name} className="border border-[#E2E8F0] dark:border-[#334155] p-1">
+                            {col.colType === 'checkbox' ? (
+                              <input
+                                type="checkbox"
+                                checked={row[col.name] === 'true'}
+                                onChange={e =>
+                                  setDraftCell(
+                                    rowIndex,
+                                    col.name,
+                                    e.target.checked ? 'true' : 'false'
+                                  )
+                                }
+                                className="accent-[#2563EB] w-4 h-4"
+                              />
+                            ) : (
+                              col.colType === 'list' ? (
+                                <select
+                                  value={row[col.name] ?? ''}
+                                  onChange={e => setDraftCell(rowIndex, col.name, e.target.value)}
+                                  className="min-w-[140px] w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
+                                >
+                                  <option value="">Select…</option>
+                                  {getListOptions(col.name).map(option => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type={col.colType === 'number' ? 'number' : col.colType === 'date' ? 'date' : 'text'}
+                                  value={row[col.name] ?? ''}
+                                  onChange={e => setDraftCell(rowIndex, col.name, e.target.value)}
+                                  className="min-w-[140px] w-full bg-transparent text-[#1E293B] dark:text-[#F1F5F9] text-sm focus:outline-none px-1"
+                                />
+                              )
+                            )}
+                          </td>
+                        ))}
+                        <td className="border border-[#E2E8F0] dark:border-[#334155] text-center">
+                          <button
+                            type="button"
+                            onClick={() => removeDraftRow(rowIndex)}
+                            disabled={draftRows.length === 1}
+                            className="text-[#94A3B8] hover:text-red-500 disabled:opacity-30 transition-colors text-xs px-1"
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A]">
+            <button
+              type="button"
+              onClick={addDraftRow}
+              className="text-xs text-[#2563EB] hover:underline"
+            >
+              + Add row
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={closeEditor}
+                className="border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] px-3 py-1.5 text-xs rounded-[2px] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]"
+              >
+                Back to form
+              </button>
+              <button
+                type="button"
+                onClick={saveDraftRows}
+                className="bg-[#2563EB] hover:bg-blue-700 text-white px-3 py-1.5 text-xs rounded-[2px]"
+              >
+                Save rows
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -745,7 +1110,7 @@ function FieldRenderer({
       )}
 
       {field.type === 'custom_table' && (
-        <CustomTableInput field={field} value={value} onChange={onChange} />
+        <CustomTableInput field={field} value={value} onChange={onChange} disabled={disabled} />
       )}
     </div>
   )

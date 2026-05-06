@@ -64,7 +64,8 @@ export function createSchema(db: DatabaseSync): void {
       field_id   INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
       name       TEXT    NOT NULL,
       col_type   TEXT    NOT NULL DEFAULT 'text'
-                         CHECK(col_type IN ('text','number','date','checkbox')),
+                         CHECK(col_type IN ('text','number','date','checkbox','list')),
+      list_options TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
   `)

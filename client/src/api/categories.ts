@@ -1,14 +1,8 @@
 import type { Category } from '../types'
-
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem('dcp-token')
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  }
-}
+import { authHeaders, handleUnauthorizedResponse } from './authEvents'
 
 async function handleResponse<T>(res: Response): Promise<T> {
+  handleUnauthorizedResponse(res)
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(body.error ?? `Request failed: ${res.status}`)

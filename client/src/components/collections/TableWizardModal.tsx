@@ -13,10 +13,11 @@ const COL_TYPE_LABELS: Record<ColType, string> = {
   number: 'Number',
   date: 'Date',
   checkbox: 'Checkbox',
+  list: 'List',
 }
 
 function newColumn(order: number): TableColumn {
-  return { name: '', colType: 'text', sortOrder: order }
+  return { name: '', colType: 'text', listOptions: null, sortOrder: order }
 }
 
 const INPUT =
@@ -43,7 +44,17 @@ export default function TableWizardModal({ columns, onSave, onClose }: Props) {
 
   function handleSave() {
     const valid = cols.filter(c => c.name.trim() !== '')
-    onSave(valid.map((c, i) => ({ ...c, name: c.name.trim(), sortOrder: i })))
+    onSave(
+      valid.map((c, i) => ({
+        ...c,
+        name: c.name.trim(),
+        listOptions:
+          c.colType === 'list'
+            ? (c.listOptions ?? []).map(opt => opt.trim()).filter(Boolean)
+            : null,
+        sortOrder: i,
+      }))
+    )
   }
 
   return (
@@ -65,34 +76,62 @@ export default function TableWizardModal({ columns, onSave, onClose }: Props) {
         {/* Column list */}
         <div className="px-5 py-4 space-y-3 max-h-80 overflow-y-auto">
           {cols.map((col, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <input
-                type="text"
-                placeholder="Column name"
-                value={col.name}
-                onChange={e => updateCol(idx, { name: e.target.value })}
-                className={`${INPUT} flex-1`}
-              />
-              <select
-                value={col.colType}
-                onChange={e =>
-                  updateCol(idx, { colType: e.target.value as ColType })
-                }
-                className={`${INPUT} w-28`}
-              >
-                {(Object.keys(COL_TYPE_LABELS) as ColType[]).map(t => (
-                  <option key={t} value={t}>
-                    {COL_TYPE_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => removeCol(idx)}
-                disabled={cols.length === 1}
-                className="text-[#94A3B8] hover:text-red-500 transition-colors disabled:opacity-30"
-              >
-                <Trash2 size={14} />
-              </button>
+            <div key={idx} className="space-y-2 rounded border border-[#E2E8F0] dark:border-[#334155] p-2.5">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Column name"
+                  value={col.name}
+                  onChange={e => updateCol(idx, { name: e.target.value })}
+                  className={`${INPUT} flex-1`}
+                />
+                <select
+                  value={col.colType}
+                  onChange={e => {
+                    const nextType = e.target.value as ColType
+                    updateCol(idx, {
+                      colType: nextType,
+                      listOptions: nextType === 'list' ? (col.listOptions ?? []) : null,
+                    })
+                  }}
+                  className={`${INPUT} w-28`}
+                >
+                  {(Object.keys(COL_TYPE_LABELS) as ColType[]).map(t => (
+                    <option key={t} value={t}>
+                      {COL_TYPE_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => removeCol(idx)}
+                  disabled={cols.length === 1}
+                  className="text-[#94A3B8] hover:text-red-500 transition-colors disabled:opacity-30"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+
+              {col.colType === 'list' && (
+                <div>
+                  <label className="block text-[11px] text-[#64748B] mb-1">
+                    List options (comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="New, In Progress, Completed"
+                    value={(col.listOptions ?? []).join(', ')}
+                    onChange={e =>
+                      updateCol(idx, {
+                        listOptions: e.target.value
+                          .split(',')
+                          .map(item => item.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                    className={`${INPUT} w-full`}
+                  />
+                </div>
+              )}
             </div>
           ))}
         </div>

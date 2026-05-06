@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
+import type { UserRole } from './types'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import CollectionsPage from './pages/CollectionsPage'
@@ -8,10 +9,18 @@ import CollectionFillPage from './pages/CollectionFillPage'
 import RecordsPage from './pages/RecordsPage'
 import DashboardPage from './pages/DashboardPage'
 import SettingsPage from './pages/SettingsPage'
+import ReportsPage from './pages/ReportsPage'
 
 function RequireAuth() {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
+  return <Outlet />
+}
+
+function RequireRole({ allowed }: { allowed: UserRole[] }) {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  if (!allowed.includes(user.role)) return <Navigate to="/collections" replace />
   return <Outlet />
 }
 
@@ -34,9 +43,13 @@ export default function App() {
           <Route path="/collections" element={<CollectionsPage />} />
           <Route path="/collections/new" element={<CollectionBuilderPage />} />
           <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
-          <Route path="/records" element={<RecordsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+
+          <Route element={<RequireRole allowed={['administrator', 'team_manager']} />}>
+            <Route path="/records" element={<RecordsPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
         </Route>
       </Route>
 

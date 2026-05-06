@@ -1,12 +1,5 @@
 import type { Collection, CollectionField, CollectionResponse, CollectionStatus } from '../types'
-
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem('dcp-token')
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  }
-}
+import { authHeaders, handleUnauthorizedResponse } from './authEvents'
 
 export interface CollectionPayload {
   title: string
@@ -22,6 +15,7 @@ export interface CollectionPayload {
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
+  handleUnauthorizedResponse(res)
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(body.error ?? `Request failed: ${res.status}`)
@@ -78,6 +72,7 @@ export async function deleteCollection(id: number): Promise<void> {
     method: 'DELETE',
     headers: authHeaders(),
   })
+  handleUnauthorizedResponse(res)
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(body.error ?? `Delete failed: ${res.status}`)
