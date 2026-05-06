@@ -17,10 +17,10 @@ function RequireAuth() {
   return <Outlet />
 }
 
-function RequireRole({ allowed }: { allowed: UserRole[] }) {
+function RequireRole({ allowed, fallback = '/dashboard' }: { allowed: UserRole[]; fallback?: string }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
-  if (!allowed.includes(user.role)) return <Navigate to="/collections" replace />
+  if (!allowed.includes(user.role)) return <Navigate to={fallback} replace />
   return <Outlet />
 }
 
@@ -39,13 +39,14 @@ export default function App() {
       {/* Protected shell */}
       <Route element={<RequireAuth />}>
         <Route element={<HomePage />}>
-          <Route index element={<Navigate to="/collections" replace />} />
-          <Route path="/collections" element={<CollectionsPage />} />
-          <Route path="/collections/new" element={<CollectionBuilderPage />} />
-          <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
+          <Route index element={<Navigate to={user?.role === 'user' ? '/dashboard' : '/collections'} replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
 
-          <Route element={<RequireRole allowed={['administrator', 'team_manager']} />}>
+          {/* Collections + admin routes: user role redirected to dashboard */}
+          <Route element={<RequireRole allowed={['administrator', 'team_manager']} fallback="/dashboard" />}>
+            <Route path="/collections" element={<CollectionsPage />} />
+            <Route path="/collections/new" element={<CollectionBuilderPage />} />
+            <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
             <Route path="/records" element={<RecordsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -53,7 +54,7 @@ export default function App() {
         </Route>
       </Route>
 
-      <Route path="*" element={<Navigate to={user ? '/collections' : '/login'} replace />} />
+      <Route path="*" element={<Navigate to={user ? (user.role === 'user' ? '/dashboard' : '/collections') : '/login'} replace />} />
     </Routes>
   )
 }

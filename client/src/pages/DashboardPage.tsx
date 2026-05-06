@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ClipboardList, Layers } from 'lucide-react'
 import { listCollections } from '../api/collections'
 import { getCategoryColorClasses } from '../utils/categoryColors'
+import { useAuth } from '../contexts/AuthContext'
 import type { Collection } from '../types'
 
 interface CategoryStat {
@@ -12,13 +13,15 @@ interface CategoryStat {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const isUser = user?.role === 'user'
   const [collections, setCollections] = useState<Collection[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     listCollections()
-      .then(setCollections)
+      .then(all => setCollections(isUser ? all.filter(c => c.status === 'published') : all))
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
   }, [])
@@ -100,7 +103,7 @@ export default function DashboardPage() {
                     <li key={col.id}>
                       <button
                         type="button"
-                        onClick={() => navigate(`/collections/${col.id}/edit`)}
+                        onClick={() => isUser ? window.open(`/fill/${col.slug}`, '_blank', 'noopener') : navigate(`/collections/${col.id}/edit`)}
                         className="w-full flex items-center justify-between gap-2 text-left px-2.5 py-2 rounded hover:bg-[#F1F5F9] dark:hover:bg-[#0F172A] transition-colors group"
                       >
                         <span className="flex items-center gap-2 min-w-0">

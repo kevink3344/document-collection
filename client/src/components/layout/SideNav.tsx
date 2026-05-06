@@ -36,7 +36,7 @@ export default function SideNav({
   const { user } = useAuth()
   const visibleNavItems =
     user?.role === 'user'
-      ? NAV_ITEMS.filter(item => !['/records', '/reports', '/settings'].includes(item.to))
+      ? NAV_ITEMS.filter(item => item.to === '/dashboard')
       : NAV_ITEMS
 
   return (

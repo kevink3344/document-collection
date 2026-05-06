@@ -692,22 +692,20 @@ export default function CollectionFillPage() {
     if (!collection) return
     setPageError(null)
 
-    if (!isPreview) {
-      if (!collection.anonymous && currentPageIdx === 0) {
-        if (!respName.trim() || !respEmail.trim()) {
-          setPageError('Please enter your name and email before continuing.')
-          return
-        }
-      }
-
-      const missingRequired = fieldsOnCurrentPage.find(field => {
-        const val = field.id !== undefined ? values[field.id] ?? '' : ''
-        return !isRequiredFieldFilled(field, val)
-      })
-      if (missingRequired) {
-        setPageError('Please complete all required fields on this page.')
+    if (!collection.anonymous && currentPageIdx === 0) {
+      if (!respName.trim() || !respEmail.trim()) {
+        setPageError('Please enter your name and email before continuing.')
         return
       }
+    }
+
+    const missingRequired = fieldsOnCurrentPage.find(field => {
+      const val = field.id !== undefined ? values[field.id] ?? '' : ''
+      return !isRequiredFieldFilled(field, val)
+    })
+    if (missingRequired) {
+      setPageError('Please complete all required fields on this page.')
+      return
     }
 
     setCurrentPageIdx(prev => Math.min(prev + 1, totalPages - 1))
@@ -778,7 +776,7 @@ export default function CollectionFillPage() {
     <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A]">
       {isPreview && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-center py-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
-          Preview mode — responses will not be saved
+          Preview mode — responses will be saved
         </div>
       )}
 
@@ -794,40 +792,64 @@ export default function CollectionFillPage() {
             }}
           />
           <div className="absolute inset-0 flex items-end p-6 md:p-10">
-            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">
-              {collection.title}
-            </h1>
+            <div className="space-y-1">
+              <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">
+                {collection.title}
+              </h1>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/80">
+                {collection.createdByName && (
+                  <span className="flex items-center gap-1">
+                    <User size={11} />
+                    Created by {collection.createdByName}
+                  </span>
+                )}
+                {collection.category && (
+                  <span className="flex items-center gap-1">
+                    <Tag size={11} />
+                    {collection.category}
+                  </span>
+                )}
+                {collection.dateDue && (
+                  <span className="flex items-center gap-1">
+                    <Calendar size={11} />
+                    Due {collection.dateDue}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-        {/* Title (when no cover) */}
-        {!collection.coverPhotoUrl && (
-          <h1 className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">
-            {collection.title}
-          </h1>
-        )}
-
-        {/* Subtitle row */}
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#64748B]">
-          {collection.createdByName && (
-            <span className="flex items-center gap-1">
-              <User size={11} />
-              Created by {collection.createdByName}
-            </span>
-          )}
-          {collection.category && (
-            <span className="flex items-center gap-1">
-              <Tag size={11} />
-              {collection.category}
-            </span>
-          )}
-          {collection.dateDue && (
-            <span className="flex items-center gap-1">
-              <Calendar size={11} />
-              Due {collection.dateDue}
-            </span>
+        {/* Title + metadata block (no cover photo) */}
+        <div className="space-y-1">
+          {!collection.coverPhotoUrl && (
+            <>
+              <h1 className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">
+                {collection.title}
+              </h1>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#64748B]">
+                {collection.createdByName && (
+                  <span className="flex items-center gap-1">
+                    <User size={11} />
+                    Created by {collection.createdByName}
+                  </span>
+                )}
+                {collection.category && (
+                  <span className="flex items-center gap-1">
+                    <Tag size={11} />
+                    {collection.category}
+                  </span>
+                )}
+                {collection.dateDue && (
+                  <span className="flex items-center gap-1">
+                    <Calendar size={11} />
+                    Due {collection.dateDue}
+                  </span>
+                )}
+              </div>
+            </>
           )}
         </div>
 
@@ -894,7 +916,7 @@ export default function CollectionFillPage() {
                       onChange={e => setRespName(e.target.value)}
                       placeholder="Full name"
                       className={INPUT}
-                      required={!isPreview}
+                      required
                     />
                   </div>
                   <div>
@@ -907,7 +929,7 @@ export default function CollectionFillPage() {
                       onChange={e => setRespEmail(e.target.value)}
                       placeholder="you@example.com"
                       className={INPUT}
-                      required={!isPreview}
+                      required
                     />
                   </div>
                 </div>
@@ -926,7 +948,7 @@ export default function CollectionFillPage() {
                     field={field}
                     value={values[field.id] ?? ''}
                     onChange={v => setValue(field.id!, v)}
-                    disabled={isPreview}
+                    disabled={false}
                   />
                 ) : null
               )}
@@ -963,14 +985,10 @@ export default function CollectionFillPage() {
                   <button
                     type="button"
                     onClick={handleSubmit}
-                    disabled={isPreview || submitting}
+                    disabled={submitting}
                     className="flex-1 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 rounded text-sm transition-colors"
                   >
-                    {isPreview
-                      ? 'Submit (preview — disabled)'
-                      : submitting
-                      ? 'Submitting…'
-                      : 'Submit'}
+                    {submitting ? 'Submitting…' : 'Submit'}
                   </button>
                 )}
               </div>
