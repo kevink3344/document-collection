@@ -95,6 +95,23 @@ export function createSchema(db: DatabaseSync): void {
       value TEXT NOT NULL
     );
   `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      collection_id   INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      collection_slug TEXT    NOT NULL,
+      type            TEXT    NOT NULL CHECK(type IN ('due_soon', 'overdue')),
+      title           TEXT    NOT NULL,
+      message         TEXT    NOT NULL,
+      due_date        TEXT    NOT NULL,
+      is_read         INTEGER NOT NULL DEFAULT 0,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      read_at         TEXT,
+      UNIQUE(user_id, collection_id, type, due_date)
+    );
+  `)
 }
 
 export function seedData(db: DatabaseSync): void {
@@ -154,4 +171,12 @@ export function seedData(db: DatabaseSync): void {
   db.prepare(
     `INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`
   ).run('login_subtitle', 'Enterprise Staff Support')
+
+  db.prepare(
+    `INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`
+  ).run('notification_reminder_days', '-3')
+
+  db.prepare(
+    `INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`
+  ).run('notification_late_days', '1')
 }

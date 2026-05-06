@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Code2, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, X } from 'lucide-react'
+import { Bell, ChevronDown, ChevronRight, Code2, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, X } from 'lucide-react'
 import {
   createCategory,
   deleteCategory,
@@ -27,6 +27,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [categoriesExpanded, setCategoriesExpanded] = useState(false)
   const [apiExpanded, setApiExpanded] = useState(false)
+  const [notificationsExpanded, setNotificationsExpanded] = useState(false)
   const [loginPageExpanded, setLoginPageExpanded] = useState(false)
   const [loginSubtitle, setLoginSubtitle] = useState('')
   const [loginSubtitleDraft, setLoginSubtitleDraft] = useState('')
@@ -38,6 +39,13 @@ export default function SettingsPage() {
   const [loginMessageSaving, setLoginMessageSaving] = useState(false)
   const [loginMessageError, setLoginMessageError] = useState<string | null>(null)
   const [loginMessageSaved, setLoginMessageSaved] = useState(false)
+  const [reminderDays, setReminderDays] = useState('-3')
+  const [reminderDaysDraft, setReminderDaysDraft] = useState('-3')
+  const [lateDays, setLateDays] = useState('1')
+  const [lateDaysDraft, setLateDaysDraft] = useState('1')
+  const [notificationWindowSaving, setNotificationWindowSaving] = useState(false)
+  const [notificationWindowError, setNotificationWindowError] = useState<string | null>(null)
+  const [notificationWindowSaved, setNotificationWindowSaved] = useState(false)
 
   useEffect(() => {
     getPublicSetting('login_subtitle')
@@ -45,6 +53,18 @@ export default function SettingsPage() {
       .catch(() => {})
     getPublicSetting('login_message')
       .then(val => { setLoginMessage(val); setLoginMessageDraft(val) })
+      .catch(() => {})
+    getPublicSetting('notification_reminder_days')
+      .then(val => {
+        setReminderDays(val)
+        setReminderDaysDraft(val)
+      })
+      .catch(() => {})
+    getPublicSetting('notification_late_days')
+      .then(val => {
+        setLateDays(val)
+        setLateDaysDraft(val)
+      })
       .catch(() => {})
   }, [])
 
@@ -309,6 +329,104 @@ export default function SettingsPage() {
               Open Swagger UI
               <ExternalLink size={12} />
             </a>
+          </div>
+        )}
+      </section>
+
+      {/* Notifications */}
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setNotificationsExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div>
+            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Notifications</h2>
+            <p className="text-sm text-[#64748B] mt-1">Configure reminder and late offsets for in-app due date notifications.</p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {notificationsExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {notificationsExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                  Reminder Offset (days)
+                </label>
+                <input
+                  type="number"
+                  value={reminderDaysDraft}
+                  onChange={e => { setReminderDaysDraft(e.target.value); setNotificationWindowSaved(false) }}
+                  className={INPUT}
+                  placeholder="-3"
+                />
+                <p className="text-xs text-[#64748B] mt-1">Example: -3 sends reminder three days before due date.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                  Late Offset (days)
+                </label>
+                <input
+                  type="number"
+                  value={lateDaysDraft}
+                  onChange={e => { setLateDaysDraft(e.target.value); setNotificationWindowSaved(false) }}
+                  className={INPUT}
+                  placeholder="1"
+                />
+                <p className="text-xs text-[#64748B] mt-1">Example: 1 sends late notice one day after due date.</p>
+              </div>
+            </div>
+
+            {notificationWindowError && (
+              <p className="text-sm text-red-500">{notificationWindowError}</p>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={notificationWindowSaving || (reminderDaysDraft.trim() === reminderDays && lateDaysDraft.trim() === lateDays)}
+                onClick={async () => {
+                  const nextReminder = parseInt(reminderDaysDraft.trim(), 10)
+                  const nextLate = parseInt(lateDaysDraft.trim(), 10)
+
+                  if (!Number.isInteger(nextReminder) || !Number.isInteger(nextLate)) {
+                    setNotificationWindowError('Offsets must be whole numbers (e.g., -3 and 1).')
+                    return
+                  }
+
+                  setNotificationWindowSaving(true)
+                  setNotificationWindowError(null)
+                  try {
+                    await updateSetting('notification_reminder_days', String(nextReminder))
+                    await updateSetting('notification_late_days', String(nextLate))
+                    setReminderDays(String(nextReminder))
+                    setLateDays(String(nextLate))
+                    setReminderDaysDraft(String(nextReminder))
+                    setLateDaysDraft(String(nextLate))
+                    setNotificationWindowSaved(true)
+                  } catch (err) {
+                    setNotificationWindowError((err as Error).message)
+                  } finally {
+                    setNotificationWindowSaving(false)
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+              >
+                <Bell size={14} />
+                {notificationWindowSaving ? 'Saving…' : 'Save Notification Window'}
+              </button>
+              {notificationWindowSaved && (
+                <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+              )}
+            </div>
           </div>
         )}
       </section>

@@ -161,6 +161,22 @@ const options: swaggerJsdoc.Options = {
             value: { type: 'string', example: 'Welcome to Data Collection Pro.' },
           },
         },
+        Notification: {
+          type: 'object',
+          properties: {
+            id:             { type: 'integer', example: 12 },
+            userId:         { type: 'integer', example: 3 },
+            collectionId:   { type: 'integer', example: 5 },
+            collectionSlug: { type: 'string',  example: 'quarterly-survey-abc123' },
+            type:           { type: 'string',  enum: ['due_soon', 'overdue'] },
+            title:          { type: 'string',  example: 'Collection overdue' },
+            message:        { type: 'string',  example: '"Quarterly Survey" was due on 2026-05-01.' },
+            dueDate:        { type: 'string',  example: '2026-05-01' },
+            isRead:         { type: 'boolean', example: false },
+            createdAt:      { type: 'string',  format: 'date-time' },
+            readAt:         { type: 'string',  format: 'date-time', nullable: true },
+          },
+        },
         Error: {
           type: 'object',
           properties: {
@@ -178,6 +194,7 @@ const options: swaggerJsdoc.Options = {
       { name: 'Responses',   description: 'Survey response submission and retrieval' },
       { name: 'Categories',  description: 'Category management (admin only for write operations)' },
       { name: 'Settings',    description: 'App-wide settings (login message, etc.)' },
+      { name: 'Notifications', description: 'In-app due date and overdue notifications' },
     ],
   },
   apis: SWAGGER_APIS,

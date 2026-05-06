@@ -4,7 +4,12 @@ import { authenticateToken } from '../middleware/auth'
 
 const router = Router()
 
-const ALLOWED_KEYS = new Set(['login_message', 'login_subtitle'])
+const ALLOWED_KEYS = new Set([
+  'login_message',
+  'login_subtitle',
+  'notification_reminder_days',
+  'notification_late_days',
+])
 
 interface DbSetting {
   key: string
@@ -24,7 +29,7 @@ interface DbSetting {
  *         required: true
  *         schema:
  *           type: string
- *           enum: [login_message, login_subtitle]
+ *           enum: [login_message, login_subtitle, notification_reminder_days, notification_late_days]
  *         description: The setting key to retrieve
  *     responses:
  *       200:
@@ -74,7 +79,7 @@ router.get('/:key', (req: Request, res: Response) => {
  *         required: true
  *         schema:
  *           type: string
- *           enum: [login_message, login_subtitle]
+ *           enum: [login_message, login_subtitle, notification_reminder_days, notification_late_days]
  *     requestBody:
  *       required: true
  *       content:

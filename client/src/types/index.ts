@@ -81,3 +81,17 @@ export interface Category {
   name: string
   sortOrder: number
 }
+
+export interface AppNotification {
+  id: number
+  userId: number
+  collectionId: number
+  collectionSlug: string
+  type: 'due_soon' | 'overdue'
+  title: string
+  message: string
+  dueDate: string
+  isRead: boolean
+  createdAt: string
+  readAt: string | null
+}

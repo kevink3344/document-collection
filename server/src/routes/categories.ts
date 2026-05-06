@@ -39,10 +39,73 @@ function listCategories() {
   }))
 }
 
+/**
+ * @swagger
+ * /api/categories:
+ *   get:
+ *     summary: List all categories
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Array of categories
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Category'
+ *       401:
+ *         description: Unauthorized
+ */
 router.get('/', authenticateToken, (_req: Request, res: Response) => {
   res.json(listCategories())
 })
 
+/**
+ * @swagger
+ * /api/categories:
+ *   post:
+ *     summary: Create a new category (admin only)
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 example: Finance
+ *     responses:
+ *       201:
+ *         description: Category created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Category'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Administrator access required
+ *       409:
+ *         description: Category already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post('/', authenticateToken, (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 
@@ -76,6 +139,50 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   })
 })
 
+/**
+ * @swagger
+ * /api/categories/{id}:
+ *   put:
+ *     summary: Rename a category (admin only)
+ *     description: Also updates the category field on any collections using the old name.
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 example: Operations
+ *     responses:
+ *       200:
+ *         description: Updated category
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Category'
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Administrator access required
+ *       404:
+ *         description: Category not found
+ *       409:
+ *         description: Category name already in use
+ */
 router.put('/:id', authenticateToken, (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 
@@ -121,6 +228,37 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
   res.json({ id, name, sortOrder: existing.sort_order })
 })
 
+/**
+ * @swagger
+ * /api/categories/{id}:
+ *   delete:
+ *     summary: Delete a category (admin only)
+ *     description: Fails if any collections are using this category.
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       204:
+ *         description: Deleted successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Administrator access required
+ *       404:
+ *         description: Category not found
+ *       409:
+ *         description: Category is in use by one or more collections
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 

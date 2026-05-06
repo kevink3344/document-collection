@@ -343,8 +343,37 @@ const COL_SELECT = `
 // ── Public routes (MUST come before /:id) ────────────────────
 
 /**
- * GET /api/collections/public/:slug
- * Returns the full collection (fields, columns) for the fill page — no auth.
+ * @swagger
+ * /api/collections/public/{slug}:
+ *   get:
+ *     summary: Get a published collection by slug (no auth)
+ *     tags: [Public]
+ *     security: []
+ *     parameters:
+ *       - in: path
+ *         name: slug
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: preview
+ *         schema:
+ *           type: string
+ *           enum: ['true']
+ *         description: Pass preview=true with a valid bearer token to view draft collections
+ *     responses:
+ *       200:
+ *         description: Collection object with fields
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Collection'
+ *       404:
+ *         description: Collection not found or not published
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/public/:slug', (req: Request, res: Response) => {
   const db = getDb()
@@ -363,8 +392,64 @@ router.get('/public/:slug', (req: Request, res: Response) => {
 })
 
 /**
- * POST /api/collections/public/:slug/responses
- * Submit a response — no auth required.
+ * @swagger
+ * /api/collections/public/{slug}/responses:
+ *   post:
+ *     summary: Submit a response to a published collection (no auth)
+ *     tags: [Public]
+ *     security: []
+ *     parameters:
+ *       - in: path
+ *         name: slug
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               respondentName:
+ *                 type: string
+ *               respondentEmail:
+ *                 type: string
+ *                 format: email
+ *               values:
+ *                 type: array
+ *                 items:
+ *                   $ref: '#/components/schemas/ResponseValue'
+ *     responses:
+ *       201:
+ *         description: Response submitted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: integer
+ *                 submitted:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Collection not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Collection is still a draft
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/public/:slug/responses', (req: Request, res: Response) => {
   const db = getDb()
@@ -435,8 +520,24 @@ router.post('/public/:slug/responses', (req: Request, res: Response) => {
 // ── Authenticated routes ──────────────────────────────────────
 
 /**
- * GET /api/collections
- * List all collections (summary, with response count).
+ * @swagger
+ * /api/collections:
+ *   get:
+ *     summary: List all collections with response counts
+ *     tags: [Collections]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Array of collections (fields omitted, responseCount included)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Collection'
+ *       401:
+ *         description: Unauthorized
  */
 router.get('/', authenticateToken, (_req: Request, res: Response) => {
   const db = getDb()
@@ -458,8 +559,34 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
 })
 
 /**
- * POST /api/collections
- * Create a new collection with its fields.
+ * @swagger
+ * /api/collections:
+ *   post:
+ *     summary: Create a new collection
+ *     tags: [Collections]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CollectionInput'
+ *     responses:
+ *       201:
+ *         description: Collection created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Collection'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
  */
 router.post('/', authenticateToken, (req: Request, res: Response) => {
   const body = req.body as CollectionBody
@@ -525,8 +652,36 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
 })
 
 /**
- * GET /api/collections/:id
- * Get a single collection with full field details.
+ * @swagger
+ * /api/collections/{id}:
+ *   get:
+ *     summary: Get a single collection with full field details
+ *     tags: [Collections]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Collection object with fields and table columns
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Collection'
+ *       400:
+ *         description: Invalid ID
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Collection not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/:id', authenticateToken, (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
@@ -549,8 +704,53 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
 })
 
 /**
- * PUT /api/collections/:id
- * Replace a collection's metadata and fields.
+ * @swagger
+ * /api/collections/{id}:
+ *   put:
+ *     summary: Update a collection's metadata and fields
+ *     description: Fields cannot be modified if responses have already been submitted.
+ *     tags: [Collections]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CollectionInput'
+ *     responses:
+ *       200:
+ *         description: Updated collection
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Collection'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Collection not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Cannot modify fields after responses have been submitted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.put('/:id', authenticateToken, (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
@@ -649,7 +849,32 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 })
 
 /**
- * DELETE /api/collections/:id
+ * @swagger
+ * /api/collections/{id}:
+ *   delete:
+ *     summary: Delete a collection and all its fields and responses
+ *     tags: [Collections]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       204:
+ *         description: Deleted successfully
+ *       400:
+ *         description: Invalid ID
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Collection not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
@@ -672,8 +897,36 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
 })
 
 /**
- * GET /api/collections/:id/responses
- * List all responses for a collection.
+ * @swagger
+ * /api/collections/{id}/responses:
+ *   get:
+ *     summary: List all responses for a collection
+ *     tags: [Responses]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Array of responses with field values
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/CollectionResponse'
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Collection not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/:id/responses', authenticateToken, (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)

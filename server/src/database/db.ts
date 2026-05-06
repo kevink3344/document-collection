@@ -99,4 +99,13 @@ function runMigrations(db: DatabaseSync): void {
       throw err
     }
   }
+
+  // Ensure app_settings table exists (for DBs created before this feature)
+  const settingsExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='app_settings'`)
+    .get()
+  if (!settingsExists) {
+    db.exec(`CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+    console.log('[db] Migration: created app_settings table')
+  }
 }

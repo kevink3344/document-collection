@@ -9,10 +9,13 @@ import usersRouter from './routes/users'
 import categoriesRouter from './routes/categories'
 import collectionsRouter from './routes/collections'
 import settingsRouter from './routes/settings'
+import notificationsRouter from './routes/notifications'
+import { generateDueDateNotifications } from './services/notifications'
 
 const app = express()
 const PORT = process.env.PORT ?? 4000
 const IS_PROD = process.env.NODE_ENV === 'production'
+const NOTIFICATION_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
 // ── Middleware ───────────────────────────────────────────────
 if (!IS_PROD) {
@@ -23,6 +26,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // ── Database ─────────────────────────────────────────────────
 setupDatabase()
+generateDueDateNotifications()
+setInterval(() => {
+  generateDueDateNotifications()
+}, NOTIFICATION_SWEEP_INTERVAL_MS)
 
 // ── Swagger ──────────────────────────────────────────────────
 setupSwagger(app)
@@ -33,6 +40,7 @@ app.use('/api/users', usersRouter)
 app.use('/api/categories', categoriesRouter)
 app.use('/api/collections', collectionsRouter)
 app.use('/api/settings', settingsRouter)
+app.use('/api/notifications', notificationsRouter)
 
 // Health checks for API clients and platform probes
 const healthHandler = (_req: express.Request, res: express.Response) => {

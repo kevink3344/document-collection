@@ -10,6 +10,7 @@ import RecordsPage from './pages/RecordsPage'
 import DashboardPage from './pages/DashboardPage'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
+import NotificationsPage from './pages/NotificationsPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -41,6 +42,7 @@ export default function App() {
         <Route element={<HomePage />}>
           <Route index element={<Navigate to={user?.role === 'user' ? '/dashboard' : '/collections'} replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
 
           {/* Collections + admin routes: user role redirected to dashboard */}
           <Route element={<RequireRole allowed={['administrator', 'team_manager']} fallback="/dashboard" />}>
