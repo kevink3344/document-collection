@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Folder } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { getPublicSetting } from '../api/settings'
 import type { User, UserRole } from '../types'
 
 // Pre-seeded users matching server seed data
@@ -55,6 +56,19 @@ export default function LoginPage() {
     String(EXISTING_USERS[0].id)
   )
   const [signingIn, setSigningIn] = useState(false)
+  const [loginMessage, setLoginMessage] = useState(
+    'Choose an existing user profile or register a new account to enter the data workspace.'
+  )
+  const [loginSubtitle, setLoginSubtitle] = useState('Enterprise Staff Support')
+
+  useEffect(() => {
+    getPublicSetting('login_message')
+      .then(setLoginMessage)
+      .catch(() => { /* keep default */ })
+    getPublicSetting('login_subtitle')
+      .then(setLoginSubtitle)
+      .catch(() => { /* keep default */ })
+  }, [])
 
   const [regName, setRegName] = useState('')
   const [regEmail, setRegEmail] = useState('')
@@ -90,20 +104,19 @@ export default function LoginPage() {
             <div className="w-9 h-9 bg-[#2563EB] flex items-center justify-center shrink-0 rounded-[2px]">
               <Folder size={18} strokeWidth={2.25} />
             </div>
-            <span className="text-[10px] font-semibold tracking-[0.25em] text-[#64748B] uppercase">
+            <span className="text-[10px] font-semibold tracking-[0.25em] text-white/50 uppercase">
               Data Collection Pro
             </span>
           </div>
 
-          <p className="text-[10px] font-semibold tracking-[0.2em] text-[#475569] uppercase mb-4">
-            Enterprise Staff Support
-          </p>
+          <span className="inline-flex items-center px-2.5 py-0.5 border border-white/40 text-[10px] font-semibold tracking-[0.2em] text-white/80 uppercase rounded-[2px] mb-4">
+            {loginSubtitle}
+          </span>
           <h1 className="text-3xl md:text-[2.5rem] font-bold leading-tight mb-5">
-            Sign in to<br />Data Collection<br />Pro
+            Sign in to Data Collection Pro
           </h1>
-          <p className="text-[#64748B] text-sm leading-relaxed max-w-xs">
-            Choose an existing user profile or register a new account to enter
-            the data workspace.
+          <p className="text-white/70 text-sm leading-relaxed">
+            {loginMessage}
           </p>
         </div>
 
@@ -114,8 +127,8 @@ export default function LoginPage() {
               key={stat.label}
               className="flex-1 border border-[#1E3A5F] p-3"
             >
-              <div className="font-mono text-xl font-medium">{stat.value}</div>
-              <div className="text-[9px] tracking-[0.2em] text-[#475569] uppercase mt-1">
+              <div className="font-mono text-xl font-medium text-white">{stat.value}</div>
+              <div className="text-[9px] tracking-[0.2em] text-white/50 uppercase mt-1">
                 {stat.label}
               </div>
             </div>

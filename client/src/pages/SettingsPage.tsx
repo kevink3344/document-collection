@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Pencil, Plus, Save, Tag, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Code2, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, X } from 'lucide-react'
 import {
   createCategory,
   deleteCategory,
   listCategories,
   updateCategory,
 } from '../api/categories'
+import { getPublicSetting, updateSetting } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
 import type { Category } from '../types'
 import { getCategoryColorClasses } from '../utils/categoryColors'
@@ -25,6 +26,27 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [categoriesExpanded, setCategoriesExpanded] = useState(false)
+  const [apiExpanded, setApiExpanded] = useState(false)
+  const [loginPageExpanded, setLoginPageExpanded] = useState(false)
+  const [loginSubtitle, setLoginSubtitle] = useState('')
+  const [loginSubtitleDraft, setLoginSubtitleDraft] = useState('')
+  const [loginSubtitleSaving, setLoginSubtitleSaving] = useState(false)
+  const [loginSubtitleError, setLoginSubtitleError] = useState<string | null>(null)
+  const [loginSubtitleSaved, setLoginSubtitleSaved] = useState(false)
+  const [loginMessage, setLoginMessage] = useState('')
+  const [loginMessageDraft, setLoginMessageDraft] = useState('')
+  const [loginMessageSaving, setLoginMessageSaving] = useState(false)
+  const [loginMessageError, setLoginMessageError] = useState<string | null>(null)
+  const [loginMessageSaved, setLoginMessageSaved] = useState(false)
+
+  useEffect(() => {
+    getPublicSetting('login_subtitle')
+      .then(val => { setLoginSubtitle(val); setLoginSubtitleDraft(val) })
+      .catch(() => {})
+    getPublicSetting('login_message')
+      .then(val => { setLoginMessage(val); setLoginMessageDraft(val) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     listCategories()
@@ -246,6 +268,164 @@ export default function SettingsPage() {
                   </div>
                 )
               })}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* API Documentation */}
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setApiExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div>
+            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">API Documentation</h2>
+            <p className="text-sm text-[#64748B] mt-1">Interactive Swagger UI for exploring and testing the REST API.</p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {apiExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {apiExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+            <p className="text-sm text-[#475569] dark:text-[#94A3B8]">
+              The Swagger UI provides a full interactive reference for all available API endpoints,
+              including authentication, collections, categories, and responses.
+            </p>
+            <a
+              href={`${window.location.protocol}//${window.location.hostname}:4000/api-docs`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-[#2563EB] hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+            >
+              <Code2 size={14} />
+              Open Swagger UI
+              <ExternalLink size={12} />
+            </a>
+          </div>
+        )}
+      </section>
+
+      {/* Login Page */}
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setLoginPageExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div>
+            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Login Page</h2>
+            <p className="text-sm text-[#64748B] mt-1">Customise the message displayed on the sign-in screen.</p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {loginPageExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {loginPageExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-5">
+            {/* Subtitle badge */}
+            <div>
+              <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                Subtitle Badge
+              </label>
+              <input
+                type="text"
+                value={loginSubtitleDraft}
+                onChange={e => { setLoginSubtitleDraft(e.target.value); setLoginSubtitleSaved(false) }}
+                className={INPUT}
+                placeholder="e.g. Enterprise Staff Support"
+              />
+            </div>
+
+            {loginSubtitleError && (
+              <p className="text-sm text-red-500">{loginSubtitleError}</p>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={loginSubtitleSaving || loginSubtitleDraft.trim() === loginSubtitle}
+                onClick={async () => {
+                  const val = loginSubtitleDraft.trim()
+                  if (!val) return
+                  setLoginSubtitleSaving(true)
+                  setLoginSubtitleError(null)
+                  try {
+                    await updateSetting('login_subtitle', val)
+                    setLoginSubtitle(val)
+                    setLoginSubtitleSaved(true)
+                  } catch (err) {
+                    setLoginSubtitleError((err as Error).message)
+                  } finally {
+                    setLoginSubtitleSaving(false)
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+              >
+                <MessageSquare size={14} />
+                {loginSubtitleSaving ? 'Saving…' : 'Save Subtitle'}
+              </button>
+              {loginSubtitleSaved && (
+                <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+              )}
+            </div>
+
+            <div className="border-t border-[#E2E8F0] dark:border-[#334155] pt-5">
+              <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                Welcome Message
+              </label>
+              <textarea
+                rows={3}
+                value={loginMessageDraft}
+                onChange={e => { setLoginMessageDraft(e.target.value); setLoginMessageSaved(false) }}
+                className={INPUT + ' resize-none'}
+                placeholder="Enter the message shown on the login page…"
+              />
+            </div>
+
+            {loginMessageError && (
+              <p className="text-sm text-red-500">{loginMessageError}</p>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={loginMessageSaving || loginMessageDraft.trim() === loginMessage}
+                onClick={async () => {
+                  const val = loginMessageDraft.trim()
+                  if (!val) return
+                  setLoginMessageSaving(true)
+                  setLoginMessageError(null)
+                  try {
+                    await updateSetting('login_message', val)
+                    setLoginMessage(val)
+                    setLoginMessageSaved(true)
+                  } catch (err) {
+                    setLoginMessageError((err as Error).message)
+                  } finally {
+                    setLoginMessageSaving(false)
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+              >
+                <MessageSquare size={14} />
+                {loginMessageSaving ? 'Saving…' : 'Save Message'}
+              </button>
+              {loginMessageSaved && (
+                <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+              )}
             </div>
           </div>
         )}

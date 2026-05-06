@@ -88,6 +88,13 @@ export function createSchema(db: DatabaseSync): void {
       value       TEXT
     );
   `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
 }
 
 export function seedData(db: DatabaseSync): void {
@@ -135,4 +142,16 @@ export function seedData(db: DatabaseSync): void {
     db.exec('ROLLBACK')
     throw err
   }
+
+  // Seed default app settings
+  db.prepare(
+    `INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`
+  ).run(
+    'login_message',
+    'Choose an existing user profile or register a new account to enter the data workspace.'
+  )
+
+  db.prepare(
+    `INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`
+  ).run('login_subtitle', 'Enterprise Staff Support')
 }
