@@ -80,21 +80,16 @@ export default function DashboardPage() {
                 className={`bg-white dark:bg-[#1E293B] border-2 ${colors.card} rounded-lg p-5 flex flex-col gap-4`}
               >
                 {/* Header */}
-                <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
                   <span
-                    className={`inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-[2px] ${colors.badge}`}
+                    className={`inline-flex items-center text-sm font-bold uppercase tracking-wide px-2.5 py-1 rounded-[2px] ${colors.badge}`}
                   >
-                    Category
-                  </span>
-                  <h2 className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9] leading-tight">
                     {category}
-                  </h2>
-                </div>
-
-                {/* Collection count */}
-                <div className="bg-[#F8FAFC] dark:bg-[#0F172A] rounded p-3 text-center">
-                  <p className="text-3xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">{cols.length}</p>
-                  <p className="text-xs text-[#64748B] mt-0.5">Collections</p>
+                  </span>
+                  <div className="bg-[#F8FAFC] dark:bg-[#0F172A] rounded px-3 py-1 text-center shrink-0">
+                    <span className="text-sm font-bold text-[#1E293B] dark:text-[#F1F5F9]">{cols.length}</span>
+                    <span className="text-xs text-[#64748B] ml-1">{cols.length === 1 ? 'Collection' : 'Collections'}</span>
+                  </div>
                 </div>
 
                 {/* Collection list */}
