@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Calendar, ClipboardList, FileText, Mail, Tag, User, Download } from 'lucide-react'
+import { Calendar, ClipboardList, Mail, Tag, User, Download } from 'lucide-react'
 import { getCollection, getResponses, listCollections } from '../api/collections'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import type { Collection, CollectionField, CollectionResponse } from '../types'
