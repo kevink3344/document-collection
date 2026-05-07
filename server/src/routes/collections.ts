@@ -1036,7 +1036,7 @@ router.get('/:id/versions', authenticateToken, (req: Request, res: Response) => 
        WHERE collection_id = ?
        ORDER BY version_number DESC`
     )
-    .all(id) as DbCollectionVersion[]
+    .all(id) as unknown as DbCollectionVersion[]
 
   res.json(
     versions.map(v => ({

@@ -93,7 +93,7 @@ router.get('/', (req: Request, res: Response): void => {
          WHERE cr.respondent_email = ?
          ORDER BY cr.submitted_at DESC`
       )
-      .all(userRow.email) as DbSubmissionRow[]
+      .all(userRow.email) as unknown as DbSubmissionRow[]
 
     res.json(
       rows.map(r => ({
@@ -166,7 +166,7 @@ router.get('/:responseId', (req: Request, res: Response): void => {
          WHERE crv.response_id = ?
          ORDER BY cf.page_number ASC, cf.sort_order ASC`
       )
-      .all(responseId) as DbValueRow[]
+      .all(responseId) as unknown as DbValueRow[]
 
     res.json({
       responseId: responseRow.response_id,
