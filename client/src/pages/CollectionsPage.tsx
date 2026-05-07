@@ -166,7 +166,7 @@ export default function CollectionsPage() {
                 <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight flex items-center gap-1.5">
                   {col.title}
                   {col.hasCustomTable && (
-                    <Table size={12} className="shrink-0 text-[#2563EB] dark:text-white" title="Contains custom table" />
+                    <Table size={12} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Contains custom table" />
                   )}
                 </h2>
                 {col.description && (

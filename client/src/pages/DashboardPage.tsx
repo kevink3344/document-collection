@@ -106,7 +106,7 @@ export default function DashboardPage() {
                           <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] truncate group-hover:text-[#2563EB] flex items-center gap-1">
                             {col.title}
                             {col.hasCustomTable && (
-                              <Table size={11} className="shrink-0 text-[#2563EB] dark:text-white" title="Contains custom table" />
+                              <Table size={11} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Contains custom table" />
                             )}
                           </span>
                         </span>
