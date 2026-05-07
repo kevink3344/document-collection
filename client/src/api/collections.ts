@@ -1,4 +1,10 @@
-import type { Collection, CollectionField, CollectionResponse, CollectionStatus } from '../types'
+import type {
+  Collection,
+  CollectionField,
+  CollectionResponse,
+  CollectionStatus,
+  CollectionVersion,
+} from '../types'
 import { authHeaders, handleUnauthorizedResponse } from './authEvents'
 
 export interface CollectionPayload {
@@ -11,6 +17,8 @@ export interface CollectionPayload {
   instructions?: string
   instructionsDocUrl?: string
   anonymous: boolean
+  allowSubmissionEdits: boolean
+  submissionEditWindowHours?: number
   fields: Omit<CollectionField, 'id'>[]
 }
 
@@ -77,6 +85,36 @@ export async function deleteCollection(id: number): Promise<void> {
     const body = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(body.error ?? `Delete failed: ${res.status}`)
   }
+}
+
+export async function listCollectionVersions(collectionId: number): Promise<CollectionVersion[]> {
+  const res = await fetch(`/api/collections/${collectionId}/versions`, {
+    headers: authHeaders(),
+  })
+  return handleResponse<CollectionVersion[]>(res)
+}
+
+export async function createCollectionVersion(
+  collectionId: number,
+  payload: CollectionPayload
+): Promise<Collection> {
+  const res = await fetch(`/api/collections/${collectionId}/versions`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  })
+  return handleResponse<Collection>(res)
+}
+
+export async function publishCollectionVersion(
+  collectionId: number,
+  versionId: number
+): Promise<Collection> {
+  const res = await fetch(`/api/collections/${collectionId}/versions/${versionId}/publish`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  return handleResponse<Collection>(res)
 }
 
 export async function submitResponse(

@@ -49,7 +49,12 @@ interface DbCollection {
   cover_photo_url: string | null
   instructions: string | null
   instructions_doc_url: string | null
+  active_version_id: number | null
+  active_version_number?: number | null
+  active_version_status?: 'draft' | 'published' | null
   anonymous: number
+  allow_submission_edits: number
+  submission_edit_window_hours: number | null
   created_at: string
   updated_at: string
   creator_name?: string
@@ -58,11 +63,13 @@ interface DbCollection {
 interface DbField {
   id: number
   collection_id: number
+  version_id: number | null
   type: FieldType
   label: string
   page_number: number
   required: number
   options: string | null
+  display_style: string
   sort_order: number
 }
 
@@ -73,6 +80,16 @@ interface DbTableColumn {
   col_type: ColType
   list_options: string | null
   sort_order: number
+}
+
+interface DbCollectionVersion {
+  id: number
+  collection_id: number
+  version_number: number
+  status: 'draft' | 'published'
+  created_by: number
+  created_at: string
+  published_at: string | null
 }
 
 interface DbResponse {
@@ -105,6 +122,7 @@ interface FieldInput {
   page?: number
   required?: boolean
   options?: string[]
+  displayStyle?: string
   tableColumns?: TableColumnInput[]
   sortOrder?: number
 }
@@ -119,7 +137,27 @@ interface CollectionBody {
   instructions?: string
   instructionsDocUrl?: string
   anonymous?: boolean
+  allowSubmissionEdits?: boolean
+  submissionEditWindowHours?: number
   fields?: FieldInput[]
+}
+
+function resolveSubmissionEditSettings(body: CollectionBody): {
+  allowSubmissionEdits: boolean
+  submissionEditWindowHours: number | null
+} {
+  const allowSubmissionEdits = body.allowSubmissionEdits === true
+  if (!allowSubmissionEdits) {
+    return { allowSubmissionEdits: false, submissionEditWindowHours: null }
+  }
+
+  const hoursRaw = body.submissionEditWindowHours
+  const hours = typeof hoursRaw === 'number' ? hoursRaw : Number(hoursRaw)
+  if (!Number.isFinite(hours) || !Number.isInteger(hours) || hours < 1 || hours > 168) {
+    throw new Error('submissionEditWindowHours must be an integer between 1 and 168')
+  }
+
+  return { allowSubmissionEdits: true, submissionEditWindowHours: hours }
 }
 
 function normalizeCategory(category: string | undefined): string | null {
@@ -162,7 +200,12 @@ function toApiCollection(
     coverPhotoUrl: c.cover_photo_url,
     instructions: c.instructions,
     instructionsDocUrl: c.instructions_doc_url,
+    activeVersionId: c.active_version_id,
+    currentVersionNumber: c.active_version_number ?? null,
+    currentVersionStatus: c.active_version_status ?? null,
     anonymous: c.anonymous === 1,
+    allowSubmissionEdits: c.allow_submission_edits === 1,
+    submissionEditWindowHours: c.submission_edit_window_hours,
     createdAt: c.created_at,
     updatedAt: c.updated_at,
     fields: fields.map(f => ({
@@ -172,6 +215,7 @@ function toApiCollection(
       page: Number(f.page_number) || 1,
       required: f.required === 1,
       options: f.options ? (JSON.parse(f.options) as string[]) : null,
+      displayStyle: f.display_style === 'dropdown' ? 'dropdown' : 'radio',
       sortOrder: f.sort_order,
       tableColumns:
         f.type === 'custom_table'
@@ -209,14 +253,21 @@ function hasValidAuthToken(req: Request): boolean {
 // ── Helpers ───────────────────────────────────────────────────
 
 function fetchFields(
-  collectionId: number
+  collectionId: number,
+  versionId: number | null
 ): [DbField[], Map<number, DbTableColumn[]>] {
   const db = getDb()
-  const fields = db
-    .prepare(
-      'SELECT * FROM collection_fields WHERE collection_id = ? ORDER BY page_number, sort_order'
-    )
-    .all(collectionId) as unknown as DbField[]
+  const fields = (versionId
+    ? db
+        .prepare(
+          'SELECT * FROM collection_fields WHERE collection_id = ? AND version_id = ? ORDER BY page_number, sort_order'
+        )
+        .all(collectionId, versionId)
+    : db
+        .prepare(
+          'SELECT * FROM collection_fields WHERE collection_id = ? ORDER BY page_number, sort_order'
+        )
+        .all(collectionId)) as unknown as DbField[]
 
   const colsByField = new Map<number, DbTableColumn[]>()
   if (fields.length > 0) {
@@ -242,16 +293,18 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, type, label, page_number, required, options, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, type, label, page_number, required, options, display_style, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
+        null,
         field.type,
         field.label,
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
+        field.type === 'single_choice' ? (field.displayStyle ?? 'radio') : 'radio',
         field.sortOrder ?? idx
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
@@ -272,6 +325,68 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
       })
     }
   })
+}
+
+function insertFieldsForVersion(collectionId: number, versionId: number, fields: FieldInput[]): void {
+  const db = getDb()
+  fields.forEach((field, idx) => {
+    const r = db
+      .prepare(
+        `INSERT INTO collection_fields
+           (collection_id, version_id, type, label, page_number, required, options, display_style, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        collectionId,
+        versionId,
+        field.type,
+        field.label,
+        Math.max(1, Math.floor(field.page ?? 1)),
+        field.required ? 1 : 0,
+        field.options?.length ? JSON.stringify(field.options) : null,
+        field.type === 'single_choice' ? (field.displayStyle ?? 'radio') : 'radio',
+        field.sortOrder ?? idx
+      )
+    if (field.type === 'custom_table' && field.tableColumns?.length) {
+      const fieldId = r.lastInsertRowid as number
+      field.tableColumns.forEach((col, ci) => {
+        db.prepare(
+          `INSERT INTO collection_table_columns (field_id, name, col_type, list_options, sort_order)
+           VALUES (?, ?, ?, ?, ?)`
+        ).run(
+          fieldId,
+          col.name,
+          col.colType,
+          col.colType === 'list'
+            ? JSON.stringify((col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean))
+            : null,
+          col.sortOrder ?? ci
+        )
+      })
+    }
+  })
+}
+
+function createCollectionVersion(
+  collectionId: number,
+  createdBy: number,
+  status: 'draft' | 'published',
+  fields: FieldInput[]
+): { versionId: number; versionNumber: number } {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT COALESCE(MAX(version_number), 0) AS maxVersion FROM collection_versions WHERE collection_id = ?')
+    .get(collectionId) as { maxVersion: number }
+  const versionNumber = row.maxVersion + 1
+  const inserted = db
+    .prepare(
+      `INSERT INTO collection_versions (collection_id, version_number, status, created_by, published_at)
+       VALUES (?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`
+    )
+    .run(collectionId, versionNumber, status, createdBy, status)
+  const versionId = inserted.lastInsertRowid as number
+  insertFieldsForVersion(collectionId, versionId, fields)
+  return { versionId, versionNumber }
 }
 
 function normaliseIncomingFields(fields: FieldInput[]): string {
@@ -335,9 +450,12 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
 }
 
 const COL_SELECT = `
-  SELECT c.*, u.name AS creator_name
+  SELECT c.*, u.name AS creator_name,
+         cv.version_number AS active_version_number,
+         cv.status AS active_version_status
   FROM collections c
   LEFT JOIN users u ON u.id = c.created_by
+  LEFT JOIN collection_versions cv ON cv.id = c.active_version_id
 `
 
 // ── Public routes (MUST come before /:id) ────────────────────
@@ -387,7 +505,7 @@ router.get('/public/:slug', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
-  const [fields, colsByField] = fetchFields(c.id)
+  const [fields, colsByField] = fetchFields(c.id, c.active_version_id)
   res.json(toApiCollection(c, fields, colsByField))
 })
 
@@ -454,8 +572,15 @@ router.get('/public/:slug', (req: Request, res: Response) => {
 router.post('/public/:slug/responses', (req: Request, res: Response) => {
   const db = getDb()
   const col = db
-    .prepare('SELECT id, anonymous, status FROM collections WHERE slug = ?')
-    .get(req.params.slug) as unknown as { id: number; anonymous: number; status: 'draft' | 'published' } | undefined
+    .prepare('SELECT id, anonymous, status, active_version_id, allow_submission_edits, submission_edit_window_hours FROM collections WHERE slug = ?')
+    .get(req.params.slug) as unknown as {
+      id: number
+      anonymous: number
+      status: 'draft' | 'published'
+      active_version_id: number | null
+      allow_submission_edits: number
+      submission_edit_window_hours: number | null
+    } | undefined
 
   if (!col) {
     res.status(404).json({ error: 'Collection not found' })
@@ -485,16 +610,27 @@ router.post('/public/:slug/responses', (req: Request, res: Response) => {
 
   db.exec('BEGIN')
   try {
+    const editWindowHours = col.allow_submission_edits === 1
+      ? col.submission_edit_window_hours
+      : null
+    const editableUntil = editWindowHours && col.anonymous !== 1
+      ? (db
+          .prepare(`SELECT datetime('now', '+' || ? || ' hours') AS ts`)
+          .get(editWindowHours) as { ts: string }).ts
+      : null
+
     const r = db
       .prepare(
         `INSERT INTO collection_responses
-           (collection_id, respondent_name, respondent_email)
-         VALUES (?, ?, ?)`
+           (collection_id, collection_version_id, respondent_name, respondent_email, editable_until)
+         VALUES (?, ?, ?, ?, ?)`
       )
       .run(
         col.id,
+        col.active_version_id,
         body.respondentName?.trim() ?? null,
-        body.respondentEmail?.trim() ?? null
+        body.respondentEmail?.trim() ?? null,
+        editableUntil
       )
 
     const responseId = r.lastInsertRowid as number
@@ -555,9 +691,9 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
       .get(c.id) as { n: number }
     const { ct } = db
       .prepare(
-        "SELECT COUNT(*) AS ct FROM collection_fields WHERE collection_id = ? AND type = 'custom_table'"
+        "SELECT COUNT(*) AS ct FROM collection_fields WHERE collection_id = ? AND version_id = ? AND type = 'custom_table'"
       )
-      .get(c.id) as { ct: number }
+      .get(c.id, c.active_version_id) as { ct: number }
     return { ...toApiCollection(c, [], new Map()), responseCount: n, hasCustomTable: ct > 0 }
   })
   res.json(result)
@@ -603,9 +739,11 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   const db = getDb()
   const slug = generateUniqueSlug(db, body.title)
   let category: string | null
+  let editSettings: { allowSubmissionEdits: boolean; submissionEditWindowHours: number | null }
 
   try {
     category = ensureCategoryExists(normalizeCategory(body.category))
+    editSettings = resolveSubmissionEditSettings(body)
   } catch (err) {
     res.status(400).json({ error: (err as Error).message })
     return
@@ -613,17 +751,19 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
 
   db.exec('BEGIN')
   try {
+    const requestedStatus = resolveRequestedStatus(body)
     const r = db
       .prepare(
         `INSERT INTO collections
            (slug, title, status, description, category, created_by, date_due, cover_photo_url,
-            instructions, instructions_doc_url, anonymous)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            instructions, instructions_doc_url, anonymous, allow_submission_edits,
+            submission_edit_window_hours, active_version_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
       )
       .run(
         slug,
         body.title.trim(),
-        resolveRequestedStatus(body),
+        requestedStatus,
         body.description?.trim() ?? null,
         category,
         req.user!.sub,
@@ -631,11 +771,14 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
         body.coverPhotoUrl ?? null,
         body.instructions ?? null,
         body.instructionsDocUrl ?? null,
-        body.anonymous ? 1 : 0
+        body.anonymous ? 1 : 0,
+        editSettings.allowSubmissionEdits ? 1 : 0,
+        editSettings.submissionEditWindowHours
       )
 
     const id = r.lastInsertRowid as number
-    if (body.fields?.length) insertFields(id, body.fields)
+    const { versionId } = createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
+    db.prepare('UPDATE collections SET active_version_id = ? WHERE id = ?').run(versionId, id)
 
     db.exec('COMMIT')
 
@@ -647,7 +790,7 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
       res.status(500).json({ error: 'Failed to load created collection' })
       return
     }
-    const [fields, colsByField] = fetchFields(id)
+    const [fields, colsByField] = fetchFields(id, c.active_version_id)
     res.status(201).json(toApiCollection(c, fields, colsByField))
   } catch (err) {
     db.exec('ROLLBACK')
@@ -704,7 +847,7 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
-  const [fields, colsByField] = fetchFields(id)
+  const [fields, colsByField] = fetchFields(id, c.active_version_id)
   res.json(toApiCollection(c, fields, colsByField))
 })
 
@@ -771,6 +914,168 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
   }
 
   let category: string | null
+  let editSettings: { allowSubmissionEdits: boolean; submissionEditWindowHours: number | null }
+
+  try {
+    category = ensureCategoryExists(normalizeCategory(body.category))
+    editSettings = resolveSubmissionEditSettings(body)
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message })
+    return
+  }
+
+  const db = getDb()
+  const existingCollection = db
+    .prepare(`${COL_SELECT} WHERE c.id = ?`)
+    .get(id) as unknown as DbCollection | undefined
+
+  if (!existingCollection) {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  const activeVersionId = existingCollection.active_version_id
+  if (!activeVersionId) {
+    res.status(500).json({ error: 'Collection version metadata is missing' })
+    return
+  }
+
+  const requestedStatus = resolveRequestedStatus(body)
+
+  db.exec('BEGIN')
+  try {
+    const { n: responseCount } = db
+      .prepare('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ? AND collection_version_id = ?')
+      .get(id, activeVersionId) as { n: number }
+
+    const [existingFields, existingColsByField] = fetchFields(id, activeVersionId)
+    const incomingFields = body.fields ?? []
+    const sameStructure =
+      normaliseDbFields(existingFields, existingColsByField)
+      === normaliseIncomingFields(incomingFields)
+
+    let targetVersionId = activeVersionId
+    if (responseCount > 0 && !sameStructure) {
+      const { versionId } = createCollectionVersion(id, req.user!.sub, requestedStatus, incomingFields)
+      targetVersionId = versionId
+    } else if (responseCount === 0) {
+      db.prepare('DELETE FROM collection_fields WHERE collection_id = ? AND version_id = ?').run(id, activeVersionId)
+      if (incomingFields.length) {
+        insertFieldsForVersion(id, activeVersionId, incomingFields)
+      }
+    }
+
+    db.prepare(
+      `UPDATE collections
+       SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
+           instructions = ?, instructions_doc_url = ?, anonymous = ?, allow_submission_edits = ?,
+           submission_edit_window_hours = ?, active_version_id = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(
+      body.title.trim(),
+      requestedStatus,
+      body.description?.trim() ?? null,
+      category,
+      body.dateDue ?? null,
+      body.coverPhotoUrl ?? null,
+      body.instructions ?? null,
+      body.instructionsDocUrl ?? null,
+      body.anonymous ? 1 : 0,
+      editSettings.allowSubmissionEdits ? 1 : 0,
+      editSettings.submissionEditWindowHours,
+      targetVersionId,
+      id
+    )
+
+    db.prepare(
+      `UPDATE collection_versions
+       SET status = ?, published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, datetime('now')) ELSE NULL END
+       WHERE id = ?`
+    ).run(requestedStatus, requestedStatus, targetVersionId)
+
+    db.exec('COMMIT')
+
+    const c = db
+      .prepare(`${COL_SELECT} WHERE c.id = ?`)
+      .get(id) as unknown as DbCollection | undefined
+    if (!c) {
+      res.status(500).json({ error: 'Failed to load updated collection' })
+      return
+    }
+    const [fields, colsByField] = fetchFields(id, c.active_version_id)
+    res.json(toApiCollection(c, fields, colsByField))
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch { /* ignore if already committed */ }
+    console.error('[collections] update:', err)
+    res.status(500).json({ error: 'Failed to update collection' })
+  }
+})
+
+router.get('/:id/versions', authenticateToken, (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid collection ID' })
+    return
+  }
+
+  const db = getDb()
+  const collection = db
+    .prepare('SELECT id, active_version_id FROM collections WHERE id = ?')
+    .get(id) as { id: number; active_version_id: number | null } | undefined
+
+  if (!collection) {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  const versions = db
+    .prepare(
+      `SELECT *
+       FROM collection_versions
+       WHERE collection_id = ?
+       ORDER BY version_number DESC`
+    )
+    .all(id) as DbCollectionVersion[]
+
+  res.json(
+    versions.map(v => ({
+      id: v.id,
+      versionNumber: v.version_number,
+      status: v.status,
+      createdBy: v.created_by,
+      createdAt: v.created_at,
+      publishedAt: v.published_at,
+      isActive: collection.active_version_id === v.id,
+    }))
+  )
+})
+
+router.post('/:id/versions', authenticateToken, (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid collection ID' })
+    return
+  }
+
+  const body = req.body as CollectionBody
+  if (!body.title?.trim()) {
+    res.status(400).json({ error: 'title is required' })
+    return
+  }
+
+  const db = getDb()
+  const collection = db
+    .prepare(`${COL_SELECT} WHERE c.id = ?`)
+    .get(id) as DbCollection | undefined
+
+  if (!collection) {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  const requestedStatus = resolveRequestedStatus(body)
+  let category: string | null
 
   try {
     category = ensureCategoryExists(normalizeCategory(body.category))
@@ -779,45 +1084,19 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const exists = db
-    .prepare('SELECT id FROM collections WHERE id = ?')
-    .get(id)
-  if (!exists) {
-    res.status(404).json({ error: 'Collection not found' })
-    return
-  }
-
   db.exec('BEGIN')
   try {
-    const { n: responseCount } = db
-      .prepare('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ?')
-      .get(id) as unknown as { n: number }
-
-    if (responseCount > 0) {
-      const [existingFields, existingColsByField] = fetchFields(id)
-      const incomingFields = body.fields ?? []
-      const sameStructure =
-        normaliseDbFields(existingFields, existingColsByField)
-        === normaliseIncomingFields(incomingFields)
-      if (!sameStructure) {
-        db.exec('ROLLBACK')
-        res.status(409).json({
-          error: 'Cannot modify form fields after responses have been submitted. You can still update title, description, and settings.',
-        })
-        return
-      }
-    }
+    const { versionId } = createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
 
     db.prepare(
       `UPDATE collections
        SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
-           instructions = ?, instructions_doc_url = ?, anonymous = ?,
+           instructions = ?, instructions_doc_url = ?, anonymous = ?, active_version_id = ?,
            updated_at = datetime('now')
        WHERE id = ?`
     ).run(
       body.title.trim(),
-      resolveRequestedStatus(body),
+      requestedStatus,
       body.description?.trim() ?? null,
       category,
       body.dateDue ?? null,
@@ -825,31 +1104,79 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       body.instructions ?? null,
       body.instructionsDocUrl ?? null,
       body.anonymous ? 1 : 0,
+      versionId,
       id
     )
 
-    // For collections with existing responses, keep existing fields to preserve FK integrity.
-    if (responseCount === 0) {
-      db.prepare('DELETE FROM collection_fields WHERE collection_id = ?').run(id)
-      if (body.fields?.length) insertFields(id, body.fields)
-    }
-
     db.exec('COMMIT')
 
-    const c = db
+    const updated = db
       .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as unknown as DbCollection | undefined
-    if (!c) {
-      // COMMIT already succeeded; just report the unexpected state
+      .get(id) as DbCollection | undefined
+
+    if (!updated) {
       res.status(500).json({ error: 'Failed to load updated collection' })
       return
     }
-    const [fields, colsByField] = fetchFields(id)
-    res.json(toApiCollection(c, fields, colsByField))
+
+    const [fields, colsByField] = fetchFields(id, updated.active_version_id)
+    res.status(201).json(toApiCollection(updated, fields, colsByField))
   } catch (err) {
-    try { db.exec('ROLLBACK') } catch { /* ignore if already committed */ }
-    console.error('[collections] update:', err)
-    res.status(500).json({ error: 'Failed to update collection' })
+    db.exec('ROLLBACK')
+    console.error('[collections] create version:', err)
+    res.status(500).json({ error: 'Failed to create collection version' })
+  }
+})
+
+router.post('/:id/versions/:versionId/publish', authenticateToken, (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  const versionId = parseInt(req.params.versionId, 10)
+  if (isNaN(id) || isNaN(versionId)) {
+    res.status(400).json({ error: 'Invalid collection or version ID' })
+    return
+  }
+
+  const db = getDb()
+  const version = db
+    .prepare('SELECT id, collection_id FROM collection_versions WHERE id = ? AND collection_id = ?')
+    .get(versionId, id) as { id: number; collection_id: number } | undefined
+
+  if (!version) {
+    res.status(404).json({ error: 'Version not found' })
+    return
+  }
+
+  db.exec('BEGIN')
+  try {
+    db.prepare(
+      `UPDATE collection_versions
+       SET status = 'published', published_at = COALESCE(published_at, datetime('now'))
+       WHERE id = ?`
+    ).run(versionId)
+
+    db.prepare(
+      `UPDATE collections
+       SET status = 'published', active_version_id = ?, updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(versionId, id)
+
+    db.exec('COMMIT')
+
+    const updated = db
+      .prepare(`${COL_SELECT} WHERE c.id = ?`)
+      .get(id) as DbCollection | undefined
+
+    if (!updated) {
+      res.status(500).json({ error: 'Failed to load updated collection' })
+      return
+    }
+
+    const [fields, colsByField] = fetchFields(id, updated.active_version_id)
+    res.json(toApiCollection(updated, fields, colsByField))
+  } catch (err) {
+    db.exec('ROLLBACK')
+    console.error('[collections] publish version:', err)
+    res.status(500).json({ error: 'Failed to publish version' })
   }
 })
 

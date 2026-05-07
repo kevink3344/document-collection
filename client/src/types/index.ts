@@ -44,6 +44,7 @@ export interface CollectionField {
   page: number
   required: boolean
   options: string[] | null
+  displayStyle?: 'radio' | 'dropdown'
   sortOrder: number
   tableColumns: TableColumn[] | null
 }
@@ -61,12 +62,27 @@ export interface Collection {
   coverPhotoUrl: string | null
   instructions: string | null
   instructionsDocUrl: string | null
+  activeVersionId?: number | null
+  currentVersionNumber?: number | null
+  currentVersionStatus?: CollectionStatus | null
   anonymous: boolean
+  allowSubmissionEdits: boolean
+  submissionEditWindowHours: number | null
   createdAt: string
   updatedAt: string
   fields: CollectionField[]
   responseCount?: number
   hasCustomTable?: boolean
+}
+
+export interface CollectionVersion {
+  id: number
+  versionNumber: number
+  status: CollectionStatus
+  createdBy: number
+  createdAt: string
+  publishedAt: string | null
+  isActive: boolean
 }
 
 export interface CollectionResponse {

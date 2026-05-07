@@ -14,12 +14,21 @@ import {
 } from 'lucide-react'
 import {
   createCollection,
+  createCollectionVersion,
   getCollection,
+  listCollectionVersions,
+  publishCollectionVersion,
   updateCollection,
 } from '../api/collections'
 import { listCategories } from '../api/categories'
 import type { Category } from '../types'
-import type { ColType, CollectionStatus, FieldType, TableColumn } from '../types'
+import type {
+  ColType,
+  CollectionStatus,
+  CollectionVersion,
+  FieldType,
+  TableColumn,
+} from '../types'
 import TableWizardModal from '../components/collections/TableWizardModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
@@ -35,6 +44,7 @@ interface BuilderField {
   page: number
   required: boolean
   options: string[]
+  displayStyle: 'radio' | 'dropdown'
   tableColumns: TableColumn[]
 }
 
@@ -50,6 +60,7 @@ function blankField(): BuilderField {
     page: 1,
     required: false,
     options: [],
+    displayStyle: 'radio',
     tableColumns: [],
   }
 }
@@ -114,6 +125,8 @@ export default function CollectionBuilderPage() {
   // Instructions section
   const [instructions, setInstructions] = useState('')
   const [instructionsDocUrl, setInstructionsDocUrl] = useState('')
+  const [allowSubmissionEdits, setAllowSubmissionEdits] = useState(false)
+  const [submissionEditWindowHours, setSubmissionEditWindowHours] = useState('24')
 
   // Fields
   const [fields, setFields] = useState<BuilderField[]>([blankField()])
@@ -125,6 +138,9 @@ export default function CollectionBuilderPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [wizardField, setWizardField] = useState<string | null>(null) // _key of field being configured
   const [collectionSlug, setCollectionSlug] = useState<string | null>(null)
+  const [activeVersionId, setActiveVersionId] = useState<number | null>(null)
+  const [currentVersionNumber, setCurrentVersionNumber] = useState<number | null>(null)
+  const [versions, setVersions] = useState<CollectionVersion[]>([])
   const [detailsTab, setDetailsTab] = useState<'general' | 'photo' | 'share'>('general')
   const [categories, setCategories] = useState<Category[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
@@ -142,11 +158,15 @@ export default function CollectionBuilderPage() {
       .then(col => {
         setTitle(col.title)
         setCollectionSlug(col.slug)
+        setActiveVersionId(col.activeVersionId ?? null)
+        setCurrentVersionNumber(col.currentVersionNumber ?? null)
         setDescription(col.description ? htmlToPlainText(col.description) : '')
         setCategory(col.category ?? '')
         setDateDue(col.dateDue ?? '')
         setCoverPhotoUrl(col.coverPhotoUrl ?? '')
         setAnonymous(col.anonymous)
+        setAllowSubmissionEdits(col.allowSubmissionEdits)
+        setSubmissionEditWindowHours(String(col.submissionEditWindowHours ?? 24))
         setStatus(col.status ?? 'draft')
         setInstructions(col.instructions ?? '')
         setInstructionsDocUrl(col.instructionsDocUrl ?? '')
@@ -159,6 +179,7 @@ export default function CollectionBuilderPage() {
                 page: f.page ?? 1,
                 required: f.required,
                 options: f.options ?? [],
+                displayStyle: f.displayStyle === 'dropdown' ? 'dropdown' : 'radio',
                 tableColumns: (f.tableColumns ?? []).map(tc => ({
                   ...tc,
                   colType: normalizeColType(tc.colType),
@@ -181,6 +202,13 @@ export default function CollectionBuilderPage() {
       .catch(err => setCategoriesError((err as Error).message))
       .finally(() => setCategoriesLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!id) return
+    listCollectionVersions(parseInt(id, 10))
+      .then(setVersions)
+      .catch(() => setVersions([]))
+  }, [id, loadTick])
 
   // ── Field helpers ─────────────────────────────────────────
 
@@ -272,7 +300,7 @@ export default function CollectionBuilderPage() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, description, category, dateDue, coverPhotoUrl, anonymous, status, instructions, instructionsDocUrl, fields])
+  }, [title, description, category, dateDue, coverPhotoUrl, anonymous, allowSubmissionEdits, submissionEditWindowHours, status, instructions, instructionsDocUrl, fields])
 
   // Mark as loaded AFTER the autosave effect has already run (effects run in definition order)
   useEffect(() => {
@@ -282,6 +310,11 @@ export default function CollectionBuilderPage() {
   // ── Save ──────────────────────────────────────────────────
 
   function buildPayload(statusOverride: CollectionStatus = status) {
+    const rawHours = Number(submissionEditWindowHours)
+    const normalizedHours = Number.isFinite(rawHours)
+      ? Math.max(1, Math.min(168, Math.floor(rawHours)))
+      : 24
+
     return {
       title: title.trim(),
       status: statusOverride,
@@ -292,6 +325,8 @@ export default function CollectionBuilderPage() {
       instructions: instructions || undefined,
       instructionsDocUrl: instructionsDocUrl.trim() || undefined,
       anonymous,
+      allowSubmissionEdits,
+      submissionEditWindowHours: allowSubmissionEdits ? normalizedHours : undefined,
       fields: fields
         .filter(f => f.label.trim() !== '')
         .map((f, i) => ({
@@ -300,6 +335,7 @@ export default function CollectionBuilderPage() {
           page: Math.max(1, Math.floor(f.page || 1)),
           required: f.required,
           options: f.options.filter(o => o.trim() !== ''),
+          displayStyle: f.displayStyle,
           tableColumns: f.tableColumns.map((c, ci) => ({
             ...c,
             colType: normalizeColType(c.colType),
@@ -333,8 +369,14 @@ export default function CollectionBuilderPage() {
         : await createCollection(buildPayload(statusOverride))
       setCollectionSlug(saved.slug)
       setStatus(saved.status)
+      setActiveVersionId(saved.activeVersionId ?? null)
+      setCurrentVersionNumber(saved.currentVersionNumber ?? null)
       if (!isEdit) {
         navigate(`/collections/${saved.id}/edit`, { replace: true })
+      }
+      if (isEdit) {
+        const collectionId = parseInt(id!, 10)
+        listCollectionVersions(collectionId).then(setVersions).catch(() => undefined)
       }
       if (silent) {
         setAutoSaveStatus('saved')
@@ -358,8 +400,51 @@ export default function CollectionBuilderPage() {
 
   async function handlePublishToggle() {
     const nextStatus: CollectionStatus = status === 'published' ? 'draft' : 'published'
+
+    if (isEdit && nextStatus === 'published' && activeVersionId) {
+      setSaving(true)
+      setSaveError(null)
+      try {
+        const saved = await publishCollectionVersion(parseInt(id!, 10), activeVersionId)
+        setStatus(saved.status)
+        setActiveVersionId(saved.activeVersionId ?? null)
+        setCurrentVersionNumber(saved.currentVersionNumber ?? null)
+        setCollectionSlug(saved.slug)
+        showToast('Version published', 'success')
+        listCollectionVersions(parseInt(id!, 10)).then(setVersions).catch(() => undefined)
+      } catch (err) {
+        setSaveError((err as Error).message)
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
+
     setStatus(nextStatus)
     await doSave({ silent: false, statusOverride: nextStatus })
+  }
+
+  async function handleCreateNewVersion() {
+    if (!isEdit || !id || !title.trim()) {
+      setSaveError('Title is required.')
+      return
+    }
+
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const created = await createCollectionVersion(parseInt(id, 10), buildPayload('draft'))
+      setStatus(created.status)
+      setCollectionSlug(created.slug)
+      setActiveVersionId(created.activeVersionId ?? null)
+      setCurrentVersionNumber(created.currentVersionNumber ?? null)
+      setLoadTick(t => t + 1)
+      showToast('New draft version created', 'success')
+    } catch (err) {
+      setSaveError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const categoryOptions = useMemo(() => {
@@ -421,8 +506,18 @@ export default function CollectionBuilderPage() {
             >
               {status}
             </span>
+            {isEdit && currentVersionNumber && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded border border-[#CBD5E1] dark:border-[#334155] text-[#64748B]">
+                v{currentVersionNumber}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
+            {isEdit && versions.length > 0 && (
+              <span className="text-xs text-[#64748B]">
+                {versions.length} version{versions.length === 1 ? '' : 's'}
+              </span>
+            )}
             {isEdit && autoSaveStatus !== 'idle' && (
               <span className={`text-xs ${
                 autoSaveStatus === 'saving' ? 'text-[#94A3B8]' :
@@ -445,6 +540,16 @@ export default function CollectionBuilderPage() {
               >
                 <Eye size={14} />
                 Preview
+              </button>
+            )}
+            {isEdit && (
+              <button
+                onClick={handleCreateNewVersion}
+                disabled={saving}
+                className="flex items-center gap-1.5 text-sm text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-3 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-40"
+              >
+                <Copy size={14} />
+                New Version
               </button>
             )}
             <button
@@ -490,10 +595,10 @@ export default function CollectionBuilderPage() {
               type="button"
               onClick={() => setDetailsTab('general')}
               className={[
-                'px-1 py-1.5 text-xs font-medium border-b-2 transition-colors',
+                'px-3 py-2 text-sm font-semibold border-b-2 transition-colors rounded-t',
                 detailsTab === 'general'
-                  ? 'border-[#2563EB] text-[#2563EB]'
-                  : 'border-transparent text-[#64748B] hover:text-[#2563EB]',
+                  ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-transparent text-[#64748B] hover:text-[#2563EB] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
               ].join(' ')}
             >
               General
@@ -502,10 +607,10 @@ export default function CollectionBuilderPage() {
               type="button"
               onClick={() => setDetailsTab('photo')}
               className={[
-                'px-1 py-1.5 text-xs font-medium border-b-2 transition-colors',
+                'px-3 py-2 text-sm font-semibold border-b-2 transition-colors rounded-t',
                 detailsTab === 'photo'
-                  ? 'border-[#2563EB] text-[#2563EB]'
-                  : 'border-transparent text-[#64748B] hover:text-[#2563EB]',
+                  ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-transparent text-[#64748B] hover:text-[#2563EB] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
               ].join(' ')}
             >
               Photo
@@ -514,10 +619,10 @@ export default function CollectionBuilderPage() {
               type="button"
               onClick={() => setDetailsTab('share')}
               className={[
-                'px-1 py-1.5 text-xs font-medium border-b-2 transition-colors',
+                'px-3 py-2 text-sm font-semibold border-b-2 transition-colors rounded-t',
                 detailsTab === 'share'
-                  ? 'border-[#2563EB] text-[#2563EB]'
-                  : 'border-transparent text-[#64748B] hover:text-[#2563EB]',
+                  ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-transparent text-[#64748B] hover:text-[#2563EB] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
               ].join(' ')}
             >
               Share
@@ -683,7 +788,7 @@ export default function CollectionBuilderPage() {
           )}
 
           {detailsTab === 'share' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <p className="text-xs text-[#64748B]">
                 {status === 'published'
                   ? 'Share this URL with staff or anonymous users to fill out the form.'
@@ -706,11 +811,46 @@ export default function CollectionBuilderPage() {
                   Copy
                 </button>
               </div>
+
+              <div className="pt-1 border-t border-[#E2E8F0] dark:border-[#334155]">
+                <label className="flex items-center gap-3 text-sm text-[#1E293B] dark:text-[#F1F5F9] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowSubmissionEdits}
+                    onChange={e => setAllowSubmissionEdits(e.target.checked)}
+                    className="accent-[#2563EB] w-4 h-4"
+                  />
+                  Allow users to edit submitted responses
+                </label>
+                <p className="mt-1 text-xs text-[#64748B]">
+                  Disabled by default. When enabled, users can edit their own submission for a limited time.
+                </p>
+              </div>
+
+              {allowSubmissionEdits && (
+                <div className="max-w-xs">
+                  <label htmlFor={`${formId}-edit-window`} className={LABEL}>
+                    Edit Window (hours)
+                  </label>
+                  <input
+                    id={`${formId}-edit-window`}
+                    type="number"
+                    min={1}
+                    max={168}
+                    step={1}
+                    value={submissionEditWindowHours}
+                    onChange={e => setSubmissionEditWindowHours(e.target.value)}
+                    className={INPUT}
+                  />
+                  <p className="mt-1 text-xs text-[#64748B]">Recommended: 24 to 36 hours.</p>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Two-column: Instructions + Field Designer */}
+        {/* Two-column: Instructions + Field Designer (General tab only) */}
+        {detailsTab === 'general' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Instructions */}
           <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-4">
@@ -795,6 +935,7 @@ export default function CollectionBuilderPage() {
             </button>
           </div>
         </div>
+        )}
       </div>
     </>
   )
@@ -915,6 +1056,37 @@ function FieldCard({
             />
           </label>
         </div>
+
+        {/* Display style toggle for single_choice */}
+        {field.type === 'single_choice' && (
+          <div className="flex items-center gap-1 text-xs text-[#64748B]">
+            <span className="shrink-0">Display as:</span>
+            <button
+              type="button"
+              onClick={() => onUpdate({ displayStyle: 'radio' })}
+              className={[
+                'px-2 py-0.5 rounded border text-xs transition-colors',
+                field.displayStyle === 'radio'
+                  ? 'bg-[#2563EB] border-[#2563EB] text-white'
+                  : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+              ].join(' ')}
+            >
+              Radio
+            </button>
+            <button
+              type="button"
+              onClick={() => onUpdate({ displayStyle: 'dropdown' })}
+              className={[
+                'px-2 py-0.5 rounded border text-xs transition-colors',
+                field.displayStyle === 'dropdown'
+                  ? 'bg-[#2563EB] border-[#2563EB] text-white'
+                  : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+              ].join(' ')}
+            >
+              Dropdown
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Choice options */}

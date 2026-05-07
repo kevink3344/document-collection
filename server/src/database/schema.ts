@@ -36,9 +36,26 @@ export function createSchema(db: DatabaseSync): void {
       cover_photo_url      TEXT,
       instructions         TEXT,
       instructions_doc_url TEXT,
+      active_version_id    INTEGER,
       anonymous            INTEGER NOT NULL DEFAULT 0,
+      allow_submission_edits INTEGER NOT NULL DEFAULT 0,
+      submission_edit_window_hours INTEGER,
       created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
       updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collection_versions (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      collection_id  INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL,
+      status         TEXT    NOT NULL DEFAULT 'draft'
+                             CHECK(status IN ('draft', 'published')),
+      created_by     INTEGER NOT NULL REFERENCES users(id),
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+      published_at   TEXT,
+      UNIQUE(collection_id, version_number)
     );
   `)
 
@@ -46,6 +63,7 @@ export function createSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS collection_fields (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
       type          TEXT    NOT NULL CHECK(type IN (
                       'short_text','long_text','single_choice','multiple_choice',
                       'attachment','signature','confirmation','custom_table'
@@ -54,6 +72,7 @@ export function createSchema(db: DatabaseSync): void {
       page_number   INTEGER NOT NULL DEFAULT 1,
       required      INTEGER NOT NULL DEFAULT 0,
       options       TEXT,
+      display_style TEXT    NOT NULL DEFAULT 'radio',
       sort_order    INTEGER NOT NULL DEFAULT 0
     );
   `)
@@ -74,8 +93,11 @@ export function createSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS collection_responses (
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
       collection_id    INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      collection_version_id INTEGER REFERENCES collection_versions(id) ON DELETE SET NULL,
       respondent_name  TEXT,
       respondent_email TEXT,
+      editable_until   TEXT,
+      last_edited_at   TEXT,
       submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     );
   `)

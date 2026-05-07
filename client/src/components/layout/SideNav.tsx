@@ -5,6 +5,7 @@ import {
   FileText,
   BarChart3,
   Settings,
+  ClipboardCheck,
   X,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
@@ -22,11 +23,16 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { icon: LayoutDashboard, label: 'Dashboard',   to: '/dashboard'   },
-  { icon: Database,        label: 'Collections', to: '/collections' },
-  { icon: FileText,        label: 'Records',     to: '/records'     },
-  { icon: BarChart3,       label: 'Reports',     to: '/reports'     },
-  { icon: Settings,        label: 'Settings',    to: '/settings'    },
+  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard'        },
+  { icon: Database,        label: 'Collections',     to: '/collections'      },
+  { icon: FileText,        label: 'Records',         to: '/records'          },
+  { icon: BarChart3,       label: 'Reports',         to: '/reports'          },
+  { icon: Settings,        label: 'Settings',        to: '/settings'         },
+]
+
+const USER_NAV_ITEMS: NavItem[] = [
+  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard'        },
+  { icon: ClipboardCheck,  label: 'My Submissions',  to: '/my-submissions'   },
 ]
 
 export default function SideNav({
@@ -36,7 +42,7 @@ export default function SideNav({
   const { user } = useAuth()
   const visibleNavItems =
     user?.role === 'user'
-      ? NAV_ITEMS.filter(item => item.to === '/dashboard')
+      ? USER_NAV_ITEMS
       : NAV_ITEMS
 
   return (

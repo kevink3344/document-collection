@@ -10,6 +10,8 @@ import categoriesRouter from './routes/categories'
 import collectionsRouter from './routes/collections'
 import settingsRouter from './routes/settings'
 import notificationsRouter from './routes/notifications'
+import statsRouter from './routes/stats'
+import mySubmissionsRouter from './routes/my-submissions'
 import { generateDueDateNotifications } from './services/notifications'
 
 const app = express()
@@ -41,6 +43,8 @@ app.use('/api/categories', categoriesRouter)
 app.use('/api/collections', collectionsRouter)
 app.use('/api/settings', settingsRouter)
 app.use('/api/notifications', notificationsRouter)
+app.use('/api/stats', statsRouter)
+app.use('/api/my-submissions', mySubmissionsRouter)
 
 // Health checks for API clients and platform probes
 const healthHandler = (_req: express.Request, res: express.Response) => {

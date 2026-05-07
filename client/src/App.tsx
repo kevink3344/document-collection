@@ -11,6 +11,8 @@ import DashboardPage from './pages/DashboardPage'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
 import NotificationsPage from './pages/NotificationsPage'
+import MySubmissionsPage from './pages/MySubmissionsPage'
+import MySubmissionDetailPage from './pages/MySubmissionDetailPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -43,6 +45,8 @@ export default function App() {
           <Route index element={<Navigate to={user?.role === 'user' ? '/dashboard' : '/collections'} replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/my-submissions" element={<MySubmissionsPage />} />
+          <Route path="/my-submissions/:responseId" element={<MySubmissionDetailPage />} />
 
           {/* Collections + admin routes: user role redirected to dashboard */}
           <Route element={<RequireRole allowed={['administrator', 'team_manager']} fallback="/dashboard" />}>

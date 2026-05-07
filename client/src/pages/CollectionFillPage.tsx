@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, Save, History } from 'lucide-react'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, Save, History, ArrowLeft } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
+import { updateMySubmission } from '../api/mySubmissions'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { sanitizeRichText } from '../utils/richText'
+import { useAuth } from '../contexts/AuthContext'
 import type { Collection, CollectionField } from '../types'
 
 // ── Style tokens ──────────────────────────────────────────────
@@ -641,7 +643,15 @@ function CustomTableInput({
 export default function CollectionFillPage() {
   const { slug } = useParams<{ slug: string }>()
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const isPreview = searchParams.get('preview') === 'true'
+  const editResponseId = useMemo(() => {
+    const raw = searchParams.get('edit')
+    if (!raw) return null
+    const n = parseInt(raw, 10)
+    return Number.isNaN(n) ? null : n
+  }, [searchParams])
+  const { user } = useAuth()
 
   const [collection, setCollection] = useState<Collection | null>(null)
   const [loading, setLoading] = useState(true)
@@ -679,11 +689,20 @@ export default function CollectionFillPage() {
           if (f.id !== undefined) defaults[f.id] = ''
         })
         setValues(defaults)
-        // Check for a saved draft
+        // Check for a saved draft; otherwise pre-fill from logged-in user
         const draft = loadDraft(slug)
-        if (draft) {
+        if (draft && editResponseId) {
+          // Edit mode: auto-apply draft without showing the resume banner
+          setRespName(draft.respName || (user?.name ?? ''))
+          setRespEmail(draft.respEmail || (user?.email ?? ''))
+          setValues(draft.values)
+          setCurrentPageIdx(draft.currentPageIdx)
+        } else if (draft) {
           setPendingDraft(draft)
           setShowResumeBanner(true)
+        } else if (!col.anonymous) {
+          if (user?.name) setRespName(user.name)
+          if (user?.email) setRespEmail(user.email)
         }
       })
       .catch(err => setError((err as Error).message))
@@ -727,7 +746,7 @@ export default function CollectionFillPage() {
   // Auto-save draft whenever form state changes, but only after the
   // resume banner has been handled (so we don't overwrite a pending draft).
   useEffect(() => {
-    if (!collection || !slug || isPreview || showResumeBanner || submitted) return
+    if (!collection || !slug || isPreview || showResumeBanner || submitted || editResponseId) return
     const handle = window.setTimeout(() => {
       saveDraft(slug, { respName, respEmail, values, currentPageIdx })
       setLastSavedAt(new Date().toISOString())
@@ -748,6 +767,11 @@ export default function CollectionFillPage() {
 
   function handleStartFresh() {
     if (slug) clearDraft(slug)
+    if (!collection?.anonymous) {
+      setRespName(user?.name ?? '')
+      setRespEmail(user?.email ?? '')
+    }
+    setLastSavedAt(null)
     setPendingDraft(null)
     setShowResumeBanner(false)
   }
@@ -779,7 +803,7 @@ export default function CollectionFillPage() {
     if (!collection) return
     setPageError(null)
 
-    if (!collection.anonymous && currentPageIdx === 0) {
+    if (!collection.anonymous && !editResponseId && currentPageIdx === 0) {
       if (!respName.trim() || !respEmail.trim()) {
         setPageError('Please enter your name and email before continuing.')
         return
@@ -801,7 +825,7 @@ export default function CollectionFillPage() {
   async function handleSubmit() {
     if (!collection || !slug) return
 
-    if (!collection.anonymous && (!respName.trim() || !respEmail.trim())) {
+    if (!editResponseId && !collection.anonymous && (!respName.trim() || !respEmail.trim())) {
       setSubmitError('Please enter your name and email address.')
       return
     }
@@ -809,13 +833,20 @@ export default function CollectionFillPage() {
     setSubmitting(true)
     setSubmitError(null)
     try {
-      await submitResponse(slug, {
-        respondentName: respName.trim() || undefined,
-        respondentEmail: respEmail.trim() || undefined,
-        values: Object.entries(values)
-          .filter(([, v]) => v !== '')
-          .map(([fieldId, value]) => ({ fieldId: parseInt(fieldId, 10), value })),
-      })
+      if (editResponseId) {
+        await updateMySubmission(editResponseId, {
+          values: Object.entries(values)
+            .map(([fieldId, value]) => ({ fieldId: parseInt(fieldId, 10), value })),
+        })
+      } else {
+        await submitResponse(slug, {
+          respondentName: respName.trim() || undefined,
+          respondentEmail: respEmail.trim() || undefined,
+          values: Object.entries(values)
+            .filter(([, v]) => v !== '')
+            .map(([fieldId, value]) => ({ fieldId: parseInt(fieldId, 10), value })),
+        })
+      }
       clearDraft(slug)
       setSubmitted(true)
     } catch (err) {
@@ -847,6 +878,27 @@ export default function CollectionFillPage() {
   }
 
   if (submitted) {
+    if (editResponseId) {
+      return (
+        <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A] flex items-center justify-center">
+          <div className="text-center space-y-4 p-8">
+            <CheckCircle size={48} className="text-green-500 mx-auto" />
+            <h2 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
+              Changes saved!
+            </h2>
+            <p className="text-[#64748B] text-sm">Your submission has been updated.</p>
+            <button
+              type="button"
+              onClick={() => navigate(`/my-submissions/${editResponseId}`)}
+              className="inline-flex items-center gap-1.5 text-sm text-[#2563EB] hover:underline"
+            >
+              <ArrowLeft size={14} />
+              Back to submission
+            </button>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A] flex items-center justify-center">
         <div className="text-center space-y-3 p-8">
@@ -865,6 +917,24 @@ export default function CollectionFillPage() {
       {isPreview && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-center py-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
           Preview mode — responses will be saved
+        </div>
+      )}
+
+      {editResponseId && (
+        <div className="bg-blue-50 dark:bg-[#1E3A5F] border-b border-blue-200 dark:border-blue-700 px-4 py-3">
+          <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+            <span className="text-sm text-blue-800 dark:text-blue-200 font-medium">
+              Editing your submission — changes will overwrite your previous response
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate(`/my-submissions/${editResponseId}`)}
+              className="inline-flex items-center gap-1.5 text-xs text-blue-700 dark:text-blue-300 hover:underline shrink-0"
+            >
+              <ArrowLeft size={13} />
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -1008,6 +1078,7 @@ export default function CollectionFillPage() {
                 Form Data
               </h2>
 
+              {totalPages > 1 && (
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-xs text-[#64748B]">
                   <span>Page {currentPageIdx + 1} of {totalPages}</span>
@@ -1020,9 +1091,10 @@ export default function CollectionFillPage() {
                   />
                 </div>
               </div>
+              )}
 
-              {/* Identity fields (shown whenever collection is not anonymous) */}
-              {!collection.anonymous && currentPageIdx === 0 && (
+              {/* Identity fields (hidden in edit mode — submission already has them) */}
+              {!collection.anonymous && !editResponseId && currentPageIdx === 0 && (
                 <div className="space-y-3 pb-4 border-b border-[#E2E8F0] dark:border-[#334155]">
                   <div>
                     <label className={LABEL}>
@@ -1091,7 +1163,7 @@ export default function CollectionFillPage() {
                   Previous
                 </button>
 
-                {!isPreview && (
+                {!isPreview && !editResponseId && (
                   <button
                     type="button"
                     onClick={handleSaveProgress}
@@ -1118,7 +1190,7 @@ export default function CollectionFillPage() {
                     disabled={submitting}
                     className="flex-1 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 rounded text-sm transition-colors"
                   >
-                    {submitting ? 'Submitting…' : 'Submit'}
+                    {submitting ? (editResponseId ? 'Saving…' : 'Submitting…') : (editResponseId ? 'Save Changes' : 'Submit')}
                   </button>
                 )}
               </div>
@@ -1179,7 +1251,22 @@ function FieldRenderer({
         />
       )}
 
-      {field.type === 'single_choice' && (
+      {field.type === 'single_choice' && field.displayStyle === 'dropdown' && (
+        <select
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className={INPUT}
+          required={required}
+          disabled={disabled}
+        >
+          <option value="">Select…</option>
+          {(field.options ?? []).map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+      )}
+
+      {field.type === 'single_choice' && field.displayStyle !== 'dropdown' && (
         <div className="space-y-2">
           {(field.options ?? []).map(opt => (
             <label key={opt} className="flex items-center gap-2 cursor-pointer">
