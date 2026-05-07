@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Calendar, ClipboardList, Mail, User, Download } from 'lucide-react'
+import { Calendar, ClipboardList, FileText, Mail, Tag, User, Download } from 'lucide-react'
 import { getCollection, getResponses, listCollections } from '../api/collections'
+import { getCategoryColorClasses } from '../utils/categoryColors'
 import type { Collection, CollectionField, CollectionResponse } from '../types'
 
 type RecordsView = 'summary' | 'individual'
@@ -760,9 +761,7 @@ export default function RecordsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
-            Records
-          </h1>
+          <h1 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Records</h1>
           <p className="text-sm text-[#64748B] mt-0.5">
             Review submitted items by collection.
           </p>
@@ -802,10 +801,19 @@ export default function RecordsPage() {
       )}
 
       {selectedCollection && (
-        <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-2">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
+        <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+          <div className="border-l-4 border-[#2563EB] px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              {selectedCollection.category && (() => {
+                const colors = getCategoryColorClasses(selectedCollection.category)
+                return (
+                  <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-[2px] ${colors.badge}`}>
+                    <Tag size={9} />
+                    {selectedCollection.category}
+                  </span>
+                )
+              })()}
+              <h2 className="text-xl font-bold text-[#1E293B] dark:text-[#F1F5F9] tracking-tight">
                 {selectedCollection.title}
               </h2>
               <p className="text-sm text-[#64748B]">
