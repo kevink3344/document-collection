@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Folder } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { getPublicSetting } from '../api/settings'
+import { getPublicSummaryStats, type PublicSummaryStats } from '../api/stats'
 import type { User, UserRole } from '../types'
 
 // Pre-seeded users matching server seed data
@@ -36,11 +37,11 @@ const ROLE_LABELS: Record<UserRole, string> = {
   user: 'USER',
 }
 
-const STATS = [
-  { value: '3', label: 'ROLES' },
-  { value: '6', label: 'TEAMS' },
-  { value: '12', label: 'ACTIVE' },
-]
+const DEFAULT_PUBLIC_STATS: PublicSummaryStats = {
+  categoryCount: 0,
+  collectionCount: 0,
+  submissionCount: 0,
+}
 
 const INPUT_CLASS =
   'w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] ' +
@@ -60,6 +61,7 @@ export default function LoginPage() {
     'Choose an existing user profile or register a new account to enter the data workspace.'
   )
   const [loginSubtitle, setLoginSubtitle] = useState('Enterprise Staff Support')
+  const [publicStats, setPublicStats] = useState<PublicSummaryStats>(DEFAULT_PUBLIC_STATS)
 
   useEffect(() => {
     getPublicSetting('login_message')
@@ -68,6 +70,9 @@ export default function LoginPage() {
     getPublicSetting('login_subtitle')
       .then(setLoginSubtitle)
       .catch(() => { /* keep default */ })
+    getPublicSummaryStats()
+      .then(setPublicStats)
+      .catch(() => { /* keep default counts */ })
   }, [])
 
   const [regName, setRegName] = useState('')
@@ -122,7 +127,11 @@ export default function LoginPage() {
 
         {/* Stats */}
         <div className="flex gap-3 mt-10 md:mt-0">
-          {STATS.map(stat => (
+          {[
+            { value: publicStats.categoryCount, label: 'CATEGORIES' },
+            { value: publicStats.collectionCount, label: 'COLLECTIONS' },
+            { value: publicStats.submissionCount, label: 'SUBMISSIONS' },
+          ].map(stat => (
             <div
               key={stat.label}
               className="flex-1 border border-[#1E3A5F] p-3"

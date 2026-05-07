@@ -711,20 +711,37 @@ export default function CollectionBuilderPage() {
                   <option value="published">Published</option>
                 </select>
               </div>
-              <div className="sm:col-span-2 flex items-center gap-3">
-                <input
-                  id={`${formId}-anon`}
-                  type="checkbox"
-                  checked={anonymous}
-                  onChange={e => setAnonymous(e.target.checked)}
-                  className="accent-[#2563EB] w-4 h-4"
-                />
-                <label
-                  htmlFor={`${formId}-anon`}
-                  className="text-sm text-[#1E293B] dark:text-[#F1F5F9] cursor-pointer"
-                >
-                  Collect responses anonymously (no name/email required)
-                </label>
+              <div>
+                <label className={LABEL}>Response Mode</label>
+                <div className="inline-flex rounded overflow-hidden border border-[#CBD5E1] dark:border-[#334155] w-full">
+                  <button
+                    type="button"
+                    onClick={() => setAnonymous(false)}
+                    className={[
+                      'flex-1 px-3 py-2 text-sm font-medium transition-colors',
+                      !anonymous
+                        ? 'bg-[#475569] dark:bg-[#64748B] text-white'
+                        : 'bg-white dark:bg-[#0F172A] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]',
+                    ].join(' ')}
+                  >
+                    Authenticated
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAnonymous(true)}
+                    className={[
+                      'flex-1 px-3 py-2 text-sm font-medium transition-colors border-l border-[#CBD5E1] dark:border-[#334155]',
+                      anonymous
+                        ? 'bg-[#475569] dark:bg-[#64748B] text-white'
+                        : 'bg-white dark:bg-[#0F172A] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]',
+                    ].join(' ')}
+                  >
+                    Anonymous
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-[#64748B]">
+                  {anonymous ? 'No name or email required from respondents.' : 'Respondents must provide their name and email.'}
+                </p>
               </div>
             </div>
           )}

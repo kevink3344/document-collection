@@ -5,6 +5,36 @@ import { authenticateToken } from '../middleware/auth'
 const router = Router()
 
 /**
+ * GET /api/stats/public-summary
+ * Returns lightweight counts for the signed-out login screen.
+ */
+router.get('/public-summary', (_req: Request, res: Response): void => {
+  try {
+    const db = getDb()
+
+    const { categoryCount } = db
+      .prepare(`SELECT COUNT(*) AS categoryCount FROM categories`)
+      .get() as { categoryCount: number }
+
+    const { collectionCount } = db
+      .prepare(`SELECT COUNT(*) AS collectionCount FROM collections`)
+      .get() as { collectionCount: number }
+
+    const { submissionCount } = db
+      .prepare(`SELECT COUNT(*) AS submissionCount FROM collection_responses`)
+      .get() as { submissionCount: number }
+
+    res.json({
+      categoryCount,
+      collectionCount,
+      submissionCount,
+    })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+/**
  * GET /api/stats
  * Returns dashboard KPI metrics. Accessible to administrators and team_managers only.
  */
