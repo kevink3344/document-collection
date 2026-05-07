@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ClipboardList, Layers, Table, FileText, CheckCircle, AlertTriangle, Inbox, TrendingUp } from 'lucide-react'
+import { ClipboardList, Layers, Table, FileText, CheckCircle, AlertTriangle, Inbox, Tag, TrendingUp } from 'lucide-react'
 import { listCollections } from '../api/collections'
 import { listMySubmissions } from '../api/mySubmissions'
 import { getStats, type DashboardStats } from '../api/stats'
@@ -155,8 +155,9 @@ export default function DashboardPage() {
                 {/* Header */}
                 <div className="flex items-center justify-between gap-3">
                   <span
-                    className={`inline-flex items-center text-sm uppercase tracking-wide px-2.5 py-1 rounded-[2px] ${colors.badge}`}
+                    className={`inline-flex items-center gap-1.5 text-sm uppercase tracking-wide px-2.5 py-1 rounded-[2px] ${colors.badge}`}
                   >
+                    <Tag size={12} />
                     {category}
                   </span>
                   <div className="bg-[#F8FAFC] dark:bg-[#0F172A] rounded px-3 py-1 text-center shrink-0">
