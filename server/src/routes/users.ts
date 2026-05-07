@@ -95,4 +95,33 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
   res.json(toApiUser(user))
 })
 
+router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
+  if (req.user?.role !== 'administrator') {
+    res.status(403).json({ error: 'Forbidden' })
+    return
+  }
+
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid user ID' })
+    return
+  }
+
+  // Prevent self-deletion
+  if (req.user.sub === id) {
+    res.status(400).json({ error: 'You cannot delete your own account.' })
+    return
+  }
+
+  const db = getDb()
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as unknown as { id: number; role: string } | undefined
+  if (!user) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+
+  db.prepare('DELETE FROM users WHERE id = ?').run(id)
+  res.status(204).end()
+})
+
 export default router

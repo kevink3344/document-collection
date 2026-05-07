@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, ChevronDown, ChevronRight, Code2, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, X } from 'lucide-react'
+import { Bell, ChevronDown, ChevronRight, Code2, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
 import {
   createCategory,
   deleteCategory,
@@ -7,6 +7,7 @@ import {
   updateCategory,
 } from '../api/categories'
 import { getPublicSetting, updateSetting } from '../api/settings'
+import { listUsers, createUser, deleteUser, type AppUser } from '../api/users'
 import { useAuth } from '../contexts/AuthContext'
 import type { Category } from '../types'
 import { getCategoryColorClasses } from '../utils/categoryColors'
@@ -29,6 +30,17 @@ export default function SettingsPage() {
   const [apiExpanded, setApiExpanded] = useState(false)
   const [notificationsExpanded, setNotificationsExpanded] = useState(false)
   const [loginPageExpanded, setLoginPageExpanded] = useState(false)
+  const [usersExpanded, setUsersExpanded] = useState(false)
+  const [allUsers, setAllUsers] = useState<AppUser[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [newUserName, setNewUserName] = useState('')
+  const [newUserEmail, setNewUserEmail] = useState('')
+  const [newUserRole, setNewUserRole] = useState<'user' | 'team_manager' | 'administrator'>('user')
+  const [newUserOrg, setNewUserOrg] = useState('')
+  const [userCreateSaving, setUserCreateSaving] = useState(false)
+  const [userCreateError, setUserCreateError] = useState<string | null>(null)
+  const [userCreateSuccess, setUserCreateSuccess] = useState<number | null>(null)
+  const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
   const [loginSubtitle, setLoginSubtitle] = useState('')
   const [loginSubtitleDraft, setLoginSubtitleDraft] = useState('')
   const [loginSubtitleSaving, setLoginSubtitleSaving] = useState(false)
@@ -74,6 +86,47 @@ export default function SettingsPage() {
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
   }, [])
+
+  function loadUsers() {
+    setUsersLoading(true)
+    listUsers()
+      .then(setAllUsers)
+      .catch(() => {})
+      .finally(() => setUsersLoading(false))
+  }
+
+  async function handleCreateUser() {
+    const name = newUserName.trim()
+    const email = newUserEmail.trim()
+    if (!name || !email) return
+    setUserCreateSaving(true)
+    setUserCreateError(null)
+    setUserCreateSuccess(null)
+    try {
+      const created = await createUser({ name, email, role: newUserRole, organization: newUserOrg.trim() || undefined })
+      setAllUsers(prev => [...prev, created])
+      setUserCreateSuccess(created.id)
+      setNewUserName('')
+      setNewUserEmail('')
+      setNewUserOrg('')
+      setNewUserRole('user')
+    } catch (err) {
+      setUserCreateError((err as Error).message)
+    } finally {
+      setUserCreateSaving(false)
+    }
+  }
+
+  async function handleDeleteUser(id: number) {
+    setUserDeleteError(null)
+    try {
+      await deleteUser(id)
+      setAllUsers(prev => prev.filter(u => u.id !== id))
+      if (userCreateSuccess === id) setUserCreateSuccess(null)
+    } catch (err) {
+      setUserDeleteError((err as Error).message)
+    }
+  }
 
   async function handleCreateCategory() {
     const name = newCategoryName.trim()
@@ -548,6 +601,179 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+        {/* User Accounts */}
+        <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !usersExpanded
+              setUsersExpanded(next)
+              if (next && allUsers.length === 0) loadUsers()
+            }}
+            className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+          >
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">User Accounts</h2>
+              <p className="text-sm text-[#64748B] mt-1">Create and manage accounts for testing or onboarding users.</p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              {usersExpanded ? (
+                <ChevronDown size={18} className="text-[#64748B]" />
+              ) : (
+                <ChevronRight size={18} className="text-[#64748B]" />
+              )}
+            </div>
+          </button>
+
+          {usersExpanded && (
+            <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-6">
+
+              {/* Create user form */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Add New User</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Name <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      value={newUserName}
+                      onChange={e => { setNewUserName(e.target.value); setUserCreateSuccess(null) }}
+                      placeholder="Jane Smith"
+                      className={INPUT}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Email <span className="text-red-500">*</span></label>
+                    <input
+                      type="email"
+                      value={newUserEmail}
+                      onChange={e => { setNewUserEmail(e.target.value); setUserCreateSuccess(null) }}
+                      placeholder="jane@example.com"
+                      className={INPUT}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Role</label>
+                    <select
+                      value={newUserRole}
+                      onChange={e => setNewUserRole(e.target.value as typeof newUserRole)}
+                      className={INPUT}
+                    >
+                      <option value="user">User</option>
+                      <option value="team_manager">Team Manager</option>
+                      <option value="administrator">Administrator</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Organisation <span className="text-[#94A3B8]">(optional)</span></label>
+                    <input
+                      type="text"
+                      value={newUserOrg}
+                      onChange={e => setNewUserOrg(e.target.value)}
+                      placeholder="Alpha Team"
+                      className={INPUT}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateUser()}
+                    disabled={userCreateSaving || !newUserName.trim() || !newUserEmail.trim()}
+                    className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    <Users size={14} />
+                    {userCreateSaving ? 'Creating…' : 'Create User'}
+                  </button>
+                  {userCreateError && <span className="text-sm text-red-500">{userCreateError}</span>}
+                  {userCreateSuccess && (
+                    <span className="text-sm text-green-600 dark:text-green-400">
+                      Created! Log in with User ID <strong>{userCreateSuccess}</strong>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* User list */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">All Users</h3>
+                  <button
+                    type="button"
+                    onClick={loadUsers}
+                    disabled={usersLoading}
+                    className="text-xs text-[#64748B] hover:text-[#2563EB] transition-colors disabled:opacity-40"
+                  >
+                    {usersLoading ? 'Loading…' : 'Refresh'}
+                  </button>
+                </div>
+
+                {userDeleteError && (
+                  <p className="text-sm text-red-500">{userDeleteError}</p>
+                )}
+
+                <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-[#F8FAFC] dark:bg-[#0F172A] text-left">
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide w-12">ID</th>
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Name</th>
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide hidden sm:table-cell">Email</th>
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide hidden md:table-cell">Role</th>
+                        <th className="px-4 py-2.5 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#334155]">
+                      {allUsers.map(u => (
+                        <tr key={u.id} className={`${u.id === user?.id ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
+                          <td className="px-4 py-2.5 text-[#94A3B8] font-mono text-xs">{u.id}</td>
+                          <td className="px-4 py-2.5 text-[#1E293B] dark:text-[#F1F5F9]">
+                            {u.name}
+                            {u.id === user?.id && (
+                              <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">(you)</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-[#64748B] hidden sm:table-cell">{u.email}</td>
+                          <td className="px-4 py-2.5 hidden md:table-cell">
+                            <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${
+                              u.role === 'administrator'
+                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                                : u.role === 'team_manager'
+                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                : 'bg-[#E2E8F0] text-[#475569] dark:bg-[#334155] dark:text-[#CBD5E1]'
+                            }`}>
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {u.id !== user?.id && (
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteUser(u.id)}
+                                className="text-[#94A3B8] hover:text-red-500 transition-colors"
+                                title={`Delete ${u.name}`}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {allUsers.length === 0 && !usersLoading && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">No users found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-[#94A3B8]">To log in as a user, use the ID shown above on the login screen.</p>
+              </div>
+
+            </div>
+          )}
+        </section>
     </div>
   )
 }
