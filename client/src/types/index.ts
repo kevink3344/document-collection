@@ -66,6 +66,7 @@ export interface Collection {
   updatedAt: string
   fields: CollectionField[]
   responseCount?: number
+  hasCustomTable?: boolean
 }
 
 export interface CollectionResponse {

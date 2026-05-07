@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X } from 'lucide-react'
+import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, Save, History } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { sanitizeRichText } from '../utils/richText'
@@ -18,6 +18,47 @@ const LABEL = 'block text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9] mb-1
 function normalizePage(page: number | string | null | undefined): number {
   const n = typeof page === 'number' ? page : Number(page)
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1
+}
+
+// ── Draft persistence ─────────────────────────────────────────
+
+interface FormDraft {
+  respName: string
+  respEmail: string
+  values: Record<number, string>
+  currentPageIdx: number
+  savedAt: string
+}
+
+function draftKey(slug: string) {
+  return `dcp_draft_${slug}`
+}
+
+function loadDraft(slug: string): FormDraft | null {
+  try {
+    const raw = localStorage.getItem(draftKey(slug))
+    if (!raw) return null
+    return JSON.parse(raw) as FormDraft
+  } catch {
+    return null
+  }
+}
+
+function saveDraft(slug: string, draft: Omit<FormDraft, 'savedAt'>) {
+  try {
+    const full: FormDraft = { ...draft, savedAt: new Date().toISOString() }
+    localStorage.setItem(draftKey(slug), JSON.stringify(full))
+  } catch {
+    // Ignore storage quota errors silently.
+  }
+}
+
+function clearDraft(slug: string) {
+  try {
+    localStorage.removeItem(draftKey(slug))
+  } catch {
+    // ignore
+  }
 }
 
 // ── Signature canvas ──────────────────────────────────────────
@@ -620,6 +661,11 @@ export default function CollectionFillPage() {
   const [currentPageIdx, setCurrentPageIdx] = useState(0)
   const [pageError, setPageError] = useState<string | null>(null)
 
+  // Draft persistence
+  const [showResumeBanner, setShowResumeBanner] = useState(false)
+  const [pendingDraft, setPendingDraft] = useState<FormDraft | null>(null)
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
+
   useEffect(() => {
     if (!slug) return
     getPublicCollection(slug, { preview: isPreview })
@@ -633,6 +679,12 @@ export default function CollectionFillPage() {
           if (f.id !== undefined) defaults[f.id] = ''
         })
         setValues(defaults)
+        // Check for a saved draft
+        const draft = loadDraft(slug)
+        if (draft) {
+          setPendingDraft(draft)
+          setShowResumeBanner(true)
+        }
       })
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
@@ -671,6 +723,41 @@ export default function CollectionFillPage() {
       setCurrentPageIdx(Math.max(0, totalPages - 1))
     }
   }, [currentPageIdx, totalPages])
+
+  // Auto-save draft whenever form state changes, but only after the
+  // resume banner has been handled (so we don't overwrite a pending draft).
+  useEffect(() => {
+    if (!collection || !slug || isPreview || showResumeBanner || submitted) return
+    const handle = window.setTimeout(() => {
+      saveDraft(slug, { respName, respEmail, values, currentPageIdx })
+      setLastSavedAt(new Date().toISOString())
+    }, 800)
+    return () => window.clearTimeout(handle)
+  }, [values, respName, respEmail, currentPageIdx, collection, slug, isPreview, showResumeBanner, submitted])
+
+  function handleResumeDraft() {
+    if (!pendingDraft) return
+    setRespName(pendingDraft.respName)
+    setRespEmail(pendingDraft.respEmail)
+    setValues(pendingDraft.values)
+    setCurrentPageIdx(pendingDraft.currentPageIdx)
+    setLastSavedAt(pendingDraft.savedAt)
+    setPendingDraft(null)
+    setShowResumeBanner(false)
+  }
+
+  function handleStartFresh() {
+    if (slug) clearDraft(slug)
+    setPendingDraft(null)
+    setShowResumeBanner(false)
+  }
+
+  function handleSaveProgress() {
+    if (!slug || isPreview) return
+    saveDraft(slug, { respName, respEmail, values, currentPageIdx })
+    const now = new Date().toISOString()
+    setLastSavedAt(now)
+  }
 
   function isRequiredFieldFilled(field: CollectionField, value: string): boolean {
     if (!field.required) return true
@@ -729,6 +816,7 @@ export default function CollectionFillPage() {
           .filter(([, v]) => v !== '')
           .map(([fieldId, value]) => ({ fieldId: parseInt(fieldId, 10), value })),
       })
+      clearDraft(slug)
       setSubmitted(true)
     } catch (err) {
       setSubmitError((err as Error).message)
@@ -777,6 +865,36 @@ export default function CollectionFillPage() {
       {isPreview && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-center py-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
           Preview mode — responses will be saved
+        </div>
+      )}
+
+      {/* Resume draft banner */}
+      {showResumeBanner && pendingDraft && (
+        <div className="bg-blue-50 dark:bg-[#1E3A5F] border-b border-blue-200 dark:border-blue-700 px-4 py-3">
+          <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200">
+              <History size={16} className="shrink-0" />
+              <span>
+                <strong>Saved draft found</strong> — last saved {new Date(pendingDraft.savedAt).toLocaleString()}. Resume where you left off?
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleResumeDraft}
+                className="bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded transition-colors"
+              >
+                Resume
+              </button>
+              <button
+                type="button"
+                onClick={handleStartFresh}
+                className="border border-blue-300 dark:border-blue-600 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-xs font-medium px-3 py-1.5 rounded transition-colors"
+              >
+                Start fresh
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -973,6 +1091,18 @@ export default function CollectionFillPage() {
                   Previous
                 </button>
 
+                {!isPreview && (
+                  <button
+                    type="button"
+                    onClick={handleSaveProgress}
+                    title="Save progress"
+                    className="flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] font-medium px-3 py-2.5 rounded text-sm transition-colors"
+                  >
+                    <Save size={14} />
+                    Save
+                  </button>
+                )}
+
                 {!isLastPage ? (
                   <button
                     type="button"
@@ -992,6 +1122,11 @@ export default function CollectionFillPage() {
                   </button>
                 )}
               </div>
+              {lastSavedAt && !isPreview && (
+                <p className="text-xs text-[#94A3B8] text-right -mt-1">
+                  Draft saved {new Date(lastSavedAt).toLocaleTimeString()}
+                </p>
+              )}
             </div>
           </div>
         </form>

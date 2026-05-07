@@ -553,7 +553,12 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
         'SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ?'
       )
       .get(c.id) as { n: number }
-    return { ...toApiCollection(c, [], new Map()), responseCount: n }
+    const { ct } = db
+      .prepare(
+        "SELECT COUNT(*) AS ct FROM collection_fields WHERE collection_id = ? AND type = 'custom_table'"
+      )
+      .get(c.id) as { ct: number }
+    return { ...toApiCollection(c, [], new Map()), responseCount: n, hasCustomTable: ct > 0 }
   })
   res.json(result)
 })

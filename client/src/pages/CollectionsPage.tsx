@@ -10,6 +10,7 @@ import {
   Tag,
   Users,
   ClipboardList,
+  Table,
 } from 'lucide-react'
 import { listCollections, deleteCollection } from '../api/collections'
 import { htmlToPlainText } from '../utils/richText'
@@ -162,8 +163,11 @@ export default function CollectionsPage() {
                     {col.status}
                   </span>
                 </div>
-                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight">
+                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight flex items-center gap-1.5">
                   {col.title}
+                  {col.hasCustomTable && (
+                    <Table size={12} className="shrink-0 text-[#2563EB] dark:text-white" title="Contains custom table" />
+                  )}
                 </h2>
                 {col.description && (
                   <p className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-0.5 line-clamp-2">

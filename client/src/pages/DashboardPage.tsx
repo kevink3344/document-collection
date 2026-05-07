@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ClipboardList, Layers } from 'lucide-react'
+import { ClipboardList, Layers, Table } from 'lucide-react'
 import { listCollections } from '../api/collections'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import { useAuth } from '../contexts/AuthContext'
@@ -103,8 +103,11 @@ export default function DashboardPage() {
                       >
                         <span className="flex items-center gap-2 min-w-0">
                           <ClipboardList size={14} className="shrink-0 text-[#94A3B8]" />
-                          <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] truncate group-hover:text-[#2563EB]">
+                          <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] truncate group-hover:text-[#2563EB] flex items-center gap-1">
                             {col.title}
+                            {col.hasCustomTable && (
+                              <Table size={11} className="shrink-0 text-[#2563EB] dark:text-white" title="Contains custom table" />
+                            )}
                           </span>
                         </span>
                       </button>
