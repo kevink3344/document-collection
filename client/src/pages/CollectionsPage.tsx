@@ -212,11 +212,11 @@ export default function CollectionsPage() {
                   onClick={() =>
                     window.open(`/fill/${col.slug}?preview=true`, '_blank', 'noopener')
                   }
-                  title="Preview"
-                  className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors"
+                  title="Test Form"
+                  className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
                 >
                   <Eye size={13} />
-                  Preview
+                  Test Form
                 </button>
                 <button
                   onClick={() => navigate(`/collections/${col.id}/edit`)}

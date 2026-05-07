@@ -536,10 +536,10 @@ export default function CollectionBuilderPage() {
                   window.open(`/fill/${collectionSlug}?preview=true`, '_blank', 'noopener')
                 }}
                 disabled={!collectionSlug}
-                className="flex items-center gap-1.5 text-sm text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-3 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-1.5 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-40"
               >
                 <Eye size={14} />
-                Preview
+                Test Form
               </button>
             )}
             {isEdit && (

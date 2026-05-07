@@ -155,7 +155,7 @@ export default function DashboardPage() {
                 {/* Header */}
                 <div className="flex items-center justify-between gap-3">
                   <span
-                    className={`inline-flex items-center text-sm font-bold uppercase tracking-wide px-2.5 py-1 rounded-[2px] ${colors.badge}`}
+                    className={`inline-flex items-center text-sm uppercase tracking-wide px-2.5 py-1 rounded-[2px] ${colors.badge}`}
                   >
                     {category}
                   </span>

@@ -830,6 +830,15 @@ export default function CollectionFillPage() {
       return
     }
 
+    // In preview/test mode, skip the API call entirely — just show the test success screen.
+    if (isPreview) {
+      setSubmitting(true)
+      await new Promise(res => setTimeout(res, 600)) // simulate network delay
+      setSubmitting(false)
+      setSubmitted(true)
+      return
+    }
+
     setSubmitting(true)
     setSubmitError(null)
     try {
@@ -877,7 +886,55 @@ export default function CollectionFillPage() {
     )
   }
 
+  function handleTestAgain() {
+    // Reset all form state to start a fresh test run without reloading the page
+    if (collection) {
+      const defaults: Record<number, string> = {}
+      collection.fields.forEach(f => { if (f.id !== undefined) defaults[f.id] = '' })
+      setValues(defaults)
+    }
+    setRespName('')
+    setRespEmail('')
+    setCurrentPageIdx(0)
+    setSubmitted(false)
+    setSubmitError(null)
+    setPageError(null)
+  }
+
   if (submitted) {
+    if (isPreview) {
+      return (
+        <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A] flex items-center justify-center">
+          <div className="text-center space-y-4 p-8 max-w-sm">
+            <div className="w-14 h-14 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mx-auto">
+              <CheckCircle size={28} className="text-amber-500" />
+            </div>
+            <h2 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
+              Test complete!
+            </h2>
+            <p className="text-[#64748B] text-sm">
+              No data was saved. This was a test submission — the form behaved exactly as respondents will see it.
+            </p>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleTestAgain}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium px-4 py-2.5 rounded transition-colors"
+              >
+                Test again
+              </button>
+              <button
+                type="button"
+                onClick={() => window.close()}
+                className="w-full border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] text-sm px-4 py-2.5 rounded transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
     if (editResponseId) {
       return (
         <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A] flex items-center justify-center">
@@ -915,8 +972,22 @@ export default function CollectionFillPage() {
   return (
     <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A]">
       {isPreview && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-center py-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
-          Preview mode — responses will be saved
+        <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-4 py-2.5">
+          <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide bg-amber-500 text-white px-2 py-0.5 rounded">Test Mode</span>
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                Filling out this form as a respondent would — <strong>no data will be saved</strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => window.close()}
+              className="shrink-0 text-xs text-amber-600 dark:text-amber-400 hover:underline"
+            >
+              Close
+            </button>
+          </div>
         </div>
       )}
 
@@ -1188,9 +1259,15 @@ export default function CollectionFillPage() {
                     type="button"
                     onClick={handleSubmit}
                     disabled={submitting}
-                    className="flex-1 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 rounded text-sm transition-colors"
+                    className={`flex-1 font-medium py-2.5 rounded text-sm transition-colors disabled:opacity-50 text-white ${
+                      isPreview
+                        ? 'bg-amber-500 hover:bg-amber-600'
+                        : 'bg-[#2563EB] hover:bg-blue-700'
+                    }`}
                   >
-                    {submitting ? (editResponseId ? 'Saving…' : 'Submitting…') : (editResponseId ? 'Save Changes' : 'Submit')}
+                    {submitting
+                      ? (isPreview ? 'Testing…' : editResponseId ? 'Saving…' : 'Submitting…')
+                      : (isPreview ? 'Submit (Test)' : editResponseId ? 'Save Changes' : 'Submit')}
                   </button>
                 )}
               </div>
