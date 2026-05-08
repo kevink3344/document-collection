@@ -101,11 +101,11 @@ function runMigrations(db: DatabaseSync): void {
     console.log('[db] Migration: added collection_fields.display_style')
   }
 
-  // Rebuild collection_fields if the CHECK constraint doesn't include 'rating'
+  // Rebuild collection_fields if the CHECK constraint doesn't include 'rating' or 'comment'
   const fieldsSqlRow = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
     .get() as unknown as { sql: string } | undefined
-  if (fieldsSqlRow?.sql && !fieldsSqlRow.sql.includes("'rating'")) {
+  if (fieldsSqlRow?.sql && (!fieldsSqlRow.sql.includes("'rating'") || !fieldsSqlRow.sql.includes("'comment'"))) {
     // Disable FK enforcement so renaming collection_fields doesn't break
     // the collection_table_columns FK reference during the rebuild.
     db.exec('PRAGMA foreign_keys = OFF')
@@ -119,7 +119,7 @@ function runMigrations(db: DatabaseSync): void {
           version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
           type          TEXT    NOT NULL CHECK(type IN (
                           'short_text','long_text','single_choice','multiple_choice',
-                          'attachment','signature','confirmation','custom_table','rating'
+                          'attachment','signature','confirmation','custom_table','rating','comment'
                         )),
           label         TEXT    NOT NULL,
           page_number   INTEGER NOT NULL DEFAULT 1,
@@ -138,7 +138,7 @@ function runMigrations(db: DatabaseSync): void {
       `)
       db.exec('DROP TABLE collection_fields_old')
       db.exec('COMMIT')
-      console.log('[db] Migration: rebuilt collection_fields to support rating type')
+      console.log('[db] Migration: rebuilt collection_fields to support rating and comment types')
     } catch (err) {
       db.exec('ROLLBACK')
       throw err

@@ -76,6 +76,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   confirmation: 'Confirmation (Checkbox)',
   custom_table: 'Custom Table',
   rating: 'Rating (1–5)',
+  comment: 'Comment (Read-only)',
 }
 
 function normalizeFieldType(type: string): FieldType {
@@ -89,6 +90,7 @@ function normalizeFieldType(type: string): FieldType {
     'confirmation',
     'custom_table',
     'rating',
+    'comment',
   ])
   return valid.has(type as FieldType) ? (type as FieldType) : 'short_text'
 }
@@ -1276,12 +1278,13 @@ function FieldCard({
       <div className="pl-7 space-y-2">
         <input
           type="text"
-          placeholder="Field label"
+          placeholder={field.type === 'comment' ? 'Comment text' : 'Field label'}
           value={field.label}
           onChange={e => onUpdate({ label: e.target.value })}
           className={`${FIELD_INPUT} w-full`}
         />
         <div className="flex items-center gap-4 flex-wrap">
+          {field.type !== 'comment' && (
           <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer">
             <input
               type="checkbox"
@@ -1291,6 +1294,7 @@ function FieldCard({
             />
             Required
           </label>
+          )}
           <label className="flex items-center gap-1 text-xs text-[#64748B]">
             Page
             <input

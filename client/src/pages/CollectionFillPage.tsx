@@ -1339,6 +1339,14 @@ function FieldRenderer({
 }) {
   const required = field.required && !disabled
 
+  if (field.type === 'comment') {
+    return (
+      <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3 text-sm text-blue-800 dark:text-blue-200 whitespace-pre-wrap">
+        {field.label}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-1">
       <label className={LABEL}>

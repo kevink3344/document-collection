@@ -67,7 +67,7 @@ export function createSchema(db: DatabaseSync): void {
       version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
       type          TEXT    NOT NULL CHECK(type IN (
                       'short_text','long_text','single_choice','multiple_choice',
-                      'attachment','signature','confirmation','custom_table','rating'
+                      'attachment','signature','confirmation','custom_table','rating','comment'
                     )),
       label         TEXT    NOT NULL,
       page_number   INTEGER NOT NULL DEFAULT 1,

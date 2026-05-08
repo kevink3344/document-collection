@@ -26,6 +26,7 @@ export type FieldType =
   | 'confirmation'
   | 'custom_table'
   | 'rating'
+  | 'comment'
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'
