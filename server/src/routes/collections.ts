@@ -33,7 +33,7 @@ function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string
 
 type FieldType =
   | 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice'
-  | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating' | 'comment'
+  | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating' | 'comment' | 'matrix_likert_scale'
 
 type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 

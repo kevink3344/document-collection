@@ -28,6 +28,25 @@ function ReadOnlyField({ label, fieldType, value }: { label: string; fieldType: 
               ))}
             </ul>
           )
+              case 'matrix_likert_scale': {
+                try {
+                  const responses: Record<number, string> = JSON.parse(value)
+                  const configStr = fieldType === 'matrix_likert_scale' ? fieldType : null
+                  // Note: fieldType is a string, so we can't get config from it
+                  // This is a limitation - we just display the raw responses
+                  return (
+                    <div className="text-sm space-y-1">
+                      {Object.entries(responses).map(([rowIdx, colLabel]) => (
+                        <div key={rowIdx} className="text-[#1E293B] dark:text-[#F1F5F9]">
+                          Row {Number(rowIdx) + 1}: <span className="font-medium">{colLabel}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                } catch {
+                  return <span className={VALUE}>{value}</span>
+                }
+              }
         } catch {
           return <span className={VALUE}>{value}</span>
         }

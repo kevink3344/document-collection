@@ -77,7 +77,7 @@ const options: swaggerJsdoc.Options = {
           type: 'object',
           properties: {
             id:           { type: 'integer', example: 1 },
-            type:         { type: 'string',  enum: ['short_text', 'long_text', 'single_choice', 'multiple_choice', 'attachment', 'signature', 'confirmation', 'custom_table', 'rating', 'comment'] },
+            type:         { type: 'string',  enum: ['short_text', 'long_text', 'single_choice', 'multiple_choice', 'attachment', 'signature', 'confirmation', 'custom_table', 'rating', 'comment', 'matrix_likert_scale'] },
             label:        { type: 'string',  example: 'Full Name' },
             page:         { type: 'integer', example: 1 },
             required:     { type: 'boolean', example: true },
@@ -90,7 +90,7 @@ const options: swaggerJsdoc.Options = {
           type: 'object',
           required: ['type', 'label'],
           properties: {
-            type:         { type: 'string',  enum: ['short_text', 'long_text', 'single_choice', 'multiple_choice', 'attachment', 'signature', 'confirmation', 'custom_table', 'rating', 'comment'] },
+            type:         { type: 'string',  enum: ['short_text', 'long_text', 'single_choice', 'multiple_choice', 'attachment', 'signature', 'confirmation', 'custom_table', 'rating', 'comment', 'matrix_likert_scale'] },
             label:        { type: 'string',  example: 'Full Name' },
             page:         { type: 'integer', example: 1 },
             required:     { type: 'boolean', example: false },

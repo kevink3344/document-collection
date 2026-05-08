@@ -27,6 +27,7 @@ export type FieldType =
   | 'custom_table'
   | 'rating'
   | 'comment'
+  | 'matrix_likert_scale'
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'

@@ -31,6 +31,7 @@ import type {
   TableColumn,
 } from '../types'
 import TableWizardModal from '../components/collections/TableWizardModal'
+import MatrixLikertConfigModal from '../components/collections/MatrixLikertConfigModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { htmlToPlainText } from '../utils/richText'
@@ -77,6 +78,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   custom_table: 'Custom Table',
   rating: 'Rating (1–5)',
   comment: 'Comment (Read-only)',
+  matrix_likert_scale: 'Matrix Likert Scale',
 }
 
 function normalizeFieldType(type: string): FieldType {
@@ -91,6 +93,7 @@ function normalizeFieldType(type: string): FieldType {
     'custom_table',
     'rating',
     'comment',
+    'matrix_likert_scale',
   ])
   return valid.has(type as FieldType) ? (type as FieldType) : 'short_text'
 }
@@ -143,6 +146,7 @@ export default function CollectionBuilderPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [wizardField, setWizardField] = useState<string | null>(null) // _key of field being configured
+  const [matrixConfigField, setMatrixConfigField] = useState<string | null>(null) // _key of field being configured
   const [collectionSlug, setCollectionSlug] = useState<string | null>(null)
   const [activeVersionId, setActiveVersionId] = useState<number | null>(null)
   const [currentVersionNumber, setCurrentVersionNumber] = useState<number | null>(null)
@@ -596,6 +600,28 @@ export default function CollectionBuilderPage() {
     ? fields.find(f => f._key === wizardField)
     : null
 
+  const matrixConfigBuilderField = matrixConfigField
+    ? fields.find(f => f._key === matrixConfigField)
+    : null
+
+  const matrixConfigFromField = matrixConfigBuilderField
+    ? (() => {
+        try {
+          // If options is a string (JSON), parse it; otherwise treat as array of row labels
+          if (matrixConfigBuilderField.options && matrixConfigBuilderField.options.length > 0) {
+            const firstOpt = matrixConfigBuilderField.options[0]
+            if (typeof firstOpt === 'string' && firstOpt.startsWith('{')) {
+              // Try to parse as JSON (matrix config)
+              return JSON.parse(firstOpt)
+            }
+          }
+          return null
+        } catch {
+          return null
+        }
+      })()
+    : null
+
   if (loadError) {
     return (
       <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-4 text-red-700 dark:text-red-400 text-sm">
@@ -615,6 +641,19 @@ export default function CollectionBuilderPage() {
             setWizardField(null)
           }}
           onClose={() => setWizardField(null)}
+        />
+      )}
+
+      {/* Matrix Likert Config modal */}
+      {matrixConfigBuilderField && (
+        <MatrixLikertConfigModal
+          config={matrixConfigFromField}
+          onSave={config => {
+            // Store as single JSON string in options array
+            updateField(matrixConfigBuilderField._key, { options: [JSON.stringify(config)] })
+            setMatrixConfigField(null)
+          }}
+          onClose={() => setMatrixConfigField(null)}
         />
       )}
 
@@ -1170,6 +1209,7 @@ export default function CollectionBuilderPage() {
                   onUpdateOption={(i, v) => updateOption(field._key, i, v)}
                   onRemoveOption={i => removeOption(field._key, i)}
                   onConfigureTable={() => setWizardField(field._key)}
+                  onConfigureMatrix={() => setMatrixConfigField(field._key)}
                 />
               ))}
             </div>
@@ -1203,6 +1243,7 @@ interface FieldCardProps {
   onUpdateOption: (idx: number, val: string) => void
   onRemoveOption: (idx: number) => void
   onConfigureTable: () => void
+  onConfigureMatrix: () => void
 }
 
 const FIELD_INPUT =
@@ -1222,6 +1263,7 @@ function FieldCard({
   onUpdateOption,
   onRemoveOption,
   onConfigureTable,
+  onConfigureMatrix,
 }: FieldCardProps) {
   const showOptions =
     field.type === 'single_choice' || field.type === 'multiple_choice'
@@ -1284,7 +1326,7 @@ function FieldCard({
           className={`${FIELD_INPUT} w-full`}
         />
         <div className="flex items-center gap-4 flex-wrap">
-          {field.type !== 'comment' && (
+          {field.type !== 'comment' && field.type !== 'matrix_likert_scale' && (
           <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer">
             <input
               type="checkbox"
@@ -1381,6 +1423,24 @@ function FieldCard({
             {field.tableColumns.length > 0 && (
               <span className="ml-1 text-white font-medium">
                 ({field.tableColumns.length})
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Matrix Likert config */}
+      {field.type === 'matrix_likert_scale' && (
+        <div className="pl-7">
+          <button
+            onClick={() => onConfigureMatrix()}
+            className="flex items-center gap-1.5 text-xs bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-3 py-1.5 rounded transition-colors"
+          >
+            <Settings2 size={13} />
+            Configure Matrix
+            {field.options && field.options.length > 0 && (
+              <span className="ml-1 text-white font-medium">
+                ({field.options.length} rows)
               </span>
             )}
           </button>
