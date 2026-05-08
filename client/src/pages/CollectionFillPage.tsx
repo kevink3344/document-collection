@@ -167,6 +167,8 @@ function SignaturePad({
       </button>
     </div>
   )
+}
+
 interface MatrixLikertScaleInputProps {
   field: CollectionField
   value: string
@@ -188,60 +190,102 @@ function MatrixLikertScaleInput({ field, value, onChange, disabled }: MatrixLike
     return <div className="text-xs text-red-500">Invalid matrix configuration</div>
   }
 
-  const responses: Record<number, string> = value ? (JSON.parse(value) as Record<number, string>) : {}
+  let responses: Record<number, string> = {}
+  try {
+    responses = value ? (JSON.parse(value) as Record<number, string>) : {}
+  } catch {
+    responses = {}
+  }
 
   function handleRowSelect(rowIdx: number, colLabel: string) {
     const updated = { ...responses, [rowIdx]: colLabel }
     onChange(JSON.stringify(updated))
   }
 
+  const fieldNameSeed = String(field.id ?? field.label ?? 'matrix')
+
+  function radioGroupName(view: 'mobile' | 'desktop', rowIdx: number) {
+    return `matrix-${fieldNameSeed}-${view}-row-${rowIdx}`
+  }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="border-collapse border border-[#CBD5E1] dark:border-[#334155] text-sm w-full">
-        <thead>
-          <tr>
-            <th className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 text-left font-semibold text-[#1E293B] dark:text-[#F1F5F9]" />
-            {config.columns.map((col, i) => (
-              <th
-                key={i}
-                className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 text-left font-semibold text-[#1E293B] dark:text-[#F1F5F9] max-w-xs"
-              >
-                {col}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {config.rows.map((row, rowIdx) => (
-            <tr key={rowIdx}>
-              <td className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 font-medium text-[#1E293B] dark:text-[#F1F5F9]">
-                {row}
-              </td>
+    <div className="space-y-3">
+      <div className="md:hidden space-y-3">
+        {config.rows.map((row, rowIdx) => (
+          <div
+            key={rowIdx}
+            className="rounded-lg border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0B1220] p-3"
+          >
+            <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{row}</p>
+            <div className="mt-2 space-y-2">
               {config.columns.map((col, colIdx) => (
-                <td
+                <label
                   key={colIdx}
-                  className="border border-[#CBD5E1] dark:border-[#334155] p-3 text-center"
+                  className="flex items-start gap-2 rounded border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] px-3 py-2"
                 >
-                  <label className="flex items-center justify-center cursor-pointer">
-                    <input
-                      type="radio"
-                      name={`matrix-row-${rowIdx}`}
-                      value={col}
-                      checked={responses[rowIdx] === col}
-                      onChange={() => handleRowSelect(rowIdx, col)}
-                      className="accent-[#2563EB]"
-                      disabled={disabled}
-                    />
-                  </label>
-                </td>
+                  <input
+                    type="radio"
+                    name={radioGroupName('mobile', rowIdx)}
+                    value={col}
+                    checked={responses[rowIdx] === col}
+                    onChange={() => handleRowSelect(rowIdx, col)}
+                    className="mt-0.5 accent-[#2563EB]"
+                    disabled={disabled}
+                  />
+                  <span className="text-sm text-[#334155] dark:text-[#CBD5E1]">{col}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block overflow-x-auto">
+        <table className="border-collapse border border-[#CBD5E1] dark:border-[#334155] text-sm w-full">
+          <thead>
+            <tr>
+              <th className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 text-left font-semibold text-[#1E293B] dark:text-[#F1F5F9]" />
+              {config.columns.map((col, i) => (
+                <th
+                  key={i}
+                  className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 text-left font-semibold text-[#1E293B] dark:text-[#F1F5F9] max-w-xs"
+                >
+                  {col}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {config.rows.map((row, rowIdx) => (
+              <tr key={rowIdx}>
+                <td className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 font-medium text-[#1E293B] dark:text-[#F1F5F9]">
+                  {row}
+                </td>
+                {config.columns.map((col, colIdx) => (
+                  <td
+                    key={colIdx}
+                    className="border border-[#CBD5E1] dark:border-[#334155] p-3 text-center"
+                  >
+                    <label className="flex items-center justify-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name={radioGroupName('desktop', rowIdx)}
+                        value={col}
+                        checked={responses[rowIdx] === col}
+                        onChange={() => handleRowSelect(rowIdx, col)}
+                        className="accent-[#2563EB]"
+                        disabled={disabled}
+                      />
+                    </label>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
-}
 }
 
 // ── Custom table input ────────────────────────────────────────
@@ -1577,10 +1621,10 @@ function FieldRenderer({
 
       {field.type === 'custom_table' && (
         <CustomTableInput field={field} value={value} onChange={onChange} disabled={disabled} />
+      )}
 
-            {field.type === 'matrix_likert_scale' && (
-              <MatrixLikertScaleInput field={field} value={value} onChange={onChange} disabled={disabled} />
-            )}
+      {field.type === 'matrix_likert_scale' && (
+        <MatrixLikertScaleInput field={field} value={value} onChange={onChange} disabled={disabled} />
       )}
     </div>
   )
