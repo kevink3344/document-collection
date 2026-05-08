@@ -7,6 +7,12 @@
     @apply bg-[#FAFAFA] dark:bg-[#0F172A];
   }
 
+  @media (max-width: 767px) {
+    html {
+      font-size: 110%;
+    }
+  }
+
   body {
     @apply bg-[#FAFAFA] dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] font-sans antialiased;
     -webkit-font-smoothing: antialiased;

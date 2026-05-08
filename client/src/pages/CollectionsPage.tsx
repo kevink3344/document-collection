@@ -162,6 +162,11 @@ export default function CollectionsPage() {
                   >
                     {col.status}
                   </span>
+                  {col.currentVersionNumber != null && (
+                    <span className="inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-[#F1F5F9] dark:bg-[#334155] text-[#475569] dark:text-[#94A3B8]">
+                      v{col.currentVersionNumber}
+                    </span>
+                  )}
                 </div>
                 <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight flex items-center gap-1.5">
                   {col.title}
