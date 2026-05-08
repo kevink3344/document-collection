@@ -242,7 +242,7 @@ const VALID_FOCUS = new Set<FocusArea>(['general', 'trend', 'categories', 'colle
 
 router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const role = req.user?.role
-  const userId = req.user?.id
+  const userId = req.user?.sub
 
   if (role !== 'administrator' && role !== 'team_manager') {
     res.status(403).json({ error: 'Forbidden' })
