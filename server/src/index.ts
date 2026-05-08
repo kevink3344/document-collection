@@ -25,8 +25,13 @@ const GROQ_ENV = ['GROQ_API_URL', 'GROQ_API_KEY', 'GROQ_MODEL'] as const
 
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) {
-    console.error(`[server] FATAL: required env var "${key}" is not set. Exiting.`)
-    process.exit(1)
+    if (IS_PROD) {
+      console.error(`[server] FATAL: required env var "${key}" is not set. Exiting.`)
+      process.exit(1)
+    }
+    console.warn(
+      `[server] WARNING: env var "${key}" is not set. Using development fallback secret.`,
+    )
   }
 }
 
