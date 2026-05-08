@@ -16,12 +16,13 @@ import {
   createCollection,
   createCollectionVersion,
   getCollection,
+  getCollectionVersion,
   listCollectionVersions,
   publishCollectionVersion,
   updateCollection,
 } from '../api/collections'
 import { listCategories } from '../api/categories'
-import type { Category } from '../types'
+import type { Category, Collection, CollectionField } from '../types'
 import type {
   ColType,
   CollectionStatus,
@@ -141,7 +142,12 @@ export default function CollectionBuilderPage() {
   const [activeVersionId, setActiveVersionId] = useState<number | null>(null)
   const [currentVersionNumber, setCurrentVersionNumber] = useState<number | null>(null)
   const [versions, setVersions] = useState<CollectionVersion[]>([])
-  const [detailsTab, setDetailsTab] = useState<'general' | 'photo' | 'share'>('general')
+  const [detailsTab, setDetailsTab] = useState<'general' | 'photo' | 'share' | 'versions'>('general')
+  const [versionCompareFromId, setVersionCompareFromId] = useState<number | null>(null)
+  const [versionCompareToId, setVersionCompareToId] = useState<number | null>(null)
+  const [versionSnapshots, setVersionSnapshots] = useState<Record<number, Collection>>({})
+  const [versionDiffLoading, setVersionDiffLoading] = useState(false)
+  const [versionDiffError, setVersionDiffError] = useState<string | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
   const [categoriesError, setCategoriesError] = useState<string | null>(null)
@@ -209,6 +215,128 @@ export default function CollectionBuilderPage() {
       .then(setVersions)
       .catch(() => setVersions([]))
   }, [id, loadTick])
+
+  useEffect(() => {
+    if (versions.length === 0) {
+      setVersionCompareFromId(null)
+      setVersionCompareToId(null)
+      return
+    }
+
+    setVersionCompareToId(prev => prev ?? versions[0].id)
+    setVersionCompareFromId(prev => {
+      if (prev) return prev
+      if (versions.length > 1) return versions[1].id
+      return versions[0].id
+    })
+  }, [versions])
+
+  useEffect(() => {
+    if (!id || detailsTab !== 'versions') return
+    const targets = [versionCompareFromId, versionCompareToId].filter((v): v is number => typeof v === 'number')
+    if (targets.length === 0) return
+
+    const missing = targets.filter(v => !versionSnapshots[v])
+    if (missing.length === 0) return
+
+    setVersionDiffLoading(true)
+    setVersionDiffError(null)
+
+    Promise.all(missing.map(versionId => getCollectionVersion(parseInt(id, 10), versionId)))
+      .then(items => {
+        setVersionSnapshots(prev => {
+          const next = { ...prev }
+          items.forEach((snapshot, idx) => {
+            next[missing[idx]] = snapshot
+          })
+          return next
+        })
+      })
+      .catch(err => setVersionDiffError((err as Error).message))
+      .finally(() => setVersionDiffLoading(false))
+  }, [id, detailsTab, versionCompareFromId, versionCompareToId, versionSnapshots])
+
+  function normaliseFieldForDiff(field: CollectionField) {
+    return {
+      type: field.type,
+      label: field.label.trim(),
+      page: field.page,
+      required: field.required,
+      options: (field.options ?? []).map(opt => opt.trim()).filter(Boolean),
+      displayStyle: field.displayStyle ?? 'radio',
+      tableColumns: (field.tableColumns ?? []).map(col => ({
+        name: col.name.trim(),
+        colType: col.colType,
+        listOptions: (col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean),
+      })),
+    }
+  }
+
+  function fieldKey(field: CollectionField) {
+    return `${field.type}:${field.label.trim().toLowerCase()}`
+  }
+
+  const versionDiff = useMemo(() => {
+    if (!versionCompareFromId || !versionCompareToId) return null
+    const from = versionSnapshots[versionCompareFromId]
+    const to = versionSnapshots[versionCompareToId]
+    if (!from || !to) return null
+
+    const changes: string[] = []
+
+    if ((from.title ?? '') !== (to.title ?? '')) changes.push(`Title: "${from.title}" to "${to.title}"`)
+    if ((from.description ?? '') !== (to.description ?? '')) changes.push('Description updated')
+    if ((from.category ?? '') !== (to.category ?? '')) changes.push(`Category: ${from.category ?? 'none'} to ${to.category ?? 'none'}`)
+    if ((from.dateDue ?? '') !== (to.dateDue ?? '')) changes.push(`Due date: ${from.dateDue ?? 'none'} to ${to.dateDue ?? 'none'}`)
+    if (from.status !== to.status) changes.push(`Status: ${from.status} to ${to.status}`)
+    if (from.anonymous !== to.anonymous) changes.push(`Response mode: ${from.anonymous ? 'Anonymous' : 'Authenticated'} to ${to.anonymous ? 'Anonymous' : 'Authenticated'}`)
+    if (from.allowSubmissionEdits !== to.allowSubmissionEdits) {
+      changes.push(`Submission edits: ${from.allowSubmissionEdits ? 'Enabled' : 'Disabled'} to ${to.allowSubmissionEdits ? 'Enabled' : 'Disabled'}`)
+    }
+    if ((from.submissionEditWindowHours ?? 0) !== (to.submissionEditWindowHours ?? 0)) {
+      changes.push(`Edit window hours: ${from.submissionEditWindowHours ?? 0} to ${to.submissionEditWindowHours ?? 0}`)
+    }
+
+    const fromFields = new Map(from.fields.map(field => [fieldKey(field), field]))
+    const toFields = new Map(to.fields.map(field => [fieldKey(field), field]))
+
+    let fieldsAdded = 0
+    let fieldsRemoved = 0
+    let fieldsChanged = 0
+
+    toFields.forEach((field, key) => {
+      if (!fromFields.has(key)) {
+        fieldsAdded += 1
+        changes.push(`Field added: ${field.label} (${field.type.replace('_', ' ')})`)
+      }
+    })
+
+    fromFields.forEach((field, key) => {
+      if (!toFields.has(key)) {
+        fieldsRemoved += 1
+        changes.push(`Field removed: ${field.label} (${field.type.replace('_', ' ')})`)
+      }
+    })
+
+    fromFields.forEach((field, key) => {
+      const next = toFields.get(key)
+      if (!next) return
+      const left = JSON.stringify(normaliseFieldForDiff(field))
+      const right = JSON.stringify(normaliseFieldForDiff(next))
+      if (left !== right) {
+        fieldsChanged += 1
+        changes.push(`Field changed: ${field.label}`)
+      }
+    })
+
+    return {
+      changes,
+      metadataChanged: changes.length - fieldsAdded - fieldsRemoved - fieldsChanged,
+      fieldsAdded,
+      fieldsRemoved,
+      fieldsChanged,
+    }
+  }, [versionCompareFromId, versionCompareToId, versionSnapshots])
 
   // ── Field helpers ─────────────────────────────────────────
 
@@ -627,6 +755,20 @@ export default function CollectionBuilderPage() {
             >
               Share
             </button>
+            {isEdit && (
+              <button
+                type="button"
+                onClick={() => setDetailsTab('versions')}
+                className={[
+                  'px-3 py-2 text-sm font-semibold border-b-2 transition-colors rounded-t',
+                  detailsTab === 'versions'
+                    ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+                    : 'border-transparent text-[#64748B] hover:text-[#2563EB] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                ].join(' ')}
+              >
+                Versions
+              </button>
+            )}
           </div>
 
           {detailsTab === 'general' && (
@@ -860,6 +1002,74 @@ export default function CollectionBuilderPage() {
                     className={INPUT}
                   />
                   <p className="mt-1 text-xs text-[#64748B]">Recommended: 24 to 36 hours.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {detailsTab === 'versions' && isEdit && (
+            <div className="space-y-4">
+              <p className="text-xs text-[#64748B]">Compare two saved versions to review what changed.</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={LABEL}>From Version</label>
+                  <select
+                    value={versionCompareFromId ?? ''}
+                    onChange={e => setVersionCompareFromId(Number(e.target.value))}
+                    className={INPUT}
+                  >
+                    {versions.map(v => (
+                      <option key={`from-${v.id}`} value={v.id}>
+                        v{v.versionNumber} ({v.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL}>To Version</label>
+                  <select
+                    value={versionCompareToId ?? ''}
+                    onChange={e => setVersionCompareToId(Number(e.target.value))}
+                    className={INPUT}
+                  >
+                    {versions.map(v => (
+                      <option key={`to-${v.id}`} value={v.id}>
+                        v{v.versionNumber} ({v.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {versionDiffError && (
+                <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-3 text-red-700 dark:text-red-400 text-sm">
+                  {versionDiffError}
+                </div>
+              )}
+
+              {versionDiffLoading && (
+                <p className="text-sm text-[#64748B]">Loading version details…</p>
+              )}
+
+              {!versionDiffLoading && versionDiff && (
+                <div className="rounded border border-[#E2E8F0] dark:border-[#334155] overflow-hidden">
+                  <div className="px-4 py-3 bg-[#F8FAFC] dark:bg-[#0F172A] border-b border-[#E2E8F0] dark:border-[#334155] flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">Summary:</span>
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-[2px] bg-[#E2E8F0] text-[#475569] dark:bg-[#334155] dark:text-[#CBD5E1]">Metadata {versionDiff.metadataChanged}</span>
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-[2px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">Added {versionDiff.fieldsAdded}</span>
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-[2px] bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">Removed {versionDiff.fieldsRemoved}</span>
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-[2px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Changed {versionDiff.fieldsChanged}</span>
+                  </div>
+                  {versionDiff.changes.length > 0 ? (
+                    <ul className="p-4 space-y-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] list-disc list-inside">
+                      {versionDiff.changes.map(change => (
+                        <li key={change}>{change}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="p-4 text-sm text-[#64748B]">No differences found between the selected versions.</p>
+                  )}
                 </div>
               )}
             </div>

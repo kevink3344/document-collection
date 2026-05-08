@@ -94,6 +94,16 @@ export async function listCollectionVersions(collectionId: number): Promise<Coll
   return handleResponse<CollectionVersion[]>(res)
 }
 
+export async function getCollectionVersion(
+  collectionId: number,
+  versionId: number
+): Promise<Collection> {
+  const res = await fetch(`/api/collections/${collectionId}/versions/${versionId}`, {
+    headers: authHeaders(),
+  })
+  return handleResponse<Collection>(res)
+}
+
 export async function createCollectionVersion(
   collectionId: number,
   payload: CollectionPayload

@@ -1051,6 +1051,37 @@ router.get('/:id/versions', authenticateToken, (req: Request, res: Response) => 
   )
 })
 
+router.get('/:id/versions/:versionId', authenticateToken, (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  const versionId = parseInt(req.params.versionId, 10)
+  if (isNaN(id) || isNaN(versionId)) {
+    res.status(400).json({ error: 'Invalid collection or version ID' })
+    return
+  }
+
+  const db = getDb()
+  const collection = db
+    .prepare(`${COL_SELECT} WHERE c.id = ?`)
+    .get(id) as DbCollection | undefined
+
+  if (!collection) {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  const version = db
+    .prepare('SELECT id FROM collection_versions WHERE id = ? AND collection_id = ?')
+    .get(versionId, id) as { id: number } | undefined
+
+  if (!version) {
+    res.status(404).json({ error: 'Version not found' })
+    return
+  }
+
+  const [fields, colsByField] = fetchFields(id, versionId)
+  res.json(toApiCollection(collection, fields, colsByField))
+})
+
 router.post('/:id/versions', authenticateToken, (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
