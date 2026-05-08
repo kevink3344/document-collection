@@ -62,3 +62,33 @@ export async function getReportsData(days: ReportsDatePreset = 30): Promise<Repo
   if (!res.ok) throw new Error('Failed to load reports data')
   return res.json() as Promise<ReportsData>
 }
+
+export type AiFocusArea = 'general' | 'trend' | 'categories' | 'collections' | 'users'
+
+export interface AiSummaryResponse {
+  summary: string
+  findings: string[]
+  actions: string[]
+  confidenceNote: string
+  generatedAt: string
+  model: string
+  dataWindow: string
+  focus: AiFocusArea
+  aiAvailable: boolean
+  usedAi: boolean
+}
+
+export async function getAiReportsSummary(
+  days: ReportsDatePreset = 30,
+  focus: AiFocusArea = 'general',
+): Promise<AiSummaryResponse> {
+  const res = await fetch('/api/stats/reports/summary-ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ days, focus }),
+  })
+  handleUnauthorizedResponse(res)
+  if (res.status === 429) throw new Error('Rate limit reached. Please wait before generating another summary.')
+  if (!res.ok) throw new Error('Failed to generate AI summary.')
+  return res.json() as Promise<AiSummaryResponse>
+}

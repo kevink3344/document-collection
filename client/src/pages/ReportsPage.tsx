@@ -10,8 +10,12 @@ import {
   Download,
   Loader2,
   AlertCircle,
+  Sparkles,
+  RefreshCw,
+  Copy,
+  CheckCheck,
 } from 'lucide-react'
-import { getReportsData, type ReportsData, type ReportsDatePreset } from '../api/stats'
+import { getReportsData, getAiReportsSummary, type ReportsData, type ReportsDatePreset, type AiSummaryResponse, type AiFocusArea } from '../api/stats'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -152,6 +156,39 @@ export default function ReportsPage() {
 
   const [sortCol, setSortCol] = useState<SortCol>('submissionCount')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  // AI summary state
+  const [aiData, setAiData] = useState<AiSummaryResponse | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiFocus, setAiFocus] = useState<AiFocusArea>('general')
+  const [copied, setCopied] = useState(false)
+
+  function generateSummary() {
+    setAiLoading(true)
+    setAiError(null)
+    getAiReportsSummary(preset, aiFocus)
+      .then(setAiData)
+      .catch(err => setAiError((err as Error).message))
+      .finally(() => setAiLoading(false))
+  }
+
+  function copySummary() {
+    if (!aiData) return
+    const text = [
+      aiData.summary,
+      '',
+      'Key Findings:',
+      ...aiData.findings.map(f => `• ${f}`),
+      '',
+      'Recommended Actions:',
+      ...aiData.actions.map(a => `• ${a}`),
+    ].join('\n')
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   useEffect(() => {
     setLoading(true)
@@ -460,6 +497,129 @@ export default function ReportsPage() {
               </div>
             </section>
           )}
+
+          {/* ── AI Summary Panel ─────────────────────────────── */}
+          <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-b border-[#E2E8F0] dark:border-[#334155]">
+              <div className="flex items-center gap-2">
+                <Sparkles size={15} className="text-violet-500" />
+                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">AI Summary</h2>
+                <span className="text-xs text-[#64748B] hidden sm:inline">— Powered by Groq</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={aiFocus}
+                  onChange={e => setAiFocus(e.target.value as AiFocusArea)}
+                  disabled={aiLoading}
+                  className="text-xs border border-[#E2E8F0] dark:border-[#334155] rounded-md px-2 py-1.5 bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                >
+                  <option value="general">General overview</option>
+                  <option value="trend">Submission trends</option>
+                  <option value="categories">Categories</option>
+                  <option value="collections">Collections</option>
+                  <option value="users">User activity</option>
+                </select>
+                <button
+                  onClick={generateSummary}
+                  disabled={aiLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white transition-colors"
+                >
+                  {aiLoading ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : aiData ? (
+                    <RefreshCw size={13} />
+                  ) : (
+                    <Sparkles size={13} />
+                  )}
+                  {aiLoading ? 'Generating…' : aiData ? 'Regenerate' : 'Generate Summary'}
+                </button>
+                {aiData && !aiLoading && (
+                  <button
+                    onClick={copySummary}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-[#E2E8F0] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
+                  >
+                    {copied ? <CheckCheck size={13} className="text-emerald-500" /> : <Copy size={13} />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="px-4 py-4">
+              {!aiData && !aiLoading && !aiError && (
+                <p className="text-sm text-[#64748B] text-center py-8">
+                  Click <span className="font-medium text-violet-600">Generate Summary</span> to produce an AI-powered insight for the selected date range.
+                </p>
+              )}
+
+              {aiLoading && (
+                <div className="flex items-center justify-center gap-2 py-10 text-sm text-[#64748B]">
+                  <Loader2 size={18} className="animate-spin text-violet-500" />
+                  Generating summary…
+                </div>
+              )}
+
+              {!aiLoading && aiError && (
+                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+                  <AlertCircle size={15} />
+                  {aiError}
+                </div>
+              )}
+
+              {!aiLoading && aiData && (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[#94A3B8]">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${
+                      aiData.usedAi
+                        ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
+                        : 'bg-[#F1F5F9] text-[#64748B] dark:bg-[#334155] dark:text-[#94A3B8]'
+                    }`}>
+                      {aiData.usedAi ? <Sparkles size={10} /> : null}
+                      {aiData.usedAi ? `AI · ${aiData.model}` : 'Deterministic fallback'}
+                    </span>
+                    <span>{aiData.dataWindow}</span>
+                    <span>·</span>
+                    <span>Generated {new Date(aiData.generatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+
+                  <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9] leading-relaxed">
+                    {aiData.summary}
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-[#F8FAFC] dark:bg-[#0F172A]/40 rounded-lg p-4">
+                      <h3 className="text-xs font-semibold text-[#64748B] uppercase tracking-wide mb-2">Key Findings</h3>
+                      <ul className="space-y-1.5">
+                        {aiData.findings.map((f, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
+                            <span className="mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full bg-violet-500" />
+                            {f}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="bg-[#F8FAFC] dark:bg-[#0F172A]/40 rounded-lg p-4">
+                      <h3 className="text-xs font-semibold text-[#64748B] uppercase tracking-wide mb-2">Recommended Actions</h3>
+                      <ul className="space-y-1.5">
+                        {aiData.actions.map((a, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
+                            <span className="mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            {a}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1 border-t border-[#F1F5F9] dark:border-[#334155]">
+                    <p className="text-xs text-[#94A3B8] flex-1">{aiData.confidenceNote}</p>
+                    <p className="text-xs text-[#94A3B8] italic">AI-generated summary — verify before decision-making.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
         </>
       )}
     </div>

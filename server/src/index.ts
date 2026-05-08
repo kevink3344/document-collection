@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import path from 'path'
@@ -17,6 +18,24 @@ import { generateDueDateNotifications } from './services/notifications'
 const app = express()
 const PORT = process.env.PORT ?? 4000
 const IS_PROD = process.env.NODE_ENV === 'production'
+
+// ── Env validation ───────────────────────────────────────────
+const REQUIRED_ENV = ['JWT_SECRET'] as const
+const GROQ_ENV = ['GROQ_API_URL', 'GROQ_API_KEY', 'GROQ_MODEL'] as const
+
+for (const key of REQUIRED_ENV) {
+  if (!process.env[key]) {
+    console.error(`[server] FATAL: required env var "${key}" is not set. Exiting.`)
+    process.exit(1)
+  }
+}
+
+const missingGroq = GROQ_ENV.filter((k) => !process.env[k])
+if (missingGroq.length > 0) {
+  console.warn(
+    `[server] WARNING: Groq AI features are disabled. Missing env vars: ${missingGroq.join(', ')}.`,
+  )
+}
 const NOTIFICATION_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
 // ── Middleware ───────────────────────────────────────────────
