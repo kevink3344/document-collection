@@ -33,7 +33,7 @@ function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string
 
 type FieldType =
   | 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice'
-  | 'attachment' | 'signature' | 'confirmation' | 'custom_table'
+  | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating'
 
 type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 
@@ -47,6 +47,7 @@ interface DbCollection {
   created_by: number
   date_due: string | null
   cover_photo_url: string | null
+  logo_url: string | null
   instructions: string | null
   instructions_doc_url: string | null
   active_version_id: number | null
@@ -134,6 +135,7 @@ interface CollectionBody {
   category?: string
   dateDue?: string
   coverPhotoUrl?: string
+  logoUrl?: string
   instructions?: string
   instructionsDocUrl?: string
   anonymous?: boolean
@@ -198,6 +200,7 @@ function toApiCollection(
     createdByName: c.creator_name ?? null,
     dateDue: c.date_due,
     coverPhotoUrl: c.cover_photo_url,
+    logoUrl: c.logo_url,
     instructions: c.instructions,
     instructionsDocUrl: c.instructions_doc_url,
     activeVersionId: c.active_version_id,
@@ -756,9 +759,9 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
       .prepare(
         `INSERT INTO collections
            (slug, title, status, description, category, created_by, date_due, cover_photo_url,
-            instructions, instructions_doc_url, anonymous, allow_submission_edits,
+            logo_url, instructions, instructions_doc_url, anonymous, allow_submission_edits,
             submission_edit_window_hours, active_version_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
       )
       .run(
         slug,
@@ -769,6 +772,7 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
         req.user!.sub,
         body.dateDue ?? null,
         body.coverPhotoUrl ?? null,
+        body.logoUrl ?? null,
         body.instructions ?? null,
         body.instructionsDocUrl ?? null,
         body.anonymous ? 1 : 0,
@@ -967,8 +971,8 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 
     db.prepare(
       `UPDATE collections
-       SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
-           instructions = ?, instructions_doc_url = ?, anonymous = ?, allow_submission_edits = ?,
+         SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
+           logo_url = ?, instructions = ?, instructions_doc_url = ?, anonymous = ?, allow_submission_edits = ?,
            submission_edit_window_hours = ?, active_version_id = ?,
            updated_at = datetime('now')
        WHERE id = ?`
@@ -979,6 +983,7 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       category,
       body.dateDue ?? null,
       body.coverPhotoUrl ?? null,
+      body.logoUrl ?? null,
       body.instructions ?? null,
       body.instructionsDocUrl ?? null,
       body.anonymous ? 1 : 0,
@@ -1121,8 +1126,8 @@ router.post('/:id/versions', authenticateToken, (req: Request, res: Response) =>
 
     db.prepare(
       `UPDATE collections
-       SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
-           instructions = ?, instructions_doc_url = ?, anonymous = ?, active_version_id = ?,
+         SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
+           logo_url = ?, instructions = ?, instructions_doc_url = ?, anonymous = ?, active_version_id = ?,
            updated_at = datetime('now')
        WHERE id = ?`
     ).run(
@@ -1132,6 +1137,7 @@ router.post('/:id/versions', authenticateToken, (req: Request, res: Response) =>
       category,
       body.dateDue ?? null,
       body.coverPhotoUrl ?? null,
+      body.logoUrl ?? null,
       body.instructions ?? null,
       body.instructionsDocUrl ?? null,
       body.anonymous ? 1 : 0,

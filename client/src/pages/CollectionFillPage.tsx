@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, Save, History, ArrowLeft } from 'lucide-react'
+import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, Save, History, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
@@ -670,6 +670,7 @@ export default function CollectionFillPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [currentPageIdx, setCurrentPageIdx] = useState(0)
   const [pageError, setPageError] = useState<string | null>(null)
+  const [showInstructions, setShowInstructions] = useState(true)
 
   // Draft persistence
   const [showResumeBanner, setShowResumeBanner] = useState(false)
@@ -1051,7 +1052,17 @@ export default function CollectionFillPage() {
             }}
           />
           <div className="absolute inset-0 flex items-end p-6 md:p-10">
-            <div className="space-y-1">
+            <div className="space-y-2">
+              {collection.logoUrl && (
+                <div className="inline-flex max-w-[150px] bg-white shadow-sm p-[2px]">
+                  <img
+                    src={collection.logoUrl}
+                    alt="Logo"
+                    className="w-full h-auto"
+                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                  />
+                </div>
+              )}
               <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">
                 {collection.title}
               </h1>
@@ -1085,6 +1096,18 @@ export default function CollectionFillPage() {
         <div className="space-y-1">
           {!collection.coverPhotoUrl && (
             <>
+              {collection.logoUrl && (
+                <div className="inline-flex max-w-[150px] bg-white shadow-sm border border-[#E2E8F0] p-[2px]">
+                  <img
+                    src={collection.logoUrl}
+                    alt="Logo"
+                    className="w-full h-auto"
+                    onError={e => {
+                      ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                    }}
+                  />
+                </div>
+              )}
               <h1 className="text-2xl font-bold text-[#1E293B] dark:text-[#F1F5F9]">
                 {collection.title}
               </h1>
@@ -1117,36 +1140,53 @@ export default function CollectionFillPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Instructions */}
             <div className="space-y-4">
-              <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] uppercase tracking-wide">
-                Instructions
-              </h2>
-              {collection.instructions ? (
-                <div
-                  className="text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed [overflow-wrap:anywhere] [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-[#2563EB] [&_a]:underline [&_a]:hover:text-blue-700"
-                  dangerouslySetInnerHTML={{
-                    __html: sanitizeRichText(collection.instructions),
-                  }}
-                />
-              ) : (
-                <p className="text-sm text-[#94A3B8] italic">
-                  No instructions provided.
-                </p>
-              )}
-              {collection.instructionsDocUrl && (
-                <div className="border border-[#E2E8F0] dark:border-[#334155] rounded overflow-hidden">
-                  <iframe
-                    src={toEmbedUrl(collection.instructionsDocUrl)}
-                    title="Instructions document"
-                    className="w-full h-80"
-                  />
-                </div>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] uppercase tracking-wide">
+                  Instructions
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowInstructions(v => !v)}
+                  className="flex items-center gap-1 text-xs text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
+                >
+                  {showInstructions ? (
+                    <><ChevronUp size={14} /> Hide</>
+                  ) : (
+                    <><ChevronDown size={14} /> Show</>
+                  )}
+                </button>
+              </div>
+              {showInstructions && (
+                <>
+                  {collection.instructions ? (
+                    <div
+                      className="text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed [overflow-wrap:anywhere] [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-[#2563EB] [&_a]:underline [&_a]:hover:text-blue-700"
+                      dangerouslySetInnerHTML={{
+                        __html: sanitizeRichText(collection.instructions),
+                      }}
+                    />
+                  ) : (
+                    <p className="text-sm text-[#94A3B8] italic">
+                      No instructions provided.
+                    </p>
+                  )}
+                  {collection.instructionsDocUrl && (
+                    <div className="border border-[#E2E8F0] dark:border-[#334155] rounded overflow-hidden">
+                      <iframe
+                        src={toEmbedUrl(collection.instructionsDocUrl)}
+                        title="Instructions document"
+                        className="w-full h-80"
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             {/* Form data */}
             <div className="space-y-5">
               <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] uppercase tracking-wide">
-                Form Data
+                Questions
               </h2>
 
               {totalPages > 1 && (
@@ -1424,6 +1464,32 @@ function FieldRenderer({
             {field.label}
           </span>
         </label>
+      )}
+
+      {field.type === 'rating' && (
+        <div className="flex items-center gap-1">
+          {[1, 2, 3, 4, 5].map(star => (
+            <button
+              key={star}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(String(star))}
+              className={[
+                'text-2xl transition-colors leading-none',
+                disabled ? 'cursor-default' : 'cursor-pointer hover:scale-110',
+                Number(value) >= star
+                  ? 'text-amber-400'
+                  : 'text-[#CBD5E1] dark:text-[#334155]',
+              ].join(' ')}
+              aria-label={`${star} star`}
+            >
+              ★
+            </button>
+          ))}
+          {value && (
+            <span className="ml-2 text-xs text-[#64748B]">{value} / 5</span>
+          )}
+        </div>
       )}
 
       {field.type === 'custom_table' && (

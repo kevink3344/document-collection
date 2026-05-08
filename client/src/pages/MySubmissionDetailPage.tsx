@@ -93,6 +93,17 @@ function ReadOnlyField({ label, fieldType, value }: { label: string; fieldType: 
       }
       case 'long_text':
         return <p className={`${VALUE} whitespace-pre-wrap`}>{value}</p>
+      case 'rating': {
+        const stars = Number(value)
+        return (
+          <div className="flex items-center gap-0.5">
+            {[1, 2, 3, 4, 5].map(s => (
+              <span key={s} className={`text-xl leading-none ${stars >= s ? 'text-amber-400' : 'text-[#CBD5E1] dark:text-[#334155]'}`}>★</span>
+            ))}
+            <span className="ml-2 text-xs text-[#64748B]">{value} / 5</span>
+          </div>
+        )
+      }
       default:
         return <span className={VALUE}>{value}</span>
     }

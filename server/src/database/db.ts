@@ -56,6 +56,11 @@ function runMigrations(db: DatabaseSync): void {
     console.log('[db] Migration: added collections.submission_edit_window_hours')
   }
 
+  if (!collectionColNames.has('logo_url')) {
+    db.exec(`ALTER TABLE collections ADD COLUMN logo_url TEXT`)
+    console.log('[db] Migration: added collections.logo_url')
+  }
+
   const versionsExists = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='collection_versions'`)
     .get()
@@ -94,6 +99,52 @@ function runMigrations(db: DatabaseSync): void {
   if (!fieldColNames.has('display_style')) {
     db.exec(`ALTER TABLE collection_fields ADD COLUMN display_style TEXT NOT NULL DEFAULT 'radio'`)
     console.log('[db] Migration: added collection_fields.display_style')
+  }
+
+  // Rebuild collection_fields if the CHECK constraint doesn't include 'rating'
+  const fieldsSqlRow = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
+    .get() as unknown as { sql: string } | undefined
+  if (fieldsSqlRow?.sql && !fieldsSqlRow.sql.includes("'rating'")) {
+    // Disable FK enforcement so renaming collection_fields doesn't break
+    // the collection_table_columns FK reference during the rebuild.
+    db.exec('PRAGMA foreign_keys = OFF')
+    db.exec('BEGIN')
+    try {
+      db.exec('ALTER TABLE collection_fields RENAME TO collection_fields_old')
+      db.exec(`
+        CREATE TABLE collection_fields (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+          version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
+          type          TEXT    NOT NULL CHECK(type IN (
+                          'short_text','long_text','single_choice','multiple_choice',
+                          'attachment','signature','confirmation','custom_table','rating'
+                        )),
+          label         TEXT    NOT NULL,
+          page_number   INTEGER NOT NULL DEFAULT 1,
+          required      INTEGER NOT NULL DEFAULT 0,
+          options       TEXT,
+          display_style TEXT    NOT NULL DEFAULT 'radio',
+          sort_order    INTEGER NOT NULL DEFAULT 0
+        )
+      `)
+      db.exec(`
+        INSERT INTO collection_fields
+          (id, collection_id, version_id, type, label, page_number, required, options, display_style, sort_order)
+        SELECT
+          id, collection_id, version_id, type, label, page_number, required, options, display_style, sort_order
+        FROM collection_fields_old
+      `)
+      db.exec('DROP TABLE collection_fields_old')
+      db.exec('COMMIT')
+      console.log('[db] Migration: rebuilt collection_fields to support rating type')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON')
+    }
   }
 
   const existingResponseCols = db

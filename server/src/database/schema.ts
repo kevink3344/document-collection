@@ -34,6 +34,7 @@ export function createSchema(db: DatabaseSync): void {
       created_by           INTEGER NOT NULL REFERENCES users(id),
       date_due             TEXT,
       cover_photo_url      TEXT,
+      logo_url             TEXT,
       instructions         TEXT,
       instructions_doc_url TEXT,
       active_version_id    INTEGER,
@@ -66,7 +67,7 @@ export function createSchema(db: DatabaseSync): void {
       version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
       type          TEXT    NOT NULL CHECK(type IN (
                       'short_text','long_text','single_choice','multiple_choice',
-                      'attachment','signature','confirmation','custom_table'
+                      'attachment','signature','confirmation','custom_table','rating'
                     )),
       label         TEXT    NOT NULL,
       page_number   INTEGER NOT NULL DEFAULT 1,

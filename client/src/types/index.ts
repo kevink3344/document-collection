@@ -25,6 +25,7 @@ export type FieldType =
   | 'signature'
   | 'confirmation'
   | 'custom_table'
+  | 'rating'
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'
@@ -60,6 +61,7 @@ export interface Collection {
   createdByName: string | null
   dateDue: string | null
   coverPhotoUrl: string | null
+  logoUrl: string | null
   instructions: string | null
   instructionsDocUrl: string | null
   activeVersionId?: number | null

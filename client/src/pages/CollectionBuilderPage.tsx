@@ -75,6 +75,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   signature: 'Signature',
   confirmation: 'Confirmation (Checkbox)',
   custom_table: 'Custom Table',
+  rating: 'Rating (1–5)',
 }
 
 function normalizeFieldType(type: string): FieldType {
@@ -87,6 +88,7 @@ function normalizeFieldType(type: string): FieldType {
     'signature',
     'confirmation',
     'custom_table',
+    'rating',
   ])
   return valid.has(type as FieldType) ? (type as FieldType) : 'short_text'
 }
@@ -120,6 +122,7 @@ export default function CollectionBuilderPage() {
   const [category, setCategory] = useState('')
   const [dateDue, setDateDue] = useState('')
   const [coverPhotoUrl, setCoverPhotoUrl] = useState('')
+  const [logoUrl, setLogoUrl] = useState('')
   const [anonymous, setAnonymous] = useState(false)
   const [status, setStatus] = useState<CollectionStatus>('draft')
 
@@ -170,6 +173,7 @@ export default function CollectionBuilderPage() {
         setCategory(col.category ?? '')
         setDateDue(col.dateDue ?? '')
         setCoverPhotoUrl(col.coverPhotoUrl ?? '')
+        setLogoUrl(col.logoUrl ?? '')
         setAnonymous(col.anonymous)
         setAllowSubmissionEdits(col.allowSubmissionEdits)
         setSubmissionEditWindowHours(String(col.submissionEditWindowHours ?? 24))
@@ -428,7 +432,7 @@ export default function CollectionBuilderPage() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, description, category, dateDue, coverPhotoUrl, anonymous, allowSubmissionEdits, submissionEditWindowHours, status, instructions, instructionsDocUrl, fields])
+  }, [title, description, category, dateDue, coverPhotoUrl, logoUrl, anonymous, allowSubmissionEdits, submissionEditWindowHours, status, instructions, instructionsDocUrl, fields])
 
   // Mark as loaded AFTER the autosave effect has already run (effects run in definition order)
   useEffect(() => {
@@ -450,6 +454,7 @@ export default function CollectionBuilderPage() {
       category: category.trim() || undefined,
       dateDue: dateDue || undefined,
       coverPhotoUrl: coverPhotoUrl.trim() || undefined,
+      logoUrl: logoUrl.trim() || undefined,
       instructions: instructions || undefined,
       instructionsDocUrl: instructionsDocUrl.trim() || undefined,
       anonymous,
@@ -890,6 +895,20 @@ export default function CollectionBuilderPage() {
 
           {detailsTab === 'photo' && (
             <div className="space-y-4">
+              <div>
+                <label htmlFor={`${formId}-logo`} className={LABEL}>
+                  Image Logo URL (optional)
+                </label>
+                <input
+                  id={`${formId}-logo`}
+                  type="url"
+                  placeholder="https://…"
+                  value={logoUrl}
+                  onChange={e => setLogoUrl(e.target.value)}
+                  className={INPUT}
+                />
+                <p className="mt-1 text-xs text-[#94A3B8]">Displayed above the survey title (max 150px wide). Supports SVG, PNG, etc.</p>
+              </div>
               <div>
                 <label htmlFor={`${formId}-cover`} className={LABEL}>
                   Cover Photo URL (optional)
