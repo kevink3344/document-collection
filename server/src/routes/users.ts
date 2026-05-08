@@ -95,6 +95,74 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
   res.json(toApiUser(user))
 })
 
+router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
+  if (req.user?.role !== 'administrator') {
+    res.status(403).json({ error: 'Forbidden' })
+    return
+  }
+
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid user ID' })
+    return
+  }
+
+  const { name, email, role, organization } = req.body as {
+    name: unknown
+    email: unknown
+    role: unknown
+    organization: unknown
+  }
+
+  if (typeof name !== 'string' || !name.trim()) {
+    res.status(400).json({ error: 'name is required' })
+    return
+  }
+  if (typeof email !== 'string' || !email.trim()) {
+    res.status(400).json({ error: 'email is required' })
+    return
+  }
+
+  const VALID_ROLES = ['administrator', 'team_manager', 'user'] as const
+  if (typeof role !== 'string' || !(VALID_ROLES as readonly string[]).includes(role)) {
+    res.status(400).json({ error: 'Invalid role' })
+    return
+  }
+
+  const db = getDb()
+
+  const existingUser = db.prepare('SELECT id FROM users WHERE id = ?').get(id) as unknown as { id: number } | undefined
+  if (!existingUser) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+
+  const existingEmail = db
+    .prepare('SELECT id FROM users WHERE email = ? AND id != ?')
+    .get(email.trim(), id) as unknown as { id: number } | undefined
+
+  if (existingEmail) {
+    res.status(409).json({ error: 'Email already registered' })
+    return
+  }
+
+  const org = typeof organization === 'string' && organization.trim() ? organization.trim() : null
+
+  db.prepare('UPDATE users SET name = ?, email = ?, role = ?, organization = ? WHERE id = ?').run(
+    name.trim(),
+    email.trim(),
+    role,
+    org,
+    id
+  )
+
+  const updated = db
+    .prepare('SELECT id, name, email, role, organization, created_at FROM users WHERE id = ?')
+    .get(id) as unknown as DbUser
+
+  res.json(toApiUser(updated))
+})
+
 router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
   if (req.user?.role !== 'administrator') {
     res.status(403).json({ error: 'Forbidden' })

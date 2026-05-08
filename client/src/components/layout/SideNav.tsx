@@ -58,7 +58,7 @@ export default function SideNav({
               title={item.label}
               className={({ isActive }) =>
                 [
-                  'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left border-l-[3px]',
+                  'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left border-l-[4px]',
                   isActive
                     ? 'border-[#2563EB] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9]'
                     : 'border-transparent text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]/80 hover:text-[#1E293B] dark:hover:text-[#F1F5F9]',
@@ -104,7 +104,7 @@ export default function SideNav({
                     title={item.label}
                     className={({ isActive }) =>
                       [
-                        'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left border-l-[3px]',
+                        'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left border-l-[4px]',
                         isActive
                           ? 'border-[#2563EB] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9]'
                           : 'border-transparent text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]/80 hover:text-[#1E293B] dark:hover:text-[#F1F5F9]',

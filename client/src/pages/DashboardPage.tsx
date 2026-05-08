@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ClipboardList, Layers, Table, FileText, CheckCircle, AlertTriangle, Inbox, Tag, TrendingUp } from 'lucide-react'
+import { ClipboardList, Layers, Table, FileText, CheckCircle, AlertTriangle, Inbox, Tag, TrendingUp, User } from 'lucide-react'
 import { listCollections } from '../api/collections'
 import { listMySubmissions } from '../api/mySubmissions'
 import { getStats, type DashboardStats } from '../api/stats'
@@ -181,6 +181,9 @@ export default function DashboardPage() {
                             <ClipboardList size={14} className="shrink-0 text-[#94A3B8]" />
                             <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] truncate group-hover:text-[#2563EB] flex items-center gap-1">
                               {col.title}
+                              {!col.anonymous && (
+                                <User size={11} className="shrink-0 text-[#2563EB] dark:text-white mt-0.5" aria-label="Authentication required" />
+                              )}
                               {col.hasCustomTable && (
                                 <Table size={11} className="shrink-0 text-[#2563EB] dark:text-white mt-0.5" aria-label="Contains custom table" />
                               )}

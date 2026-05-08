@@ -7,7 +7,7 @@ import {
   updateCategory,
 } from '../api/categories'
 import { getPublicSetting, updateSetting } from '../api/settings'
-import { listUsers, createUser, deleteUser, type AppUser } from '../api/users'
+import { listUsers, createUser, deleteUser, updateUser, type AppUser } from '../api/users'
 import { useAuth } from '../contexts/AuthContext'
 import type { Category } from '../types'
 import { getCategoryColorClasses } from '../utils/categoryColors'
@@ -16,6 +16,18 @@ const INPUT =
   'w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] ' +
   'text-[#1E293B] dark:text-[#F1F5F9] placeholder-[#94A3B8] px-3 py-2 text-sm rounded ' +
   'focus:outline-none focus:ring-2 focus:ring-[#2563EB]'
+
+function getUserRoleBadgeClass(role: AppUser['role']): string {
+  return role === 'administrator'
+    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+    : role === 'team_manager'
+    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+    : 'bg-[#E2E8F0] text-[#475569] dark:bg-[#334155] dark:text-[#CBD5E1]'
+}
+
+function formatRoleLabel(role: AppUser['role']): string {
+  return role === 'team_manager' ? 'team manager' : role
+}
 
 export default function SettingsPage() {
   const { user } = useAuth()
@@ -41,6 +53,13 @@ export default function SettingsPage() {
   const [userCreateError, setUserCreateError] = useState<string | null>(null)
   const [userCreateSuccess, setUserCreateSuccess] = useState<number | null>(null)
   const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
+  const [editingUserId, setEditingUserId] = useState<number | null>(null)
+  const [editingUserName, setEditingUserName] = useState('')
+  const [editingUserEmail, setEditingUserEmail] = useState('')
+  const [editingUserRole, setEditingUserRole] = useState<'user' | 'team_manager' | 'administrator'>('user')
+  const [editingUserOrg, setEditingUserOrg] = useState('')
+  const [userEditSaving, setUserEditSaving] = useState(false)
+  const [userEditError, setUserEditError] = useState<string | null>(null)
   const [loginSubtitle, setLoginSubtitle] = useState('')
   const [loginSubtitleDraft, setLoginSubtitleDraft] = useState('')
   const [loginSubtitleSaving, setLoginSubtitleSaving] = useState(false)
@@ -123,8 +142,60 @@ export default function SettingsPage() {
       await deleteUser(id)
       setAllUsers(prev => prev.filter(u => u.id !== id))
       if (userCreateSuccess === id) setUserCreateSuccess(null)
+      if (editingUserId === id) {
+        setEditingUserId(null)
+        setEditingUserName('')
+        setEditingUserEmail('')
+        setEditingUserOrg('')
+        setEditingUserRole('user')
+      }
     } catch (err) {
       setUserDeleteError((err as Error).message)
+    }
+  }
+
+  function startUserEdit(u: AppUser) {
+    setEditingUserId(u.id)
+    setEditingUserName(u.name)
+    setEditingUserEmail(u.email)
+    setEditingUserRole(u.role)
+    setEditingUserOrg(u.organization ?? '')
+    setUserEditError(null)
+    setUserDeleteError(null)
+  }
+
+  function cancelUserEdit() {
+    setEditingUserId(null)
+    setEditingUserName('')
+    setEditingUserEmail('')
+    setEditingUserOrg('')
+    setEditingUserRole('user')
+    setUserEditError(null)
+  }
+
+  async function handleSaveUser(id: number) {
+    const name = editingUserName.trim()
+    const email = editingUserEmail.trim()
+    if (!name || !email) {
+      setUserEditError('Name and email are required.')
+      return
+    }
+
+    setUserEditSaving(true)
+    setUserEditError(null)
+    try {
+      const updated = await updateUser(id, {
+        name,
+        email,
+        role: editingUserRole,
+        organization: editingUserOrg.trim() || undefined,
+      })
+      setAllUsers(prev => prev.map(u => (u.id === id ? updated : u)))
+      cancelUserEdit()
+    } catch (err) {
+      setUserEditError((err as Error).message)
+    } finally {
+      setUserEditSaving(false)
     }
   }
 
@@ -713,60 +784,257 @@ export default function SettingsPage() {
                   <p className="text-sm text-red-500">{userDeleteError}</p>
                 )}
 
+                {userEditError && (
+                  <p className="text-sm text-red-500">{userEditError}</p>
+                )}
+
                 <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] overflow-hidden">
-                  <table className="w-full text-sm">
+                  <table className="hidden md:table w-full text-sm">
                     <thead>
                       <tr className="bg-[#F8FAFC] dark:bg-[#0F172A] text-left">
                         <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide w-12">ID</th>
                         <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Name</th>
-                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide hidden sm:table-cell">Email</th>
-                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide hidden md:table-cell">Role</th>
-                        <th className="px-4 py-2.5 w-10"></th>
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Email</th>
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Role</th>
+                        <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Organization</th>
+                        <th className="px-4 py-2.5 w-[170px]"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#334155]">
-                      {allUsers.map(u => (
-                        <tr key={u.id} className={`${u.id === user?.id ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
-                          <td className="px-4 py-2.5 text-[#94A3B8] font-mono text-xs">{u.id}</td>
-                          <td className="px-4 py-2.5 text-[#1E293B] dark:text-[#F1F5F9]">
-                            {u.name}
-                            {u.id === user?.id && (
-                              <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">(you)</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-[#64748B] hidden sm:table-cell">{u.email}</td>
-                          <td className="px-4 py-2.5 hidden md:table-cell">
-                            <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${
-                              u.role === 'administrator'
-                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
-                                : u.role === 'team_manager'
-                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                                : 'bg-[#E2E8F0] text-[#475569] dark:bg-[#334155] dark:text-[#CBD5E1]'
-                            }`}>
-                              {u.role}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {u.id !== user?.id && (
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteUser(u.id)}
-                                className="text-[#94A3B8] hover:text-red-500 transition-colors"
-                                title={`Delete ${u.name}`}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                      {allUsers.map(u => {
+                        const isEditing = editingUserId === u.id
+                        return (
+                          <tr key={u.id} className={`${u.id === user?.id ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
+                            <td className="px-4 py-2.5 text-[#94A3B8] font-mono text-xs">{u.id}</td>
+                            <td className="px-4 py-2.5 text-[#1E293B] dark:text-[#F1F5F9] min-w-[180px]">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={editingUserName}
+                                  onChange={e => setEditingUserName(e.target.value)}
+                                  className={INPUT}
+                                />
+                              ) : (
+                                <>
+                                  {u.name}
+                                  {u.id === user?.id && (
+                                    <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">(you)</span>
+                                  )}
+                                </>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-[#64748B] min-w-[220px]">
+                              {isEditing ? (
+                                <input
+                                  type="email"
+                                  value={editingUserEmail}
+                                  onChange={e => setEditingUserEmail(e.target.value)}
+                                  className={INPUT}
+                                />
+                              ) : (
+                                u.email
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 min-w-[170px]">
+                              {isEditing ? (
+                                <select
+                                  value={editingUserRole}
+                                  onChange={e => setEditingUserRole(e.target.value as typeof editingUserRole)}
+                                  className={INPUT}
+                                >
+                                  <option value="user">User</option>
+                                  <option value="team_manager">Team Manager</option>
+                                  <option value="administrator">Administrator</option>
+                                </select>
+                              ) : (
+                                <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${getUserRoleBadgeClass(u.role)}`}>
+                                  {formatRoleLabel(u.role)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-[#64748B] min-w-[170px]">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={editingUserOrg}
+                                  onChange={e => setEditingUserOrg(e.target.value)}
+                                  placeholder="Organization"
+                                  className={INPUT}
+                                />
+                              ) : (
+                                u.organization ?? '—'
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              <div className="inline-flex items-center gap-2">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleSaveUser(u.id)}
+                                      disabled={userEditSaving || !editingUserName.trim() || !editingUserEmail.trim()}
+                                      className="inline-flex items-center gap-1 border border-[#16A34A] text-[#16A34A] hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-50 text-xs font-medium px-2 py-1 rounded transition-colors"
+                                    >
+                                      <Save size={12} />
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={cancelUserEdit}
+                                      disabled={userEditSaving}
+                                      className="inline-flex items-center gap-1 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-xs font-medium px-2 py-1 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+                                    >
+                                      <X size={12} />
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => startUserEdit(u)}
+                                    className="text-[#94A3B8] hover:text-[#2563EB] transition-colors"
+                                    title={`Edit ${u.name}`}
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                )}
+                                {u.id !== user?.id && !isEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteUser(u.id)}
+                                    className="text-[#94A3B8] hover:text-red-500 transition-colors"
+                                    title={`Delete ${u.name}`}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                       {allUsers.length === 0 && !usersLoading && (
                         <tr>
-                          <td colSpan={5} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">No users found.</td>
+                          <td colSpan={6} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">No users found.</td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+
+                  <div className="md:hidden divide-y divide-[#E2E8F0] dark:divide-[#334155]">
+                    {allUsers.map(u => {
+                      const isEditing = editingUserId === u.id
+                      return (
+                        <div key={u.id} className={`p-4 space-y-3 ${u.id === user?.id ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs text-[#94A3B8] font-mono">ID: {u.id}</p>
+                              <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] mt-0.5">
+                                {u.name}
+                                {u.id === user?.id && (
+                                  <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">(you)</span>
+                                )}
+                              </p>
+                            </div>
+                            {!isEditing && (
+                              <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${getUserRoleBadgeClass(u.role)}`}>
+                                {formatRoleLabel(u.role)}
+                              </span>
+                            )}
+                          </div>
+
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                value={editingUserName}
+                                onChange={e => setEditingUserName(e.target.value)}
+                                placeholder="Name"
+                                className={INPUT}
+                              />
+                              <input
+                                type="email"
+                                value={editingUserEmail}
+                                onChange={e => setEditingUserEmail(e.target.value)}
+                                placeholder="Email"
+                                className={INPUT}
+                              />
+                              <select
+                                value={editingUserRole}
+                                onChange={e => setEditingUserRole(e.target.value as typeof editingUserRole)}
+                                className={INPUT}
+                              >
+                                <option value="user">User</option>
+                                <option value="team_manager">Team Manager</option>
+                                <option value="administrator">Administrator</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={editingUserOrg}
+                                onChange={e => setEditingUserOrg(e.target.value)}
+                                placeholder="Organization (optional)"
+                                className={INPUT}
+                              />
+                            </div>
+                          ) : (
+                            <div className="space-y-1 text-sm text-[#64748B]">
+                              <p>{u.email}</p>
+                              <p>Organization: {u.organization ?? '—'}</p>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSaveUser(u.id)}
+                                  disabled={userEditSaving || !editingUserName.trim() || !editingUserEmail.trim()}
+                                  className="inline-flex items-center gap-1 border border-[#16A34A] text-[#16A34A] hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-50 text-xs font-medium px-2.5 py-1.5 rounded transition-colors"
+                                >
+                                  <Save size={12} />
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelUserEdit}
+                                  disabled={userEditSaving}
+                                  className="inline-flex items-center gap-1 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-xs font-medium px-2.5 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+                                >
+                                  <X size={12} />
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startUserEdit(u)}
+                                className="inline-flex items-center gap-1 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-xs font-medium px-2.5 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+                              >
+                                <Pencil size={12} />
+                                Edit
+                              </button>
+                            )}
+
+                            {u.id !== user?.id && !isEditing && (
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteUser(u.id)}
+                                className="inline-flex items-center gap-1 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs font-medium px-2.5 py-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                              >
+                                <Trash2 size={12} />
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {allUsers.length === 0 && !usersLoading && (
+                      <div className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">No users found.</div>
+                    )}
+                  </div>
                 </div>
                 <p className="text-xs text-[#94A3B8]">To log in as a user, use the ID shown above on the login screen.</p>
               </div>

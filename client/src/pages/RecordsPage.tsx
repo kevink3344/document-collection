@@ -813,8 +813,11 @@ export default function RecordsPage() {
                   </span>
                 )
               })()}
-              <h2 className="text-xl font-bold text-[#1E293B] dark:text-[#F1F5F9] tracking-tight">
+              <h2 className="text-xl font-bold text-[#1E293B] dark:text-[#F1F5F9] tracking-tight flex items-center gap-1.5">
                 {selectedCollection.title}
+                {!selectedCollection.anonymous && (
+                  <User size={15} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Authentication required" />
+                )}
               </h2>
               <p className="text-sm text-[#64748B]">
                 {responses.length} submitted item{responses.length !== 1 ? 's' : ''}

@@ -44,6 +44,23 @@ export async function createUser(payload: {
   return data.user
 }
 
+export async function updateUser(
+  id: number,
+  payload: {
+    name: string
+    email: string
+    role: 'administrator' | 'team_manager' | 'user'
+    organization?: string
+  }
+): Promise<AppUser> {
+  const res = await fetch(`/api/users/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  })
+  return handleResponse<AppUser>(res)
+}
+
 export async function deleteUser(id: number): Promise<void> {
   const res = await fetch(`/api/users/${id}`, {
     method: 'DELETE',

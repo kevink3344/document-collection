@@ -8,6 +8,7 @@ import {
   Copy,
   Calendar,
   Tag,
+  User,
   Users,
   ClipboardList,
   Table,
@@ -170,6 +171,9 @@ export default function CollectionsPage() {
                 </div>
                 <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight flex items-center gap-1.5">
                   {col.title}
+                  {!col.anonymous && (
+                    <User size={12} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Authentication required" />
+                  )}
                   {col.hasCustomTable && (
                     <Table size={12} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Contains custom table" />
                   )}

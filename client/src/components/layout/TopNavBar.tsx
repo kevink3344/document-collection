@@ -144,7 +144,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
           >
             <Bell size={19} />
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#DC2626] text-white text-[10px] leading-4 font-semibold text-center">
+              <span className="absolute top-0 right-0 min-w-[16px] h-4 px-1 rounded-full bg-[#DC2626] text-white text-[10px] leading-4 font-semibold text-center translate-x-0.5 -translate-y-px">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
