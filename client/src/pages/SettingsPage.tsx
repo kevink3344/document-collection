@@ -493,7 +493,7 @@ export default function SettingsPage() {
         >
           <div>
             <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Login Page</h2>
-            <p className="text-sm text-[#64748B] mt-1">Customise the message displayed on the sign-in screen.</p>
+            <p className="text-sm text-[#64748B] mt-1">Customize the message displayed on the sign-in screen.</p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {loginPageExpanded ? (
@@ -666,7 +666,7 @@ export default function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Organisation <span className="text-[#94A3B8]">(optional)</span></label>
+                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Organization <span className="text-[#94A3B8]">(optional)</span></label>
                     <input
                       type="text"
                       value={newUserOrg}

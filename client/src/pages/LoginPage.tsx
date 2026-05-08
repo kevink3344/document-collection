@@ -106,9 +106,7 @@ export default function LoginPage() {
         {/* Brand header */}
         <div>
           <div className="flex items-center gap-3 mb-10">
-            <div className="w-9 h-9 bg-[#2563EB] flex items-center justify-center shrink-0 rounded-[2px]">
-              <Folder size={18} strokeWidth={2.25} />
-            </div>
+            <Folder size={22} strokeWidth={2} className="text-white shrink-0" />
             <span className="text-[10px] font-semibold tracking-[0.25em] text-white/50 uppercase">
               Data Collection Pro
             </span>

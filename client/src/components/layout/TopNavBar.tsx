@@ -112,9 +112,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
         className="flex items-center gap-3"
         aria-label="Toggle navigation menu"
       >
-        <div className="w-[35px] h-[35px] bg-[#2563EB] flex items-center justify-center text-white shrink-0 rounded-[2px]">
-          <Folder size={19} strokeWidth={2.25} />
-        </div>
+        <Folder size={22} strokeWidth={2} className="text-[#1E293B] dark:text-[#F1F5F9] shrink-0" />
         <span className="font-semibold text-[17.5px] text-[#1E293B] dark:text-[#F1F5F9] hidden sm:block tracking-tight">
           Data Collection Pro
         </span>
