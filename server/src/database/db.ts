@@ -11,17 +11,46 @@ function applyPragmas(database: DatabaseSync): void {
   try {
     database.exec('PRAGMA journal_mode = WAL;')
   } catch {
-    database.exec('PRAGMA journal_mode = DELETE;')
+    try {
+      database.exec('PRAGMA journal_mode = DELETE;')
+    } catch (err) {
+      // If even DELETE fails, the database may be corrupted or locked.
+      // Log the error but continue - schema setup may still work or provide a better error.
+      console.warn('[db] Warning: Could not set journal mode:', (err as Error).message)
+    }
   }
-  database.exec('PRAGMA foreign_keys = ON;')
+  
+  try {
+    database.exec('PRAGMA foreign_keys = ON;')
+  } catch (err) {
+    console.warn('[db] Warning: Could not enable foreign keys:', (err as Error).message)
+  }
 }
 
 export function getDb(): DatabaseSync {
   if (!db) {
     const dbPath = process.env.DATABASE_PATH ?? path.join(__dirname, '../../data.db')
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true })
-    db = new DatabaseSync(dbPath)
-    applyPragmas(db)
+    const dbDir = path.dirname(dbPath)
+    
+    fs.mkdirSync(dbDir, { recursive: true })
+    
+    // If the database file exists and appears corrupted, back it up and start fresh
+    if (fs.existsSync(dbPath)) {
+      try {
+        db = new DatabaseSync(dbPath)
+        applyPragmas(db)
+      } catch (err) {
+        console.warn('[db] Database appears corrupted, backing up and creating fresh:', (err as Error).message)
+        const backupPath = `${dbPath}.corrupted.${Date.now()}`
+        fs.renameSync(dbPath, backupPath)
+        console.log(`[db] Backed up corrupted database to ${backupPath}`)
+        db = new DatabaseSync(dbPath)
+        applyPragmas(db)
+      }
+    } else {
+      db = new DatabaseSync(dbPath)
+      applyPragmas(db)
+    }
   }
   return db
 }
