@@ -13,6 +13,7 @@ import settingsRouter from './routes/settings'
 import notificationsRouter from './routes/notifications'
 import statsRouter from './routes/stats'
 import mySubmissionsRouter from './routes/my-submissions'
+import healthRouter from './routes/health'
 import { generateDueDateNotifications } from './services/notifications'
 
 const app = express()
@@ -69,13 +70,12 @@ app.use('/api/settings', settingsRouter)
 app.use('/api/notifications', notificationsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/my-submissions', mySubmissionsRouter)
+app.use('/api', healthRouter)
 
-// Health checks for API clients and platform probes
-const healthHandler = (_req: express.Request, res: express.Response) => {
+// Health check for platform probes (non-API path)
+app.get('/health', (_req: express.Request, res: express.Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
-}
-app.get('/api/health', healthHandler)
-app.get('/health', healthHandler)
+})
 
 // ── Static client (when available) ─────────────────────────
 const clientDist = path.join(__dirname, '../public')
