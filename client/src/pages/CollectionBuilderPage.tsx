@@ -1318,13 +1318,23 @@ function FieldCard({
 
       {/* Row 2: label + required */}
       <div className="pl-7 space-y-2">
-        <input
-          type="text"
-          placeholder={field.type === 'comment' ? 'Comment text' : 'Field label'}
-          value={field.label}
-          onChange={e => onUpdate({ label: e.target.value })}
-          className={`${FIELD_INPUT} w-full`}
-        />
+        {field.type === 'comment' ? (
+          <textarea
+            placeholder="Comment text (supports multiple lines)"
+            value={field.label}
+            onChange={e => onUpdate({ label: e.target.value })}
+            className={`${FIELD_INPUT} w-full resize-y min-h-24`}
+            rows={4}
+          />
+        ) : (
+          <input
+            type="text"
+            placeholder="Field label"
+            value={field.label}
+            onChange={e => onUpdate({ label: e.target.value })}
+            className={`${FIELD_INPUT} w-full`}
+          />
+        )}
         <div className="flex items-center gap-4 flex-wrap">
           {field.type !== 'comment' && field.type !== 'matrix_likert_scale' && (
           <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer">
