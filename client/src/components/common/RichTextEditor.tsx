@@ -145,7 +145,7 @@ export default function RichTextEditor({
           ref={editorRef}
           contentEditable
           suppressContentEditableWarning
-          onInput={e => onChange((e.currentTarget as HTMLDivElement).innerHTML)}
+          onInput={e => onChange?.((e.currentTarget as HTMLDivElement).innerHTML)}
           data-placeholder={placeholder ?? 'Type here...'}
           className={[
             'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] focus:outline-none',
