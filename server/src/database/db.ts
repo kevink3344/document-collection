@@ -5,6 +5,52 @@ import { createSchema, seedData } from './schema'
 
 let db: DatabaseSync | null = null
 
+function resolveDbPath(): string {
+  const defaultDbPath =
+    process.env.NODE_ENV === 'production'
+      ? '/home/data/data.db'
+      : path.join(__dirname, '../../data.db')
+  return process.env.DATABASE_PATH ?? defaultDbPath
+}
+
+function isMalformedDbError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false
+  }
+  const message = (err as { message?: string }).message ?? ''
+  return message.toLowerCase().includes('malformed')
+}
+
+function cleanupDatabaseFiles(dbPath: string): void {
+  const auxiliaryFiles = [
+    dbPath,
+    `${dbPath}-wal`,
+    `${dbPath}-shm`,
+    `${dbPath}-journal`,
+  ]
+
+  for (const file of auxiliaryFiles) {
+    if (fs.existsSync(file)) {
+      try {
+        fs.unlinkSync(file)
+        console.log(`[db] Removed corrupted artifact: ${file}`)
+      } catch (err) {
+        console.warn(`[db] Could not remove ${file}:`, (err as Error).message)
+      }
+    }
+  }
+}
+
+function resetDatabase(dbPath: string): void {
+  if (db) {
+    try {
+      db.close()
+    } catch {}
+    db = null
+  }
+  cleanupDatabaseFiles(dbPath)
+}
+
 function applyPragmas(database: DatabaseSync): void {
   // Some cloud/shared filesystems do not support WAL mode.
   // Fall back to DELETE so startup still succeeds.
@@ -29,53 +75,24 @@ function applyPragmas(database: DatabaseSync): void {
 
 export function getDb(): DatabaseSync {
   if (!db) {
-    const defaultDbPath =
-      process.env.NODE_ENV === 'production'
-        ? '/home/data/data.db'
-        : path.join(__dirname, '../../data.db')
-    const dbPath = process.env.DATABASE_PATH ?? defaultDbPath
+    const dbPath = resolveDbPath()
     const dbDir = path.dirname(dbPath)
 
     console.log(`[db] Using database path: ${dbPath}`)
     
     fs.mkdirSync(dbDir, { recursive: true })
     
-      // Clean up any corrupted database files and WAL artifacts
-    const cleanupCorruptedDb = () => {
-        const auxiliaryFiles = [
-          dbPath,
-          `${dbPath}-wal`,
-          `${dbPath}-shm`,
-          `${dbPath}-journal`,
-        ]
-        for (const file of auxiliaryFiles) {
-          if (fs.existsSync(file)) {
-            try {
-              fs.unlinkSync(file)
-              console.log(`[db] Removed corrupted artifact: ${file}`)
-            } catch (err) {
-              console.warn(`[db] Could not remove ${file}:`, (err as Error).message)
-            }
-          }
-        }
-    }
-    
     // Try to open the existing database
     if (fs.existsSync(dbPath)) {
       try {
         db = new DatabaseSync(dbPath)
         applyPragmas(db)
+        // Touch sqlite_master so malformed schemas fail before migrations.
+        db.prepare('SELECT name FROM sqlite_master LIMIT 1').all()
         return db
       } catch (err) {
         console.warn('[db] Existing database is corrupted, cleaning up and starting fresh:', (err as Error).message)
-        // Close the database connection if it was partially opened
-        if (db) {
-          try {
-            db.close()
-          } catch {}
-          db = null
-        }
-        cleanupCorruptedDb()
+        resetDatabase(dbPath)
       }
     }
     
@@ -92,11 +109,26 @@ export function getDb(): DatabaseSync {
 }
 
 export function setupDatabase(): void {
-  const database = getDb()
-  createSchema(database)
-  runMigrations(database)
-  seedData(database)
-  console.log('[db] Database ready')
+  const initialize = (database: DatabaseSync) => {
+    createSchema(database)
+    runMigrations(database)
+    seedData(database)
+  }
+
+  try {
+    initialize(getDb())
+    console.log('[db] Database ready')
+  } catch (err) {
+    if (!isMalformedDbError(err)) {
+      throw err
+    }
+
+    const dbPath = resolveDbPath()
+    console.warn('[db] Malformed SQLite database detected during setup, rebuilding from scratch...')
+    resetDatabase(dbPath)
+    initialize(getDb())
+    console.log('[db] Database ready after recovery')
+  }
 }
 
 function runMigrations(db: DatabaseSync): void {
