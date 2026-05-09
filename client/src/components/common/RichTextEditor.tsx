@@ -11,9 +11,10 @@ import {
 
 interface RichTextEditorProps {
   value: string
-  onChange: (html: string) => void
+  onChange?: (html: string) => void
   placeholder?: string
   minHeightClassName?: string
+  readOnly?: boolean
 }
 
 function ToolbarButton({
@@ -43,6 +44,7 @@ export default function RichTextEditor({
   onChange,
   placeholder,
   minHeightClassName = 'min-h-[120px]',
+  readOnly = false,
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const [showHtml, setShowHtml] = useState(false)
@@ -58,11 +60,28 @@ export default function RichTextEditor({
   }, [showHtml, value])
 
   function exec(command: string, commandValue?: string) {
+    if (readOnly || !onChange) return
     const el = editorRef.current
     if (!el) return
     el.focus()
     document.execCommand(command, false, commandValue)
     onChange(el.innerHTML)
+  }
+
+  if (readOnly) {
+    return (
+      <div
+        className="border border-[#E2E8F0] dark:border-[#334155] rounded overflow-hidden bg-white dark:bg-[#0F172A]"
+      >
+        <div
+          ref={editorRef}
+          className={[
+            'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] prose dark:prose-invert prose-sm max-w-none',
+            minHeightClassName,
+          ].join(' ')}
+        />
+      </div>
+    )
   }
 
   return (
@@ -113,7 +132,7 @@ export default function RichTextEditor({
       {showHtml ? (
         <textarea
           value={value}
-          onChange={e => onChange(e.target.value)}
+          onChange={e => onChange?.(e.target.value)}
           spellCheck={false}
           placeholder="Edit HTML source..."
           className={[

@@ -1319,12 +1319,11 @@ function FieldCard({
       {/* Row 2: label + required */}
       <div className="pl-7 space-y-2">
         {field.type === 'comment' ? (
-          <textarea
-            placeholder="Comment text (supports multiple lines)"
+          <RichTextEditor
+            placeholder="Comment text with formatting (bold, italic, lists, colors, etc.)"
             value={field.label}
-            onChange={e => onUpdate({ label: e.target.value })}
-            className={`${FIELD_INPUT} w-full resize-y min-h-24`}
-            rows={4}
+            onChange={html => onUpdate({ label: html })}
+            minHeightClassName="min-h-32"
           />
         ) : (
           <input
