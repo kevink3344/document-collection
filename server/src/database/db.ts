@@ -29,13 +29,19 @@ function applyPragmas(database: DatabaseSync): void {
 
 export function getDb(): DatabaseSync {
   if (!db) {
-    const dbPath = process.env.DATABASE_PATH ?? path.join(__dirname, '../../data.db')
+    const defaultDbPath =
+      process.env.NODE_ENV === 'production'
+        ? '/home/data/data.db'
+        : path.join(__dirname, '../../data.db')
+    const dbPath = process.env.DATABASE_PATH ?? defaultDbPath
     const dbDir = path.dirname(dbPath)
+
+    console.log(`[db] Using database path: ${dbPath}`)
     
     fs.mkdirSync(dbDir, { recursive: true })
     
       // Clean up any corrupted database files and WAL artifacts
-      const cleanupCorruptedDb = () => {
+    const cleanupCorruptedDb = () => {
         const auxiliaryFiles = [
           dbPath,
           `${dbPath}-wal`,
@@ -52,34 +58,34 @@ export function getDb(): DatabaseSync {
             }
           }
         }
-      }
+    }
     
-      // Try to open the existing database
+    // Try to open the existing database
     if (fs.existsSync(dbPath)) {
       try {
         db = new DatabaseSync(dbPath)
         applyPragmas(db)
-          return db
+        return db
       } catch (err) {
-          console.warn('[db] Existing database is corrupted, cleaning up and starting fresh:', (err as Error).message)
-          // Close the database connection if it was partially opened
-          if (db) {
-            try {
-              db.close()
-            } catch {}
-            db = null
-          }
-          cleanupCorruptedDb()
+        console.warn('[db] Existing database is corrupted, cleaning up and starting fresh:', (err as Error).message)
+        // Close the database connection if it was partially opened
+        if (db) {
+          try {
+            db.close()
+          } catch {}
+          db = null
+        }
+        cleanupCorruptedDb()
       }
-      }
+    }
     
-      // Create a fresh database
-      try {
+    // Create a fresh database
+    try {
       db = new DatabaseSync(dbPath)
       applyPragmas(db)
-      } catch (err) {
-        console.error('[db] FATAL: Could not create fresh database:', (err as Error).message)
-        throw err
+    } catch (err) {
+      console.error('[db] FATAL: Could not create fresh database:', (err as Error).message)
+      throw err
     }
   }
   return db
