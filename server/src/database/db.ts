@@ -1,9 +1,14 @@
-import { DatabaseSync } from 'node:sqlite'
+import Database from 'libsql'
 import fs from 'fs'
 import path from 'path'
 import { createSchema, seedData } from './schema'
+import type { AppDatabase } from './types'
 
-let db: DatabaseSync | null = null
+let db: AppDatabase | null = null
+
+type DbTarget =
+  | { mode: 'turso'; url: string; authToken: string }
+  | { mode: 'sqlite'; dbPath: string }
 
 function resolveDbPath(): string {
   const defaultDbPath =
@@ -11,6 +16,17 @@ function resolveDbPath(): string {
       ? '/home/data/data.db'
       : path.join(__dirname, '../../data.db')
   return process.env.DATABASE_PATH ?? defaultDbPath
+}
+
+function resolveDbTarget(): DbTarget {
+  const tursoUrl = process.env.TURSO_DATABASE_URL?.trim()
+  const tursoToken = process.env.TURSO_AUTH_TOKEN?.trim()
+
+  if (tursoUrl && tursoToken) {
+    return { mode: 'turso', url: tursoUrl, authToken: tursoToken }
+  }
+
+  return { mode: 'sqlite', dbPath: resolveDbPath() }
 }
 
 function isMalformedDbError(err: unknown): boolean {
@@ -51,7 +67,7 @@ function resetDatabase(dbPath: string): void {
   cleanupDatabaseFiles(dbPath)
 }
 
-function applyPragmas(database: DatabaseSync): void {
+function applyPragmas(database: AppDatabase): void {
   // Some cloud/shared filesystems do not support WAL mode.
   // Fall back to DELETE so startup still succeeds.
   try {
@@ -73,35 +89,45 @@ function applyPragmas(database: DatabaseSync): void {
   }
 }
 
-export function getDb(): DatabaseSync {
+export function getDb(): AppDatabase {
   if (!db) {
+    const target = resolveDbTarget()
+
+    if (target.mode === 'turso') {
+      try {
+        console.log(`[db] Using Turso database: ${target.url}`)
+        process.env.LIBSQL_AUTH_TOKEN = target.authToken
+        db = new Database(target.url)
+        db.prepare('SELECT 1').get()
+        return db
+      } catch (err) {
+        console.warn('[db] Turso connection failed, falling back to local SQLite:', (err as Error).message)
+      }
+    }
+
     const dbPath = resolveDbPath()
     const dbDir = path.dirname(dbPath)
 
-    console.log(`[db] Using database path: ${dbPath}`)
-    
+    console.log(`[db] Using local SQLite path: ${dbPath}`)
     fs.mkdirSync(dbDir, { recursive: true })
-    
-    // Try to open the existing database
+
     if (fs.existsSync(dbPath)) {
       try {
-        db = new DatabaseSync(dbPath)
+        db = new Database(dbPath)
         applyPragmas(db)
-        // Touch sqlite_master so malformed schemas fail before migrations.
         db.prepare('SELECT name FROM sqlite_master LIMIT 1').all()
         return db
       } catch (err) {
-        console.warn('[db] Existing database is corrupted, cleaning up and starting fresh:', (err as Error).message)
+        console.warn('[db] Existing local database is corrupted, cleaning up and starting fresh:', (err as Error).message)
         resetDatabase(dbPath)
       }
     }
-    
-    // Create a fresh database
+
     try {
-      db = new DatabaseSync(dbPath)
+      db = new Database(dbPath)
       applyPragmas(db)
     } catch (err) {
-      console.error('[db] FATAL: Could not create fresh database:', (err as Error).message)
+      console.error('[db] FATAL: Could not create local SQLite database:', (err as Error).message)
       throw err
     }
   }
@@ -109,7 +135,7 @@ export function getDb(): DatabaseSync {
 }
 
 export function setupDatabase(): void {
-  const initialize = (database: DatabaseSync) => {
+  const initialize = (database: AppDatabase) => {
     createSchema(database)
     runMigrations(database)
     seedData(database)
@@ -123,15 +149,19 @@ export function setupDatabase(): void {
       throw err
     }
 
-    const dbPath = resolveDbPath()
-    console.warn('[db] Malformed SQLite database detected during setup, rebuilding from scratch...')
-    resetDatabase(dbPath)
+    const target = resolveDbTarget()
+    if (target.mode !== 'sqlite') {
+      throw err
+    }
+
+    console.warn('[db] Malformed local SQLite database detected during setup, rebuilding from scratch...')
+    resetDatabase(target.dbPath)
     initialize(getDb())
     console.log('[db] Database ready after recovery')
   }
 }
 
-function runMigrations(db: DatabaseSync): void {
+function runMigrations(db: AppDatabase): void {
   // Add columns introduced after the initial schema without dropping existing data
   const existingCollectionCols = db
     .prepare(`PRAGMA table_info(collections)`)

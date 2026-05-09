@@ -1,6 +1,6 @@
-import { DatabaseSync } from 'node:sqlite'
+import type { AppDatabase } from './types'
 
-export function createSchema(db: DatabaseSync): void {
+export function createSchema(db: AppDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +137,7 @@ export function createSchema(db: DatabaseSync): void {
   `)
 }
 
-export function seedData(db: DatabaseSync): void {
+export function seedData(db: AppDatabase): void {
   const userRow = db.prepare('SELECT COUNT(*) AS n FROM users').get() as unknown as { n: number }
 
   if (userRow.n === 0) {

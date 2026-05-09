@@ -1,5 +1,5 @@
-import { DatabaseSync } from 'node:sqlite'
 import { getDb } from '../database/db'
+import type { AppDatabase } from '../database/types'
 
 export type NotificationType = 'due_soon' | 'overdue'
 
@@ -57,7 +57,7 @@ function resolveType(
   return null
 }
 
-function readSettingInt(db: DatabaseSync, key: string, fallback: number): number {
+function readSettingInt(db: AppDatabase, key: string, fallback: number): number {
   const row = db
     .prepare('SELECT value FROM app_settings WHERE key = ?')
     .get(key) as unknown as { value: string } | undefined
@@ -67,7 +67,7 @@ function readSettingInt(db: DatabaseSync, key: string, fallback: number): number
   return Number.isFinite(value) ? value : fallback
 }
 
-function insertNotification(db: DatabaseSync, userId: number, c: DbCollectionDue, type: NotificationType): void {
+function insertNotification(db: AppDatabase, userId: number, c: DbCollectionDue, type: NotificationType): void {
   const payload = buildMessage(type, c.title, c.date_due)
 
   db.prepare(
@@ -77,7 +77,7 @@ function insertNotification(db: DatabaseSync, userId: number, c: DbCollectionDue
   ).run(userId, c.id, c.slug, type, payload.title, payload.message, c.date_due)
 }
 
-export function generateDueDateNotifications(dbArg?: DatabaseSync): void {
+export function generateDueDateNotifications(dbArg?: AppDatabase): void {
   const db = dbArg ?? getDb()
   const now = new Date()
   const reminderOffsetDays = readSettingInt(db, 'notification_reminder_days', -3)
