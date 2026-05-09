@@ -5,12 +5,23 @@ import { createSchema, seedData } from './schema'
 
 let db: DatabaseSync | null = null
 
+function applyPragmas(database: DatabaseSync): void {
+  // Some cloud/shared filesystems do not support WAL mode.
+  // Fall back to DELETE so startup still succeeds.
+  try {
+    database.exec('PRAGMA journal_mode = WAL;')
+  } catch {
+    database.exec('PRAGMA journal_mode = DELETE;')
+  }
+  database.exec('PRAGMA foreign_keys = ON;')
+}
+
 export function getDb(): DatabaseSync {
   if (!db) {
     const dbPath = process.env.DATABASE_PATH ?? path.join(__dirname, '../../data.db')
     fs.mkdirSync(path.dirname(dbPath), { recursive: true })
     db = new DatabaseSync(dbPath)
-    db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
+    applyPragmas(db)
   }
   return db
 }
