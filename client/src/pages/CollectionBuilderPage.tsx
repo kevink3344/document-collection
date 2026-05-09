@@ -111,6 +111,7 @@ const INPUT =
   'focus:outline-none focus:ring-2 focus:ring-[#2563EB]'
 
 const LABEL = 'block text-xs font-medium text-[#64748B] mb-1'
+const OTHER_OPTION_MARKER = '__DCP_OTHER_OPTION__'
 
 // ── Component ─────────────────────────────────────────────────
 
@@ -397,6 +398,25 @@ export default function CollectionBuilderPage() {
       prev.map(f =>
         f._key === key
           ? { ...f, options: f.options.filter((_, i) => i !== idx) }
+          : f
+      )
+    )
+  }
+
+  function addOtherOption(key: string) {
+    setFields(prev =>
+      prev.map(f => {
+        if (f._key !== key || f.options.includes(OTHER_OPTION_MARKER)) return f
+        return { ...f, options: [...f.options, OTHER_OPTION_MARKER] }
+      })
+    )
+  }
+
+  function removeOtherOption(key: string) {
+    setFields(prev =>
+      prev.map(f =>
+        f._key === key
+          ? { ...f, options: f.options.filter(opt => opt !== OTHER_OPTION_MARKER) }
           : f
       )
     )
@@ -1206,6 +1226,8 @@ export default function CollectionBuilderPage() {
                   onMoveUp={() => moveField(field._key, -1)}
                   onMoveDown={() => moveField(field._key, 1)}
                   onAddOption={() => addOption(field._key)}
+                  onAddOtherOption={() => addOtherOption(field._key)}
+                  onRemoveOtherOption={() => removeOtherOption(field._key)}
                   onUpdateOption={(i, v) => updateOption(field._key, i, v)}
                   onRemoveOption={i => removeOption(field._key, i)}
                   onConfigureTable={() => setWizardField(field._key)}
@@ -1240,6 +1262,8 @@ interface FieldCardProps {
   onMoveUp: () => void
   onMoveDown: () => void
   onAddOption: () => void
+  onAddOtherOption: () => void
+  onRemoveOtherOption: () => void
   onUpdateOption: (idx: number, val: string) => void
   onRemoveOption: (idx: number) => void
   onConfigureTable: () => void
@@ -1260,6 +1284,8 @@ function FieldCard({
   onMoveUp,
   onMoveDown,
   onAddOption,
+  onAddOtherOption,
+  onRemoveOtherOption,
   onUpdateOption,
   onRemoveOption,
   onConfigureTable,
@@ -1268,6 +1294,8 @@ function FieldCard({
   const showOptions =
     field.type === 'single_choice' || field.type === 'multiple_choice'
   const showTable = field.type === 'custom_table'
+  const regularOptions = field.options.filter(opt => opt !== OTHER_OPTION_MARKER)
+  const hasOtherOption = field.options.includes(OTHER_OPTION_MARKER)
 
   return (
     <div className="border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-3 space-y-3 bg-[#FAFAFA] dark:bg-[#0F172A]">
@@ -1393,23 +1421,27 @@ function FieldCard({
       {/* Choice options */}
       {showOptions && (
         <div className="pl-7 space-y-2">
-          {field.options.map((opt, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="text"
-                placeholder={`Option ${i + 1}`}
-                value={opt}
-                onChange={e => onUpdateOption(i, e.target.value)}
-                className={`${FIELD_INPUT} flex-1`}
-              />
-              <button
-                onClick={() => onRemoveOption(i)}
-                className="text-[#94A3B8] hover:text-red-500 transition-colors"
-              >
-                <Trash2 size={13} />
-              </button>
-            </div>
-          ))}
+          {field.options.map((opt, i) => {
+            if (opt === OTHER_OPTION_MARKER) return null
+            const visibleIndex = regularOptions.indexOf(opt)
+            return (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder={`Option ${visibleIndex + 1}`}
+                  value={opt}
+                  onChange={e => onUpdateOption(i, e.target.value)}
+                  className={`${FIELD_INPUT} flex-1`}
+                />
+                <button
+                  onClick={() => onRemoveOption(i)}
+                  className="text-[#94A3B8] hover:text-red-500 transition-colors"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )
+          })}
           <button
             onClick={onAddOption}
             className="flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
@@ -1417,6 +1449,27 @@ function FieldCard({
             <Plus size={12} />
             Add option
           </button>
+          {!hasOtherOption ? (
+            <button
+              onClick={onAddOtherOption}
+              className="flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
+            >
+              <Plus size={12} />
+              Add other option
+            </button>
+          ) : (
+            <div className="flex items-center justify-between rounded border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] px-2.5 py-2 text-xs">
+              <span className="text-[#64748B]">Other option enabled (shows a free-text box when selected)</span>
+              <button
+                type="button"
+                onClick={onRemoveOtherOption}
+                className="text-[#94A3B8] hover:text-red-500 transition-colors"
+                title="Remove Other option"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          )}
         </div>
       )}
 

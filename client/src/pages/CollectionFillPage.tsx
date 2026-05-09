@@ -17,6 +17,8 @@ const INPUT =
   'focus:outline-none focus:ring-2 focus:ring-[#2563EB]'
 
 const LABEL = 'block text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9] mb-1'
+const OTHER_OPTION_MARKER = '__DCP_OTHER_OPTION__'
+const OTHER_RESPONSE_PREFIX = '__DCP_OTHER__::'
 
 function normalizePage(page: number | string | null | undefined): number {
   const n = typeof page === 'number' ? page : Number(page)
@@ -62,6 +64,24 @@ function clearDraft(slug: string) {
   } catch {
     // ignore
   }
+}
+
+function hasOtherOption(field: CollectionField): boolean {
+  return (field.options ?? []).includes(OTHER_OPTION_MARKER)
+}
+
+function encodeOtherResponse(text: string): string {
+  return `${OTHER_RESPONSE_PREFIX}${text}`
+}
+
+function decodeOtherResponse(value: string): string {
+  return value.startsWith(OTHER_RESPONSE_PREFIX)
+    ? value.slice(OTHER_RESPONSE_PREFIX.length)
+    : ''
+}
+
+function isOtherResponse(value: string): boolean {
+  return value.startsWith(OTHER_RESPONSE_PREFIX)
 }
 
 // ── Signature canvas ──────────────────────────────────────────
@@ -907,9 +927,20 @@ export default function CollectionFillPage() {
   function isRequiredFieldFilled(field: CollectionField, value: string): boolean {
     if (!field.required) return true
     switch (field.type) {
+      case 'single_choice': {
+        if (!value.trim()) return false
+        if (hasOtherOption(field) && isOtherResponse(value)) {
+          return decodeOtherResponse(value).trim() !== ''
+        }
+        return true
+      }
       case 'multiple_choice':
         try {
-          return (JSON.parse(value || '[]') as string[]).length > 0
+          const selected = (JSON.parse(value || '[]') as string[]).filter(Boolean)
+          if (selected.length === 0) return false
+          const other = selected.find(item => isOtherResponse(item))
+          if (!other) return true
+          return decodeOtherResponse(other).trim() !== ''
         } catch {
           return false
         }
@@ -918,6 +949,32 @@ export default function CollectionFillPage() {
       default:
         return value.trim() !== ''
     }
+  }
+
+  function getFieldValidationError(field: CollectionField, value: string): string | null {
+    if (field.type === 'single_choice' && hasOtherOption(field) && isOtherResponse(value)) {
+      if (decodeOtherResponse(value).trim() === '') {
+        return 'Please enter a value for Other.'
+      }
+    }
+
+    if (field.type === 'multiple_choice' && hasOtherOption(field)) {
+      try {
+        const selected = (JSON.parse(value || '[]') as string[]).filter(Boolean)
+        const other = selected.find(item => isOtherResponse(item))
+        if (other && decodeOtherResponse(other).trim() === '') {
+          return 'Please enter a value for Other.'
+        }
+      } catch {
+        // ignore malformed value, required validator handles invalid JSON
+      }
+    }
+
+    if (!isRequiredFieldFilled(field, value)) {
+      return 'Please complete all required fields on this page.'
+    }
+
+    return null
   }
 
   function handleNextPage() {
@@ -931,12 +988,13 @@ export default function CollectionFillPage() {
       }
     }
 
-    const missingRequired = fieldsOnCurrentPage.find(field => {
+    const firstFieldError = fieldsOnCurrentPage.find(field => {
       const val = field.id !== undefined ? values[field.id] ?? '' : ''
-      return !isRequiredFieldFilled(field, val)
+      return getFieldValidationError(field, val) !== null
     })
-    if (missingRequired) {
-      setPageError('Please complete all required fields on this page.')
+    if (firstFieldError) {
+      const val = firstFieldError.id !== undefined ? values[firstFieldError.id] ?? '' : ''
+      setPageError(getFieldValidationError(firstFieldError, val) ?? 'Please complete all required fields on this page.')
       return
     }
 
@@ -948,6 +1006,18 @@ export default function CollectionFillPage() {
 
     if (!editResponseId && !collection.anonymous && (!respName.trim() || !respEmail.trim())) {
       setSubmitError('Please enter your name and email address.')
+      return
+    }
+
+    const invalidField = orderedFields.find(field => {
+      const val = field.id !== undefined ? values[field.id] ?? '' : ''
+      return getFieldValidationError(field, val) !== null
+    })
+    if (invalidField) {
+      const val = invalidField.id !== undefined ? values[invalidField.id] ?? '' : ''
+      const targetPage = pageNumbers.indexOf(normalizePage(invalidField.page))
+      if (targetPage >= 0) setCurrentPageIdx(targetPage)
+      setSubmitError(getFieldValidationError(invalidField, val) ?? 'Please complete all required fields before submitting.')
       return
     }
 
@@ -1458,6 +1528,22 @@ function FieldRenderer({
   disabled: boolean
 }) {
   const required = field.required && !disabled
+  const optionList = field.options ?? []
+  const supportsOther = hasOtherOption(field)
+  const choiceOptions = optionList.filter(opt => opt !== OTHER_OPTION_MARKER)
+  const singleChoiceOtherText = isOtherResponse(value) ? decodeOtherResponse(value) : ''
+  const singleChoiceSelected = isOtherResponse(value) ? OTHER_OPTION_MARKER : value
+
+  const multipleChoiceSelected: string[] = (() => {
+    try {
+      const parsed = value ? (JSON.parse(value) as string[]) : []
+      return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : []
+    } catch {
+      return []
+    }
+  })()
+  const multipleChoiceOtherEncoded = multipleChoiceSelected.find(item => isOtherResponse(item))
+  const multipleChoiceOtherText = multipleChoiceOtherEncoded ? decodeOtherResponse(multipleChoiceOtherEncoded) : ''
 
   if (field.type === 'comment') {
     return (
@@ -1499,29 +1585,49 @@ function FieldRenderer({
       )}
 
       {field.type === 'single_choice' && field.displayStyle === 'dropdown' && (
-        <select
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          className={INPUT}
-          required={required}
-          disabled={disabled}
-        >
-          <option value="">Select…</option>
-          {(field.options ?? []).map(opt => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
+        <div className="space-y-2">
+          <select
+            value={singleChoiceSelected}
+            onChange={e => {
+              const selected = e.target.value
+              if (selected === OTHER_OPTION_MARKER) {
+                onChange(encodeOtherResponse(''))
+                return
+              }
+              onChange(selected)
+            }}
+            className={INPUT}
+            required={required}
+            disabled={disabled}
+          >
+            <option value="">Select…</option>
+            {choiceOptions.map(opt => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+            {supportsOther && <option value={OTHER_OPTION_MARKER}>Other</option>}
+          </select>
+          {supportsOther && (
+            <input
+              type="text"
+              value={singleChoiceOtherText}
+              onChange={e => onChange(encodeOtherResponse(e.target.value))}
+              className={INPUT}
+              placeholder="Please specify"
+              disabled={disabled}
+            />
+          )}
+        </div>
       )}
 
       {field.type === 'single_choice' && field.displayStyle !== 'dropdown' && (
         <div className="space-y-2">
-          {(field.options ?? []).map(opt => (
+          {choiceOptions.map(opt => (
             <label key={opt} className="flex items-center gap-2 cursor-pointer">
               <input
                 type="radio"
                 name={`field-${field.id}`}
                 value={opt}
-                checked={value === opt}
+                checked={singleChoiceSelected === opt}
                 onChange={() => onChange(opt)}
                 className="accent-[#2563EB]"
                 required={required}
@@ -1530,16 +1636,38 @@ function FieldRenderer({
               <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{opt}</span>
             </label>
           ))}
+          {supportsOther && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name={`field-${field.id}`}
+                value={OTHER_OPTION_MARKER}
+                checked={singleChoiceSelected === OTHER_OPTION_MARKER}
+                onChange={() => onChange(encodeOtherResponse(''))}
+                className="accent-[#2563EB]"
+                required={required}
+                disabled={disabled}
+              />
+              <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">Other</span>
+            </label>
+          )}
+          {supportsOther && (
+            <input
+              type="text"
+              value={singleChoiceOtherText}
+              onChange={e => onChange(encodeOtherResponse(e.target.value))}
+              className={INPUT}
+              placeholder="Please specify"
+              disabled={disabled}
+            />
+          )}
         </div>
       )}
 
       {field.type === 'multiple_choice' && (
         <div className="space-y-2">
-          {(field.options ?? []).map(opt => {
-            const selected: string[] = value
-              ? (JSON.parse(value) as string[])
-              : []
-            const checked = selected.includes(opt)
+          {choiceOptions.map(opt => {
+            const checked = multipleChoiceSelected.includes(opt)
             return (
               <label key={opt} className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1547,8 +1675,8 @@ function FieldRenderer({
                   checked={checked}
                   onChange={() => {
                     const next = checked
-                      ? selected.filter(s => s !== opt)
-                      : [...selected, opt]
+                      ? multipleChoiceSelected.filter(s => s !== opt)
+                      : [...multipleChoiceSelected, opt]
                     onChange(JSON.stringify(next))
                   }}
                   className="accent-[#2563EB]"
@@ -1558,6 +1686,38 @@ function FieldRenderer({
               </label>
             )
           })}
+          {supportsOther && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!multipleChoiceOtherEncoded}
+                onChange={e => {
+                  const withoutOther = multipleChoiceSelected.filter(item => !isOtherResponse(item))
+                  if (!e.target.checked) {
+                    onChange(JSON.stringify(withoutOther))
+                    return
+                  }
+                  onChange(JSON.stringify([...withoutOther, encodeOtherResponse('')]))
+                }}
+                className="accent-[#2563EB]"
+                disabled={disabled}
+              />
+              <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">Other</span>
+            </label>
+          )}
+          {supportsOther && (
+            <input
+              type="text"
+              value={multipleChoiceOtherText}
+              onChange={e => {
+                const withoutOther = multipleChoiceSelected.filter(item => !isOtherResponse(item))
+                onChange(JSON.stringify([...withoutOther, encodeOtherResponse(e.target.value)]))
+              }}
+              className={INPUT}
+              placeholder="Please specify"
+              disabled={disabled}
+            />
+          )}
         </div>
       )}
 
