@@ -34,22 +34,52 @@ export function getDb(): DatabaseSync {
     
     fs.mkdirSync(dbDir, { recursive: true })
     
-    // If the database file exists and appears corrupted, back it up and start fresh
+      // Clean up any corrupted database files and WAL artifacts
+      const cleanupCorruptedDb = () => {
+        const auxiliaryFiles = [
+          dbPath,
+          `${dbPath}-wal`,
+          `${dbPath}-shm`,
+          `${dbPath}-journal`,
+        ]
+        for (const file of auxiliaryFiles) {
+          if (fs.existsSync(file)) {
+            try {
+              fs.unlinkSync(file)
+              console.log(`[db] Removed corrupted artifact: ${file}`)
+            } catch (err) {
+              console.warn(`[db] Could not remove ${file}:`, (err as Error).message)
+            }
+          }
+        }
+      }
+    
+      // Try to open the existing database
     if (fs.existsSync(dbPath)) {
       try {
         db = new DatabaseSync(dbPath)
         applyPragmas(db)
+          return db
       } catch (err) {
-        console.warn('[db] Database appears corrupted, backing up and creating fresh:', (err as Error).message)
-        const backupPath = `${dbPath}.corrupted.${Date.now()}`
-        fs.renameSync(dbPath, backupPath)
-        console.log(`[db] Backed up corrupted database to ${backupPath}`)
-        db = new DatabaseSync(dbPath)
-        applyPragmas(db)
+          console.warn('[db] Existing database is corrupted, cleaning up and starting fresh:', (err as Error).message)
+          // Close the database connection if it was partially opened
+          if (db) {
+            try {
+              db.close()
+            } catch {}
+            db = null
+          }
+          cleanupCorruptedDb()
       }
-    } else {
+      }
+    
+      // Create a fresh database
+      try {
       db = new DatabaseSync(dbPath)
       applyPragmas(db)
+      } catch (err) {
+        console.error('[db] FATAL: Could not create fresh database:', (err as Error).message)
+        throw err
     }
   }
   return db
