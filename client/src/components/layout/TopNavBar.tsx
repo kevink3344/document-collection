@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Bell, Sun, Moon, UserCircle, LogOut, Folder } from 'lucide-react'
+import { Bell, Sun, Moon, UserCircle, LogOut, Layers } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   getUnreadNotificationCount,
@@ -112,7 +112,7 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
         className="flex items-center gap-3"
         aria-label="Toggle navigation menu"
       >
-        <Folder size={22} strokeWidth={2} className="text-[#1E293B] dark:text-[#F1F5F9] shrink-0" />
+        <Layers size={22} strokeWidth={2} className="text-[#1E293B] dark:text-[#F1F5F9] shrink-0" />
         <span className="font-semibold text-[17.5px] text-[#1E293B] dark:text-[#F1F5F9] hidden sm:block tracking-tight">
           Data Collection Pro
         </span>

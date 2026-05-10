@@ -10,7 +10,94 @@ type DbTarget =
   | { mode: 'turso'; url: string; authToken: string }
   | { mode: 'sqlite'; dbPath: string }
 
+function hasForeignKeyTarget(database: AppDatabase, tableName: string, targetTable: string): boolean {
+  const foreignKeys = database
+    .prepare(`PRAGMA foreign_key_list(${tableName})`)
+    .all() as unknown as Array<{ table: string }>
+
+  return foreignKeys.some((foreignKey) => foreignKey.table === targetTable)
+}
+
+function rebuildCollectionResponseValues(database: AppDatabase): void {
+  database.exec('PRAGMA foreign_keys = OFF')
+  database.exec('BEGIN')
+  try {
+    database.exec('ALTER TABLE collection_response_values RENAME TO collection_response_values_old')
+    database.exec(`
+      CREATE TABLE collection_response_values (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id INTEGER NOT NULL REFERENCES collection_responses(id) ON DELETE CASCADE,
+        field_id    INTEGER NOT NULL REFERENCES collection_fields(id),
+        value       TEXT
+      )
+    `)
+    database.exec(`
+      INSERT INTO collection_response_values (id, response_id, field_id, value)
+      SELECT id, response_id, field_id, value
+      FROM collection_response_values_old
+    `)
+    database.exec('DROP TABLE collection_response_values_old')
+    database.exec('COMMIT')
+    console.log('[db] Migration: rebuilt collection_response_values to refresh collection_fields foreign key')
+  } catch (err) {
+    database.exec('ROLLBACK')
+    throw err
+  } finally {
+    database.exec('PRAGMA foreign_keys = ON')
+  }
+}
+
+function rebuildCollectionTableColumns(database: AppDatabase, preserveListOptions: boolean): void {
+  database.exec('PRAGMA foreign_keys = OFF')
+  database.exec('BEGIN')
+  try {
+    database.exec('ALTER TABLE collection_table_columns RENAME TO collection_table_columns_old')
+    database.exec(`
+      CREATE TABLE collection_table_columns (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        field_id     INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
+        name         TEXT    NOT NULL,
+        col_type     TEXT    NOT NULL DEFAULT 'text'
+                             CHECK(col_type IN ('text','number','date','checkbox','list')),
+        list_options TEXT,
+        sort_order   INTEGER NOT NULL DEFAULT 0
+      )
+    `)
+    database.exec(`
+      INSERT INTO collection_table_columns (id, field_id, name, col_type, list_options, sort_order)
+      SELECT
+        id,
+        field_id,
+        name,
+        CASE
+          WHEN col_type IN ('text','number','date','checkbox','list') THEN col_type
+          ELSE 'text'
+        END,
+        ${preserveListOptions ? 'list_options' : 'NULL'},
+        sort_order
+      FROM collection_table_columns_old
+    `)
+    database.exec('DROP TABLE collection_table_columns_old')
+    database.exec('COMMIT')
+    console.log('[db] Migration: rebuilt collection_table_columns to refresh collection_fields foreign key')
+  } catch (err) {
+    database.exec('ROLLBACK')
+    throw err
+  } finally {
+    database.exec('PRAGMA foreign_keys = ON')
+  }
+}
+
+function normalizeSqlitePath(databaseUrl: string): string {
+  return databaseUrl.replace(/^sqlite:\/\//, '').trim()
+}
+
 function resolveDbPath(): string {
+  const databaseUrl = process.env.DATABASE_URL?.trim()
+  if (databaseUrl?.startsWith('sqlite://')) {
+    return normalizeSqlitePath(databaseUrl)
+  }
+
   const defaultDbPath =
     process.env.NODE_ENV === 'production'
       ? '/home/data/data.db'
@@ -19,8 +106,26 @@ function resolveDbPath(): string {
 }
 
 function resolveDbTarget(): DbTarget {
+  const databaseUrl = process.env.DATABASE_URL?.trim()
+  const databaseAuthToken = process.env.DATABASE_AUTH_TOKEN?.trim()
   const tursoUrl = process.env.TURSO_DATABASE_URL?.trim()
   const tursoToken = process.env.TURSO_AUTH_TOKEN?.trim()
+
+  if (databaseUrl?.startsWith('libsql://')) {
+    if (!databaseAuthToken && !tursoToken) {
+      throw new Error('DATABASE_URL points to Turso/libsql but no DATABASE_AUTH_TOKEN or TURSO_AUTH_TOKEN is set')
+    }
+
+    return {
+      mode: 'turso',
+      url: databaseUrl,
+      authToken: databaseAuthToken ?? tursoToken!,
+    }
+  }
+
+  if (databaseUrl?.startsWith('sqlite://')) {
+    return { mode: 'sqlite', dbPath: resolveDbPath() }
+  }
 
   if (tursoUrl && tursoToken) {
     return { mode: 'turso', url: tursoUrl, authToken: tursoToken }
@@ -304,6 +409,10 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: added collection_responses.last_edited_at')
   }
 
+  if (hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_old')) {
+    rebuildCollectionResponseValues(db)
+  }
+
   const existingTableColCols = db
     .prepare(`PRAGMA table_info(collection_table_columns)`)
     .all() as unknown as { name: string }[]
@@ -314,43 +423,10 @@ function runMigrations(db: AppDatabase): void {
     .get() as unknown as { sql: string } | undefined
   const supportsListType = tableSqlRow?.sql?.includes("'list'") ?? false
   const hasListOptionsColumn = tableColNames.has('list_options')
+  const hasStaleTableColumnsFieldFk = hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_old')
 
-  if (!supportsListType || !hasListOptionsColumn) {
-    db.exec('BEGIN')
-    try {
-      db.exec('ALTER TABLE collection_table_columns RENAME TO collection_table_columns_old')
-      db.exec(`
-        CREATE TABLE collection_table_columns (
-          id           INTEGER PRIMARY KEY AUTOINCREMENT,
-          field_id     INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
-          name         TEXT    NOT NULL,
-          col_type     TEXT    NOT NULL DEFAULT 'text'
-                               CHECK(col_type IN ('text','number','date','checkbox','list')),
-          list_options TEXT,
-          sort_order   INTEGER NOT NULL DEFAULT 0
-        )
-      `)
-      db.exec(`
-        INSERT INTO collection_table_columns (id, field_id, name, col_type, list_options, sort_order)
-        SELECT
-          id,
-          field_id,
-          name,
-          CASE
-            WHEN col_type IN ('text','number','date','checkbox','list') THEN col_type
-            ELSE 'text'
-          END,
-          NULL,
-          sort_order
-        FROM collection_table_columns_old
-      `)
-      db.exec('DROP TABLE collection_table_columns_old')
-      db.exec('COMMIT')
-      console.log('[db] Migration: rebuilt collection_table_columns for list type support')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+  if (!supportsListType || !hasListOptionsColumn || hasStaleTableColumnsFieldFk) {
+    rebuildCollectionTableColumns(db, hasListOptionsColumn)
   }
 
   // Backfill collection versions and version links for legacy data.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Folder } from 'lucide-react'
+import { Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { getPublicSetting } from '../api/settings'
 import { getPublicSummaryStats, type PublicSummaryStats } from '../api/stats'
@@ -106,7 +106,7 @@ export default function LoginPage() {
         {/* Brand header */}
         <div>
           <div className="flex items-center gap-3 mb-10">
-            <Folder size={22} strokeWidth={2} className="text-white shrink-0" />
+            <Layers size={22} strokeWidth={2} className="text-white shrink-0" />
             <span className="text-[10px] font-semibold tracking-[0.25em] text-white/50 uppercase">
               Data Collection Pro
             </span>

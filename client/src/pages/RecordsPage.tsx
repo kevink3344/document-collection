@@ -34,6 +34,7 @@ interface TableSummaryCard {
 }
 
 const SURVEY_ID_COLUMN = 'Survey Id'
+const OTHER_OPTION_MARKER = '__DCP_OTHER_OPTION__'
 
 const CHART_COLORS = ['#2563EB', '#0F766E', '#D97706', '#DC2626', '#7C3AED', '#0891B2']
 
@@ -101,12 +102,16 @@ function buildConicGradient(data: SummaryDatum[]): string {
   return `conic-gradient(${segments.join(', ')})`
 }
 
+function formatSummaryLabel(label: string): string {
+  return label === OTHER_OPTION_MARKER ? 'Other' : label
+}
+
 function SummaryBarChart({ data }: { data: SummaryDatum[] }) {
   const max = Math.max(...data.map(item => item.count), 1)
 
   return (
-    <div className="rounded border border-[#E2E8F0] dark:border-[#334155] p-4 h-full">
-      <div className="h-64 flex items-end gap-4 border-l border-b border-[#CBD5E1] dark:border-[#475569] px-4 pb-8 pt-4">
+    <div className="rounded border border-[#E2E8F0] dark:border-[#334155] p-4 h-full flex flex-col">
+      <div className="h-64 flex items-end gap-2 sm:gap-4 border-l border-b border-[#CBD5E1] dark:border-[#475569] px-3 sm:px-4 pb-4 pt-4">
         {data.map(item => (
           <div key={item.label} className="flex-1 min-w-0 flex flex-col items-center justify-end gap-2 h-full">
             <span className="text-xs text-[#64748B]">{item.count}</span>
@@ -117,8 +122,19 @@ function SummaryBarChart({ data }: { data: SummaryDatum[] }) {
                 backgroundColor: item.color,
               }}
             />
-            <span className="text-sm text-center text-[#475569] dark:text-[#94A3B8] leading-tight break-words">
-              {item.label}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-2 pt-4">
+        {data.map(item => (
+          <div
+            key={`${item.label}-legend`}
+            className="inline-flex items-start gap-2 text-sm text-[#1E293B] dark:text-[#F1F5F9]"
+          >
+            <span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+            <span className="leading-tight break-words">
+              {formatSummaryLabel(item.label)} - {item.count}
             </span>
           </div>
         ))}
@@ -146,15 +162,15 @@ function SummaryDonutChart({ data, totalLabel }: { data: SummaryDatum[]; totalLa
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 pt-2">
+      <div className="flex flex-col gap-2 pt-2">
         {data.map(item => (
           <div
             key={item.label}
-            className="inline-flex items-center gap-2 border border-[#CBD5E1] dark:border-[#334155] rounded px-3 py-1.5 text-sm text-[#1E293B] dark:text-[#F1F5F9]"
+            className="inline-flex items-start gap-2 text-sm text-[#1E293B] dark:text-[#F1F5F9]"
           >
-            <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
-            <span>
-              {item.label} - {item.count} {totalLabel}
+            <span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+            <span className="leading-tight break-words">
+              {formatSummaryLabel(item.label)} - {item.count} {totalLabel}
             </span>
           </div>
         ))}
