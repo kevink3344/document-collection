@@ -10,6 +10,7 @@ import usersRouter from './routes/users'
 import categoriesRouter from './routes/categories'
 import collectionsRouter from './routes/collections'
 import settingsRouter from './routes/settings'
+import preferencesRouter from './routes/preferences'
 import notificationsRouter from './routes/notifications'
 import statsRouter from './routes/stats'
 import mySubmissionsRouter from './routes/my-submissions'
@@ -67,6 +68,7 @@ app.use('/api/users', usersRouter)
 app.use('/api/categories', categoriesRouter)
 app.use('/api/collections', collectionsRouter)
 app.use('/api/settings', settingsRouter)
+app.use('/api/preferences', preferencesRouter)
 app.use('/api/notifications', notificationsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/my-submissions', mySubmissionsRouter)

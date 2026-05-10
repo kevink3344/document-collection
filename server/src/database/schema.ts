@@ -135,6 +135,16 @@ export function createSchema(db: AppDatabase): void {
       UNIQUE(user_id, collection_id, type, due_date)
     );
   `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      key        TEXT    NOT NULL,
+      value      TEXT    NOT NULL,
+      updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, key)
+    );
+  `)
 }
 
 export function seedData(db: AppDatabase): void {
