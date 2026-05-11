@@ -1244,7 +1244,7 @@ export default function CollectionFillPage() {
           <div className="absolute inset-0 flex items-end p-6 md:p-10">
             <div className="space-y-2">
               {collection.logoUrl && (
-                <div className="inline-flex max-w-[150px] bg-white shadow-sm p-[2px]">
+                <div className="inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm p-px">
                   <img
                     src={collection.logoUrl}
                     alt="Logo"
@@ -1287,7 +1287,7 @@ export default function CollectionFillPage() {
           {!collection.coverPhotoUrl && (
             <>
               {collection.logoUrl && (
-                <div className="inline-flex max-w-[150px] bg-white shadow-sm border border-[#E2E8F0] p-[2px]">
+                <div className="inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm border border-[#E2E8F0] p-px">
                   <img
                     src={collection.logoUrl}
                     alt="Logo"
@@ -1757,27 +1757,51 @@ function FieldRenderer({
       )}
 
       {field.type === 'rating' && (
-        <div className="flex items-center gap-1">
-          {[1, 2, 3, 4, 5].map(star => (
-            <button
-              key={star}
-              type="button"
-              disabled={disabled}
-              onClick={() => onChange(String(star))}
-              className={[
-                'text-2xl transition-colors leading-none',
-                disabled ? 'cursor-default' : 'cursor-pointer hover:scale-110',
-                Number(value) >= star
-                  ? 'text-amber-400'
-                  : 'text-[#CBD5E1] dark:text-[#334155]',
-              ].join(' ')}
-              aria-label={`${star} star`}
-            >
-              ★
-            </button>
-          ))}
+        <div className="flex items-center gap-2 flex-wrap">
+          {field.displayStyle === 'numbers' ? (
+            [1, 2, 3, 4, 5].map(option => {
+              const selected = Number(value) === option
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onChange(String(option))}
+                  className={[
+                    'h-10 w-10 rounded-md border text-base font-semibold transition-colors',
+                    disabled ? 'cursor-default' : 'cursor-pointer',
+                    selected
+                      ? 'border-[#2563EB] bg-[#2563EB] text-white'
+                      : 'border-[#CBD5E1] bg-white text-[#0F172A] hover:border-[#94A3B8] dark:border-[#334155] dark:bg-[#0F172A] dark:text-[#F8FAFC] dark:hover:border-[#475569]',
+                  ].join(' ')}
+                  aria-label={`${option}`}
+                >
+                  {option}
+                </button>
+              )
+            })
+          ) : (
+            [1, 2, 3, 4, 5].map(star => (
+              <button
+                key={star}
+                type="button"
+                disabled={disabled}
+                onClick={() => onChange(String(star))}
+                className={[
+                  'text-2xl transition-colors leading-none',
+                  disabled ? 'cursor-default' : 'cursor-pointer hover:scale-110',
+                  Number(value) >= star
+                    ? 'text-amber-400'
+                    : 'text-[#CBD5E1] dark:text-[#334155]',
+                ].join(' ')}
+                aria-label={`${star} star`}
+              >
+                ★
+              </button>
+            ))
+          )}
           {value && (
-            <span className="ml-2 text-xs text-[#64748B]">{value} / 5</span>
+            <span className="text-xs text-[#64748B]">{value} / 5</span>
           )}
         </div>
       )}

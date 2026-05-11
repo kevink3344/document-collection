@@ -144,6 +144,18 @@ interface CollectionBody {
   fields?: FieldInput[]
 }
 
+function resolveFieldDisplayStyle(type: FieldType, displayStyle?: string): string {
+  if (type === 'single_choice') {
+    return displayStyle === 'dropdown' ? 'dropdown' : 'radio'
+  }
+
+  if (type === 'rating') {
+    return displayStyle === 'numbers' ? 'numbers' : 'stars'
+  }
+
+  return 'radio'
+}
+
 function resolveSubmissionEditSettings(body: CollectionBody): {
   allowSubmissionEdits: boolean
   submissionEditWindowHours: number | null
@@ -218,7 +230,7 @@ function toApiCollection(
       page: Number(f.page_number) || 1,
       required: f.required === 1,
       options: f.options ? (JSON.parse(f.options) as string[]) : null,
-      displayStyle: f.display_style === 'dropdown' ? 'dropdown' : 'radio',
+      displayStyle: resolveFieldDisplayStyle(f.type, f.display_style),
       sortOrder: f.sort_order,
       tableColumns:
         f.type === 'custom_table'
@@ -307,7 +319,7 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
-        field.type === 'single_choice' ? (field.displayStyle ?? 'radio') : 'radio',
+        resolveFieldDisplayStyle(field.type, field.displayStyle),
         field.sortOrder ?? idx
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
@@ -347,7 +359,7 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
-        field.type === 'single_choice' ? (field.displayStyle ?? 'radio') : 'radio',
+        resolveFieldDisplayStyle(field.type, field.displayStyle),
         field.sortOrder ?? idx
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {

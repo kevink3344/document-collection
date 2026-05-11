@@ -31,6 +31,7 @@ export type FieldType =
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'
+export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers'
 
 export interface TableColumn {
   id?: number
@@ -47,7 +48,7 @@ export interface CollectionField {
   page: number
   required: boolean
   options: string[] | null
-  displayStyle?: 'radio' | 'dropdown'
+  displayStyle?: FieldDisplayStyle
   sortOrder: number
   tableColumns: TableColumn[] | null
 }

@@ -27,6 +27,7 @@ import type {
   ColType,
   CollectionStatus,
   CollectionVersion,
+  FieldDisplayStyle,
   FieldType,
   TableColumn,
 } from '../types'
@@ -46,8 +47,20 @@ interface BuilderField {
   page: number
   required: boolean
   options: string[]
-  displayStyle: 'radio' | 'dropdown'
+  displayStyle: FieldDisplayStyle
   tableColumns: TableColumn[]
+}
+
+function resolveDisplayStyle(type: FieldType, displayStyle?: string | null): FieldDisplayStyle {
+  if (type === 'single_choice') {
+    return displayStyle === 'dropdown' ? 'dropdown' : 'radio'
+  }
+
+  if (type === 'rating') {
+    return displayStyle === 'numbers' ? 'numbers' : 'stars'
+  }
+
+  return 'radio'
 }
 
 function uid(): string {
@@ -196,7 +209,7 @@ export default function CollectionBuilderPage() {
                 page: f.page ?? 1,
                 required: f.required,
                 options: f.options ?? [],
-                displayStyle: f.displayStyle === 'dropdown' ? 'dropdown' : 'radio',
+                displayStyle: resolveDisplayStyle(normalizeFieldType(f.type), f.displayStyle),
                 tableColumns: (f.tableColumns ?? []).map(tc => ({
                   ...tc,
                   colType: normalizeColType(tc.colType),
@@ -274,7 +287,7 @@ export default function CollectionBuilderPage() {
       page: field.page,
       required: field.required,
       options: (field.options ?? []).map(opt => opt.trim()).filter(Boolean),
-      displayStyle: field.displayStyle ?? 'radio',
+      displayStyle: resolveDisplayStyle(field.type, field.displayStyle),
       tableColumns: (field.tableColumns ?? []).map(col => ({
         name: col.name.trim(),
         colType: col.colType,
@@ -494,7 +507,7 @@ export default function CollectionBuilderPage() {
           page: Math.max(1, Math.floor(f.page || 1)),
           required: f.required,
           options: f.options.filter(o => o.trim() !== ''),
-          displayStyle: f.displayStyle,
+          displayStyle: resolveDisplayStyle(f.type, f.displayStyle),
           tableColumns: f.tableColumns.map((c, ci) => ({
             ...c,
             colType: normalizeColType(c.colType),
@@ -1308,7 +1321,12 @@ function FieldCard({
           value={field.type}
           onChange={e => {
             const t = e.target.value as FieldType
-            onUpdate({ type: t, options: [], tableColumns: [] })
+            onUpdate({
+              type: t,
+              options: [],
+              tableColumns: [],
+              displayStyle: resolveDisplayStyle(t),
+            })
           }}
           className={`${FIELD_INPUT} flex-1`}
         >
@@ -1413,6 +1431,36 @@ function FieldCard({
               ].join(' ')}
             >
               Dropdown
+            </button>
+          </div>
+        )}
+
+        {field.type === 'rating' && (
+          <div className="flex items-center gap-1 text-xs text-[#64748B]">
+            <span className="shrink-0">Display as:</span>
+            <button
+              type="button"
+              onClick={() => onUpdate({ displayStyle: 'stars' })}
+              className={[
+                'px-2 py-0.5 rounded border text-xs transition-colors',
+                field.displayStyle === 'stars'
+                  ? 'bg-[#2563EB] border-[#2563EB] text-white'
+                  : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+              ].join(' ')}
+            >
+              Stars
+            </button>
+            <button
+              type="button"
+              onClick={() => onUpdate({ displayStyle: 'numbers' })}
+              className={[
+                'px-2 py-0.5 rounded border text-xs transition-colors',
+                field.displayStyle === 'numbers'
+                  ? 'bg-[#2563EB] border-[#2563EB] text-white'
+                  : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+              ].join(' ')}
+            >
+              Numbers
             </button>
           </div>
         )}

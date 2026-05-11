@@ -29,6 +29,7 @@ interface DbValueRow {
   field_label: string
   field_type: string
   field_options: string | null
+  field_display_style: string | null
   value: string | null
 }
 
@@ -160,7 +161,8 @@ router.get('/:responseId', (req: Request, res: Response): void => {
 
     const values = db
       .prepare(
-        `SELECT crv.field_id, cf.label AS field_label, cf.type AS field_type, cf.options AS field_options, crv.value
+        `SELECT crv.field_id, cf.label AS field_label, cf.type AS field_type, cf.options AS field_options,
+                cf.display_style AS field_display_style, crv.value
          FROM collection_response_values crv
          JOIN collection_fields cf ON cf.id = crv.field_id
          WHERE crv.response_id = ?
@@ -183,6 +185,7 @@ router.get('/:responseId', (req: Request, res: Response): void => {
         fieldId: v.field_id,
         fieldLabel: v.field_label,
         fieldType: v.field_type,
+        fieldDisplayStyle: v.field_display_style,
         fieldOptions: (() => {
           if (!v.field_options) return null
           try {

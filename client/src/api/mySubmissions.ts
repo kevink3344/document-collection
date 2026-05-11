@@ -18,6 +18,7 @@ export interface MySubmissionValue {
   fieldLabel: string
   fieldType: string
   fieldOptions: string[] | null
+  fieldDisplayStyle: string | null
   value: string
 }
 

@@ -5,7 +5,17 @@ import { getMySubmission, type MySubmissionDetail } from '../api/mySubmissions'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import { timeAgo } from '../utils/timeAgo'
 
-function ReadOnlyField({ label, fieldType, value }: { label: string; fieldType: string; value: string }) {
+function ReadOnlyField({
+  label,
+  fieldType,
+  fieldDisplayStyle,
+  value,
+}: {
+  label: string
+  fieldType: string
+  fieldDisplayStyle: string | null
+  value: string
+}) {
   const LABEL = 'block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1'
   const VALUE = 'text-sm text-[#1E293B] dark:text-[#F1F5F9]'
 
@@ -111,6 +121,27 @@ function ReadOnlyField({ label, fieldType, value }: { label: string; fieldType: 
         return <p className={`${VALUE} whitespace-pre-wrap`}>{value}</p>
       case 'rating': {
         const stars = Number(value)
+        if (fieldDisplayStyle === 'numbers') {
+          return (
+            <div className="flex items-center gap-2 flex-wrap">
+              {[1, 2, 3, 4, 5].map(option => (
+                <span
+                  key={option}
+                  className={[
+                    'flex h-9 w-9 items-center justify-center rounded-md border text-sm font-semibold',
+                    stars === option
+                      ? 'border-[#2563EB] bg-[#2563EB] text-white'
+                      : 'border-[#CBD5E1] bg-white text-[#0F172A] dark:border-[#334155] dark:bg-[#0F172A] dark:text-[#F8FAFC]',
+                  ].join(' ')}
+                >
+                  {option}
+                </span>
+              ))}
+              <span className="text-xs text-[#64748B]">{value} / 5</span>
+            </div>
+          )
+        }
+
         return (
           <div className="flex items-center gap-0.5">
             {[1, 2, 3, 4, 5].map(s => (
@@ -263,7 +294,12 @@ export default function MySubmissionDetailPage() {
         ) : (
           detail.values.map(v => (
             <div key={v.fieldId} className="px-5 py-4">
-              <ReadOnlyField label={v.fieldLabel} fieldType={v.fieldType} value={v.value} />
+              <ReadOnlyField
+                label={v.fieldLabel}
+                fieldType={v.fieldType}
+                fieldDisplayStyle={v.fieldDisplayStyle}
+                value={v.value}
+              />
             </div>
           ))
         )}

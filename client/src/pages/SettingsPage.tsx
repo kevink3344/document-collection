@@ -282,9 +282,14 @@ export default function SettingsPage() {
           onClick={() => setCategoriesExpanded(expanded => !expanded)}
           className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
         >
-          <div>
-            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Categories</h2>
-            <p className="text-sm text-[#64748B] mt-1">Collections use this list as the category dropdown.</p>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Tag size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Categories</h2>
+              <p className="text-sm text-[#64748B] mt-1">Collections use this list as the category dropdown.</p>
+            </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-xs font-medium text-[#64748B]">{categories.length} total</span>
@@ -424,9 +429,14 @@ export default function SettingsPage() {
           onClick={() => setApiExpanded(expanded => !expanded)}
           className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
         >
-          <div>
-            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">API Documentation</h2>
-            <p className="text-sm text-[#64748B] mt-1">Interactive Swagger UI for exploring and testing the REST API.</p>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Code2 size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">API Documentation</h2>
+              <p className="text-sm text-[#64748B] mt-1">Interactive Swagger UI for exploring and testing the REST API.</p>
+            </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {apiExpanded ? (
@@ -464,9 +474,14 @@ export default function SettingsPage() {
           onClick={() => setNotificationsExpanded(expanded => !expanded)}
           className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
         >
-          <div>
-            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Notifications</h2>
-            <p className="text-sm text-[#64748B] mt-1">Configure reminder and late offsets for in-app due date notifications.</p>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Bell size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Notifications</h2>
+              <p className="text-sm text-[#64748B] mt-1">Configure reminder and late offsets for in-app due date notifications.</p>
+            </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {notificationsExpanded ? (
@@ -562,9 +577,14 @@ export default function SettingsPage() {
           onClick={() => setLoginPageExpanded(expanded => !expanded)}
           className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
         >
-          <div>
-            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Login Page</h2>
-            <p className="text-sm text-[#64748B] mt-1">Customize the message displayed on the sign-in screen.</p>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <MessageSquare size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Login Page</h2>
+              <p className="text-sm text-[#64748B] mt-1">Customize the message displayed on the sign-in screen.</p>
+            </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {loginPageExpanded ? (
@@ -684,9 +704,14 @@ export default function SettingsPage() {
             }}
             className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
           >
-            <div>
-              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">User Accounts</h2>
-              <p className="text-sm text-[#64748B] mt-1">Create and manage accounts for testing or onboarding users.</p>
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+                <Users size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">User Accounts</h2>
+                <p className="text-sm text-[#64748B] mt-1">Create and manage accounts for testing or onboarding users.</p>
+              </div>
             </div>
             <div className="flex items-center gap-3 shrink-0">
               {usersExpanded ? (
