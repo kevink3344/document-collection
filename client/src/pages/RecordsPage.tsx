@@ -54,6 +54,8 @@ function formatSubmittedAt(value: string): string {
 
 function formatFieldType(type: CollectionField['type']): string {
   switch (type) {
+    case 'date':
+      return 'Date'
     case 'single_choice':
       return 'Single choice'
     case 'multiple_choice':

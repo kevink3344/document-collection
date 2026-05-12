@@ -32,10 +32,15 @@ function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string
 // ── DB row types ──────────────────────────────────────────────
 
 type FieldType =
-  | 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice'
+  | 'short_text' | 'date' | 'long_text' | 'single_choice' | 'multiple_choice'
   | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating' | 'comment' | 'matrix_likert_scale'
 
 type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
+
+interface FieldBranchRule {
+  value: string
+  targetFieldKey: string | null
+}
 
 interface DbCollection {
   id: number
@@ -65,12 +70,14 @@ interface DbField {
   id: number
   collection_id: number
   version_id: number | null
+  field_key: string | null
   type: FieldType
   label: string
   page_number: number
   required: number
   options: string | null
   display_style: string
+  branch_rules: string | null
   sort_order: number
 }
 
@@ -118,14 +125,61 @@ interface TableColumnInput {
 }
 
 interface FieldInput {
+  fieldKey?: string
   type: FieldType
   label: string
   page?: number
   required?: boolean
   options?: string[]
   displayStyle?: string
+  branchRules?: FieldBranchRule[]
   tableColumns?: TableColumnInput[]
   sortOrder?: number
+}
+
+function parseBranchRules(raw: string | null): FieldBranchRule[] | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return null
+    const rules = parsed
+      .map(rule => {
+        if (!rule || typeof rule !== 'object') return null
+        const value = 'value' in rule ? String(rule.value ?? '').trim() : ''
+        const targetRaw = 'targetFieldKey' in rule ? rule.targetFieldKey : null
+        const targetFieldKey =
+          targetRaw === null || targetRaw === undefined || targetRaw === ''
+            ? null
+            : String(targetRaw).trim()
+        if (!value) return null
+        if (targetFieldKey !== null && targetFieldKey === '') {
+          return null
+        }
+        return { value, targetFieldKey }
+      })
+      .filter((rule): rule is FieldBranchRule => rule !== null)
+    return rules.length > 0 ? rules : null
+  } catch {
+    return null
+  }
+}
+
+function serialiseBranchRules(rules?: FieldBranchRule[]): string | null {
+  const normalized = (rules ?? [])
+    .map(rule => ({
+      value: String(rule.value ?? '').trim(),
+      targetFieldKey:
+        rule.targetFieldKey === null || rule.targetFieldKey === undefined
+          ? null
+          : String(rule.targetFieldKey).trim(),
+    }))
+    .filter(
+      rule =>
+        rule.value !== '' &&
+        (rule.targetFieldKey === null || rule.targetFieldKey !== '')
+    )
+
+  return normalized.length > 0 ? JSON.stringify(normalized) : null
 }
 
 interface CollectionBody {
@@ -225,12 +279,14 @@ function toApiCollection(
     updatedAt: c.updated_at,
     fields: fields.map(f => ({
       id: f.id,
+      fieldKey: f.field_key ?? `field-${f.id}`,
       type: f.type,
       label: f.label,
       page: Number(f.page_number) || 1,
       required: f.required === 1,
       options: f.options ? (JSON.parse(f.options) as string[]) : null,
       displayStyle: resolveFieldDisplayStyle(f.type, f.display_style),
+      branchRules: parseBranchRules(f.branch_rules),
       sortOrder: f.sort_order,
       tableColumns:
         f.type === 'custom_table'
@@ -308,18 +364,20 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, type, label, page_number, required, options, display_style, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
         null,
+        field.fieldKey?.trim() || crypto.randomUUID(),
         field.type,
         field.label,
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
         resolveFieldDisplayStyle(field.type, field.displayStyle),
+        serialiseBranchRules(field.branchRules),
         field.sortOrder ?? idx
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
@@ -348,18 +406,20 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, type, label, page_number, required, options, display_style, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
         versionId,
+        field.fieldKey?.trim() || crypto.randomUUID(),
         field.type,
         field.label,
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
         resolveFieldDisplayStyle(field.type, field.displayStyle),
+        serialiseBranchRules(field.branchRules),
         field.sortOrder ?? idx
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
@@ -407,12 +467,26 @@ function createCollectionVersion(
 function normaliseIncomingFields(fields: FieldInput[]): string {
   return JSON.stringify(
     fields.map((f, i) => ({
+      fieldKey: String(f.fieldKey ?? '').trim(),
       type: f.type,
       label: (f.label ?? '').trim(),
       page: Math.max(1, Math.floor(f.page ?? 1)),
       required: !!f.required,
       options: (f.options ?? []).map(o => o.trim()).filter(Boolean),
       displayStyle: resolveFieldDisplayStyle(f.type, f.displayStyle),
+      branchRules: (f.branchRules ?? [])
+        .map(rule => ({
+          value: String(rule.value ?? '').trim(),
+          targetFieldKey:
+            rule.targetFieldKey === null || rule.targetFieldKey === undefined
+              ? null
+              : String(rule.targetFieldKey).trim(),
+        }))
+        .filter(
+          rule =>
+            rule.value !== '' &&
+            (rule.targetFieldKey === null || rule.targetFieldKey !== '')
+        ),
       tableColumns: (f.tableColumns ?? []).map((c, ci) => ({
         name: (c.name ?? '').trim(),
         colType: c.colType,
@@ -430,6 +504,7 @@ function normaliseIncomingFields(fields: FieldInput[]): string {
 function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableColumn[]>): string {
   return JSON.stringify(
     fields.map((f, i) => ({
+      fieldKey: f.field_key ?? `field-${f.id}`,
       type: f.type,
       label: f.label,
       page: f.page_number,
@@ -445,6 +520,7 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
         }
       })(),
       displayStyle: resolveFieldDisplayStyle(f.type, f.display_style ?? undefined),
+      branchRules: parseBranchRules(f.branch_rules) ?? [],
       tableColumns: (colsByField.get(f.id) ?? []).map(col => ({
         name: col.name,
         colType: col.col_type,

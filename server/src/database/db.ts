@@ -339,16 +339,27 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: added collection_fields.version_id')
   }
 
+  if (!fieldColNames.has('field_key')) {
+    db.exec(`ALTER TABLE collection_fields ADD COLUMN field_key TEXT`)
+    db.exec(`UPDATE collection_fields SET field_key = 'field-' || id WHERE field_key IS NULL OR trim(field_key) = ''`)
+    console.log('[db] Migration: added collection_fields.field_key')
+  }
+
   if (!fieldColNames.has('display_style')) {
     db.exec(`ALTER TABLE collection_fields ADD COLUMN display_style TEXT NOT NULL DEFAULT 'radio'`)
     console.log('[db] Migration: added collection_fields.display_style')
   }
 
-  // Rebuild collection_fields if the CHECK constraint doesn't include 'rating', 'comment', or 'matrix_likert_scale'
+  if (!fieldColNames.has('branch_rules')) {
+    db.exec(`ALTER TABLE collection_fields ADD COLUMN branch_rules TEXT`)
+    console.log('[db] Migration: added collection_fields.branch_rules')
+  }
+
+  // Rebuild collection_fields if the CHECK constraint doesn't include newer field types.
   const fieldsSqlRow = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
     .get() as unknown as { sql: string } | undefined
-  if (fieldsSqlRow?.sql && (!fieldsSqlRow.sql.includes("'rating'") || !fieldsSqlRow.sql.includes("'comment'") || !fieldsSqlRow.sql.includes("'matrix_likert_scale'"))) {
+  if (fieldsSqlRow?.sql && (!fieldsSqlRow.sql.includes("'date'") || !fieldsSqlRow.sql.includes("'rating'") || !fieldsSqlRow.sql.includes("'comment'") || !fieldsSqlRow.sql.includes("'matrix_likert_scale'"))) {
     // Disable FK enforcement so renaming collection_fields doesn't break
     // the collection_table_columns FK reference during the rebuild.
     db.exec('PRAGMA foreign_keys = OFF')
@@ -360,8 +371,9 @@ function runMigrations(db: AppDatabase): void {
           id            INTEGER PRIMARY KEY AUTOINCREMENT,
           collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
           version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
+          field_key     TEXT,
           type          TEXT    NOT NULL CHECK(type IN (
-                          'short_text','long_text','single_choice','multiple_choice',
+                          'short_text','date','long_text','single_choice','multiple_choice',
                           'attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale'
                         )),
           label         TEXT    NOT NULL,
@@ -369,19 +381,20 @@ function runMigrations(db: AppDatabase): void {
           required      INTEGER NOT NULL DEFAULT 0,
           options       TEXT,
           display_style TEXT    NOT NULL DEFAULT 'radio',
+          branch_rules  TEXT,
           sort_order    INTEGER NOT NULL DEFAULT 0
         )
       `)
       db.exec(`
         INSERT INTO collection_fields
-          (id, collection_id, version_id, type, label, page_number, required, options, display_style, sort_order)
+          (id, collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
         SELECT
-          id, collection_id, version_id, type, label, page_number, required, options, display_style, sort_order
+          id, collection_id, version_id, COALESCE(NULLIF(trim(field_key), ''), 'field-' || id), type, label, page_number, required, options, display_style, branch_rules, sort_order
         FROM collection_fields_old
       `)
       db.exec('DROP TABLE collection_fields_old')
       db.exec('COMMIT')
-      console.log('[db] Migration: rebuilt collection_fields to support rating, comment, and matrix_likert_scale types')
+      console.log('[db] Migration: rebuilt collection_fields to support date, rating, comment, and matrix_likert_scale types')
     } catch (err) {
       db.exec('ROLLBACK')
       throw err

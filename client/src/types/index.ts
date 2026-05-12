@@ -18,6 +18,7 @@ export interface AuthResponse {
 
 export type FieldType =
   | 'short_text'
+  | 'date'
   | 'long_text'
   | 'single_choice'
   | 'multiple_choice'
@@ -33,6 +34,11 @@ export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'
 export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers'
 
+export interface FieldBranchRule {
+  value: string
+  targetFieldKey: string | null
+}
+
 export interface TableColumn {
   id?: number
   name: string
@@ -43,12 +49,14 @@ export interface TableColumn {
 
 export interface CollectionField {
   id?: number
+  fieldKey?: string
   type: FieldType
   label: string
   page: number
   required: boolean
   options: string[] | null
   displayStyle?: FieldDisplayStyle
+  branchRules?: FieldBranchRule[] | null
   sortOrder: number
   tableColumns: TableColumn[] | null
 }

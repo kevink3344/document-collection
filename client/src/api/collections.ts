@@ -14,6 +14,7 @@ export interface CollectionPayload {
   category?: string
   dateDue?: string
   coverPhotoUrl?: string
+  logoUrl?: string
   instructions?: string
   instructionsDocUrl?: string
   anonymous: boolean

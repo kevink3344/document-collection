@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Trash2,
   Plus,
+  GitBranch,
   Settings2,
   Save,
   Eye,
@@ -37,17 +38,20 @@ import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { htmlToPlainText } from '../utils/richText'
 import { useToast } from '../contexts/ToastContext'
+import type { FieldBranchRule } from '../types'
 
 // ── Local builder types ───────────────────────────────────────
 
 interface BuilderField {
   _key: string
+  fieldKey: string
   type: FieldType
   label: string
   page: number
   required: boolean
   options: string[]
   displayStyle: FieldDisplayStyle
+  branchRules: FieldBranchRule[]
   tableColumns: TableColumn[]
 }
 
@@ -70,18 +74,21 @@ function uid(): string {
 function blankField(): BuilderField {
   return {
     _key: uid(),
+    fieldKey: uid(),
     type: 'short_text',
     label: '',
     page: 1,
     required: false,
     options: [],
     displayStyle: 'radio',
+    branchRules: [],
     tableColumns: [],
   }
 }
 
 const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   short_text: 'Short Text',
+  date: 'Date',
   long_text: 'Long Text',
   single_choice: 'Single Choice',
   multiple_choice: 'Multiple Choice',
@@ -97,6 +104,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
 function normalizeFieldType(type: string): FieldType {
   const valid = new Set<FieldType>([
     'short_text',
+    'date',
     'long_text',
     'single_choice',
     'multiple_choice',
@@ -204,12 +212,14 @@ export default function CollectionBuilderPage() {
           col.fields.length > 0
             ? col.fields.map(f => ({
                 _key: uid(),
+                fieldKey: f.fieldKey ?? uid(),
                 type: normalizeFieldType(f.type),
                 label: f.label,
                 page: f.page ?? 1,
                 required: f.required,
                 options: f.options ?? [],
                 displayStyle: resolveDisplayStyle(normalizeFieldType(f.type), f.displayStyle),
+                branchRules: f.branchRules ?? [],
                 tableColumns: (f.tableColumns ?? []).map(tc => ({
                   ...tc,
                   colType: normalizeColType(tc.colType),
@@ -282,12 +292,19 @@ export default function CollectionBuilderPage() {
 
   function normaliseFieldForDiff(field: CollectionField) {
     return {
+      fieldKey: field.fieldKey ?? '',
       type: field.type,
       label: field.label.trim(),
       page: field.page,
       required: field.required,
       options: (field.options ?? []).map(opt => opt.trim()).filter(Boolean),
       displayStyle: resolveDisplayStyle(field.type, field.displayStyle),
+      branchRules: (field.branchRules ?? [])
+        .map(rule => ({
+          value: rule.value.trim(),
+          targetFieldKey: rule.targetFieldKey,
+        }))
+        .filter(rule => rule.value !== ''),
       tableColumns: (field.tableColumns ?? []).map(col => ({
         name: col.name.trim(),
         colType: col.colType,
@@ -297,7 +314,7 @@ export default function CollectionBuilderPage() {
   }
 
   function fieldKey(field: CollectionField) {
-    return `${field.type}:${field.label.trim().toLowerCase()}`
+    return field.fieldKey?.trim() || `${field.type}:${field.label.trim().toLowerCase()}`
   }
 
   const versionDiff = useMemo(() => {
@@ -502,12 +519,22 @@ export default function CollectionBuilderPage() {
       fields: fields
         .filter(f => f.label.trim() !== '')
         .map((f, i) => ({
+          fieldKey: f.fieldKey,
           type: normalizeFieldType(f.type),
           label: f.label.trim(),
           page: Math.max(1, Math.floor(f.page || 1)),
           required: f.required,
           options: f.options.filter(o => o.trim() !== ''),
           displayStyle: resolveDisplayStyle(f.type, f.displayStyle),
+          branchRules:
+            f.type === 'single_choice'
+              ? f.branchRules
+                  .map(rule => ({
+                    value: rule.value.trim(),
+                    targetFieldKey: rule.targetFieldKey,
+                  }))
+                  .filter(rule => rule.value !== '' && rule.targetFieldKey)
+              : [],
           tableColumns: f.tableColumns.map((c, ci) => ({
             ...c,
             colType: normalizeColType(c.colType),
@@ -1218,13 +1245,27 @@ export default function CollectionBuilderPage() {
               <h2 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
                 Form Fields
               </h2>
-              <button
-                onClick={() => setFields(prev => [...prev, blankField()])}
-                className="flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
-              >
-                <Plus size={13} />
-                Add field
-              </button>
+              <div className="flex items-center gap-3">
+                {isEdit ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/collections/${id}/branching`)}
+                    className="inline-flex items-center gap-1 text-xs text-[#0F766E] hover:underline"
+                  >
+                    <GitBranch size={12} />
+                    Edit branching
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-[#94A3B8]">Save the collection to configure branching</span>
+                )}
+                <button
+                  onClick={() => setFields(prev => [...prev, blankField()])}
+                  className="flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
+                >
+                  <Plus size={13} />
+                  Add field
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -1326,6 +1367,7 @@ function FieldCard({
               options: [],
               tableColumns: [],
               displayStyle: resolveDisplayStyle(t),
+              branchRules: [],
             })
           }}
           className={`${FIELD_INPUT} flex-1`}
@@ -1432,6 +1474,11 @@ function FieldCard({
             >
               Dropdown
             </button>
+            {field.branchRules.length > 0 && (
+              <span className="ml-2 rounded-[2px] bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                {field.branchRules.length} branch rule{field.branchRules.length === 1 ? '' : 's'}
+              </span>
+            )}
           </div>
         )}
 

@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import CollectionsPage from './pages/CollectionsPage'
 import CollectionBuilderPage from './pages/CollectionBuilderPage'
+import CollectionBranchingPage from './pages/CollectionBranchingPage'
 import CollectionFillPage from './pages/CollectionFillPage'
 import RecordsPage from './pages/RecordsPage'
 import DashboardPage from './pages/DashboardPage'
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/collections" element={<CollectionsPage />} />
             <Route path="/collections/new" element={<CollectionBuilderPage />} />
             <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
+            <Route path="/collections/:id/branching" element={<CollectionBranchingPage />} />
             <Route path="/records" element={<RecordsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings" element={<SettingsPage />} />

@@ -65,8 +65,9 @@ export function createSchema(db: AppDatabase): void {
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
       version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
+      field_key     TEXT,
       type          TEXT    NOT NULL CHECK(type IN (
-                      'short_text','long_text','single_choice','multiple_choice',
+                      'short_text','date','long_text','single_choice','multiple_choice',
                       'attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale'
                     )),
       label         TEXT    NOT NULL,
@@ -74,6 +75,7 @@ export function createSchema(db: AppDatabase): void {
       required      INTEGER NOT NULL DEFAULT 0,
       options       TEXT,
       display_style TEXT    NOT NULL DEFAULT 'radio',
+      branch_rules  TEXT,
       sort_order    INTEGER NOT NULL DEFAULT 0
     );
   `)

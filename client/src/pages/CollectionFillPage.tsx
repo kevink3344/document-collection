@@ -84,6 +84,54 @@ function isOtherResponse(value: string): boolean {
   return value.startsWith(OTHER_RESPONSE_PREFIX)
 }
 
+function getFieldLogicKey(field: CollectionField, fallbackIndex: number): string {
+  return field.fieldKey?.trim() || `field-${field.id ?? fallbackIndex}`
+}
+
+function sortFields(fields: CollectionField[]): CollectionField[] {
+  return [...fields].sort((left, right) => {
+    const leftPage = normalizePage(left.page)
+    const rightPage = normalizePage(right.page)
+    if (leftPage !== rightPage) return leftPage - rightPage
+    return left.sortOrder - right.sortOrder
+  })
+}
+
+function resolveSingleChoiceBranchTarget(field: CollectionField, value: string): string | null {
+  if (field.type !== 'single_choice' || !value || isOtherResponse(value)) return null
+  const match = (field.branchRules ?? []).find(rule => rule.value === value)
+  return match?.targetFieldKey ?? null
+}
+
+function computeVisibleFields(fields: CollectionField[], values: Record<number, string>): CollectionField[] {
+  const ordered = sortFields(fields)
+  const logicKeyToIndex = new Map(ordered.map((field, index) => [getFieldLogicKey(field, index), index]))
+  const visibleIndexes = new Set<number>()
+  let index = 0
+  let guard = 0
+
+  while (index < ordered.length && guard < ordered.length * 2) {
+    guard += 1
+    const field = ordered[index]
+    visibleIndexes.add(index)
+
+    if (field.id !== undefined) {
+      const targetKey = resolveSingleChoiceBranchTarget(field, values[field.id] ?? '')
+      if (targetKey) {
+        const targetIndex = logicKeyToIndex.get(targetKey)
+        if (targetIndex !== undefined && targetIndex > index) {
+          index = targetIndex
+          continue
+        }
+      }
+    }
+
+    index += 1
+  }
+
+  return ordered.filter((_, idx) => visibleIndexes.has(idx))
+}
+
 // ── Signature canvas ──────────────────────────────────────────
 
 function SignaturePad({
@@ -856,24 +904,24 @@ export default function CollectionFillPage() {
 
   const orderedFields = useMemo(() => {
     if (!collection) return [] as CollectionField[]
-    return [...collection.fields].sort((a, b) => {
-      const aPage = normalizePage(a.page)
-      const bPage = normalizePage(b.page)
-      if (aPage !== bPage) return aPage - bPage
-      return a.sortOrder - b.sortOrder
-    })
+    return sortFields(collection.fields)
   }, [collection])
+
+  const visibleFields = useMemo(
+    () => computeVisibleFields(orderedFields, values),
+    [orderedFields, values]
+  )
 
   const pageNumbers = useMemo(() => {
     const pages = new Set<number>()
-    orderedFields.forEach(f => pages.add(normalizePage(f.page)))
+    visibleFields.forEach(f => pages.add(normalizePage(f.page)))
     const sorted = Array.from(pages).sort((a, b) => a - b)
     return sorted.length > 0 ? sorted : [1]
-  }, [orderedFields])
+  }, [visibleFields])
 
   const totalPages = pageNumbers.length
   const currentPageNumber = pageNumbers[Math.min(currentPageIdx, totalPages - 1)]
-  const fieldsOnCurrentPage = orderedFields.filter(
+  const fieldsOnCurrentPage = visibleFields.filter(
     f => normalizePage(f.page) === currentPageNumber
   )
   const isLastPage = currentPageIdx === totalPages - 1
@@ -883,6 +931,22 @@ export default function CollectionFillPage() {
       setCurrentPageIdx(Math.max(0, totalPages - 1))
     }
   }, [currentPageIdx, totalPages])
+
+  useEffect(() => {
+    const visibleIds = new Set(visibleFields.map(field => field.id).filter((id): id is number => id !== undefined))
+    setValues(prev => {
+      let changed = false
+      const next = { ...prev }
+      Object.keys(next).forEach(key => {
+        const fieldId = Number(key)
+        if (!visibleIds.has(fieldId) && next[fieldId] !== '') {
+          next[fieldId] = ''
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [visibleFields])
 
   // Auto-save draft whenever form state changes, but only after the
   // resume banner has been handled (so we don't overwrite a pending draft).
@@ -1009,7 +1073,7 @@ export default function CollectionFillPage() {
       return
     }
 
-    const invalidField = orderedFields.find(field => {
+    const invalidField = visibleFields.find(field => {
       const val = field.id !== undefined ? values[field.id] ?? '' : ''
       return getFieldValidationError(field, val) !== null
     })
@@ -1565,6 +1629,17 @@ function FieldRenderer({
       {field.type === 'short_text' && (
         <input
           type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className={INPUT}
+          required={required}
+          disabled={disabled}
+        />
+      )}
+
+      {field.type === 'date' && (
+        <input
+          type="date"
           value={value}
           onChange={e => onChange(e.target.value)}
           className={INPUT}
