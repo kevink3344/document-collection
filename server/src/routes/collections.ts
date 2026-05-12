@@ -115,6 +115,10 @@ interface DbResponseValue {
   value: string | null
 }
 
+interface SeedCollectionBody {
+  count?: number
+}
+
 // ── Request body types ────────────────────────────────────────
 
 interface TableColumnInput {
@@ -464,6 +468,175 @@ function createCollectionVersion(
   return { versionId, versionNumber }
 }
 
+type SeedRandomSource = () => number
+
+const SEED_FIRST_NAMES = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Sam', 'Riley', 'Casey', 'Jamie', 'Avery', 'Cameron']
+const SEED_LAST_NAMES = ['Parker', 'Reed', 'Morgan', 'Hayes', 'Brooks', 'Bennett', 'Coleman', 'Bailey', 'Foster', 'Diaz']
+const SEED_DEPARTMENTS = ['HR', 'Operations', 'Finance', 'Marketing', 'IT', 'Facilities', 'Support', 'Compliance']
+const SEED_CITIES = ['Seattle', 'Austin', 'Chicago', 'Denver', 'Boston', 'Miami', 'Atlanta', 'Phoenix']
+const SEED_SENTENCES = [
+  'Completed during seeded demo run.',
+  'Captured for workflow testing and reporting previews.',
+  'Sample response created from the settings utility.',
+  'Used to verify records, exports, and filtering behavior.',
+]
+
+function createSeededRandomSource(collectionId: number, submissionIndex: number): SeedRandomSource {
+  const hash = crypto
+    .createHash('sha256')
+    .update(`seed:${collectionId}:${submissionIndex}`)
+    .digest()
+  let state = hash.readUInt32LE(0) || 1
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
+function pickSeedValue<T>(items: T[], random: SeedRandomSource): T {
+  return items[Math.floor(random() * items.length)]
+}
+
+function parseFieldOptions(field: DbField): string[] {
+  if (!field.options) return []
+  try {
+    const parsed = JSON.parse(field.options) as unknown
+    return Array.isArray(parsed)
+      ? parsed.map(option => String(option).trim()).filter(option => option !== '' && option !== '__DCP_OTHER_OPTION__')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function isoDateFromOffset(offsetDays: number): string {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() + offsetDays)
+  return date.toISOString().slice(0, 10)
+}
+
+function buildSeededName(random: SeedRandomSource, submissionIndex: number): string {
+  return `${pickSeedValue(SEED_FIRST_NAMES, random)} ${pickSeedValue(SEED_LAST_NAMES, random)} ${submissionIndex + 1}`
+}
+
+function buildSeededText(field: DbField, random: SeedRandomSource, submissionIndex: number): string {
+  const label = field.label.toLowerCase()
+  if (label.includes('department') || label.includes('team')) {
+    return pickSeedValue(SEED_DEPARTMENTS, random)
+  }
+  if (label.includes('city') || label.includes('location')) {
+    return pickSeedValue(SEED_CITIES, random)
+  }
+  if (label.includes('name')) {
+    return buildSeededName(random, submissionIndex)
+  }
+  return `Sample ${field.label || 'response'} ${submissionIndex + 1}`
+}
+
+function buildSeededLongText(field: DbField, random: SeedRandomSource, submissionIndex: number): string {
+  return `${buildSeededText(field, random, submissionIndex)}. ${pickSeedValue(SEED_SENTENCES, random)}`
+}
+
+function buildSeededCustomTableValue(columns: DbTableColumn[], random: SeedRandomSource, submissionIndex: number): string {
+  const rowCount = 1 + Math.floor(random() * 3)
+  const rows = Array.from({ length: rowCount }, (_, rowIndex) => {
+    const row: Record<string, string> = {}
+    for (const column of columns) {
+      const label = column.name || `Column ${rowIndex + 1}`
+      switch (column.col_type) {
+        case 'number':
+          row[label] = String(10 + Math.floor(random() * 90))
+          break
+        case 'date':
+          row[label] = isoDateFromOffset(Math.floor(random() * 45) - 15)
+          break
+        case 'checkbox':
+          row[label] = random() > 0.5 ? 'true' : 'false'
+          break
+        case 'list': {
+          const options = (() => {
+            try {
+              const parsed = column.list_options ? (JSON.parse(column.list_options) as unknown) : []
+              return Array.isArray(parsed) ? parsed.map(option => String(option).trim()).filter(Boolean) : []
+            } catch {
+              return []
+            }
+          })()
+          row[label] = options.length > 0 ? pickSeedValue(options, random) : `Option ${rowIndex + 1}`
+          break
+        }
+        default:
+          row[label] = `Seed ${submissionIndex + 1}-${rowIndex + 1}`
+          break
+      }
+    }
+    return row
+  })
+  return JSON.stringify(rows)
+}
+
+function buildSeededMatrixValue(field: DbField, random: SeedRandomSource): string | null {
+  const [rawConfig] = parseFieldOptions(field)
+  if (!rawConfig) return null
+  try {
+    const parsed = JSON.parse(rawConfig) as { rows?: unknown; columns?: unknown }
+    const rows = Array.isArray(parsed.rows) ? parsed.rows.map(row => String(row)) : []
+    const columns = Array.isArray(parsed.columns) ? parsed.columns.map(column => String(column)) : []
+    if (rows.length === 0 || columns.length === 0) return null
+    const value: Record<number, string> = {}
+    rows.forEach((_, rowIndex) => {
+      value[rowIndex] = pickSeedValue(columns, random)
+    })
+    return JSON.stringify(value)
+  } catch {
+    return null
+  }
+}
+
+function buildSeededFieldValue(
+  field: DbField,
+  tableColumns: DbTableColumn[],
+  random: SeedRandomSource,
+  submissionIndex: number
+): string | null {
+  switch (field.type) {
+    case 'short_text':
+      return buildSeededText(field, random, submissionIndex)
+    case 'long_text':
+      return buildSeededLongText(field, random, submissionIndex)
+    case 'date':
+      return isoDateFromOffset(Math.floor(random() * 60) - 20)
+    case 'single_choice': {
+      const options = parseFieldOptions(field)
+      return options.length > 0 ? pickSeedValue(options, random) : null
+    }
+    case 'multiple_choice': {
+      const options = parseFieldOptions(field)
+      if (options.length === 0) return null
+      const shuffled = [...options].sort(() => random() - 0.5)
+      const count = Math.min(shuffled.length, 1 + Math.floor(random() * Math.min(3, shuffled.length)))
+      return JSON.stringify(shuffled.slice(0, count))
+    }
+    case 'attachment':
+      return `https://example.com/seeded/${field.id ?? submissionIndex + 1}-${submissionIndex + 1}.pdf`
+    case 'signature':
+      return `Seeded signature ${submissionIndex + 1}`
+    case 'confirmation':
+      return random() > 0.35 ? 'true' : 'false'
+    case 'custom_table':
+      return tableColumns.length > 0 ? buildSeededCustomTableValue(tableColumns, random, submissionIndex) : JSON.stringify([])
+    case 'rating':
+      return String(1 + Math.floor(random() * 5))
+    case 'matrix_likert_scale':
+      return buildSeededMatrixValue(field, random)
+    case 'comment':
+      return null
+    default:
+      return null
+  }
+}
+
 function normaliseIncomingFields(fields: FieldInput[]): string {
   return JSON.stringify(
     fields.map((f, i) => ({
@@ -743,6 +916,86 @@ router.post('/public/:slug/responses', (req: Request, res: Response) => {
     db.exec('ROLLBACK')
     console.error('[collections] submit response:', err)
     res.status(500).json({ error: 'Failed to submit response' })
+  }
+})
+
+router.post('/:id/seed', authenticateToken, (req: Request, res: Response) => {
+  if (req.user?.role !== 'administrator') {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const id = parseInt(req.params.id, 10)
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: 'Invalid collection ID' })
+    return
+  }
+
+  const body = req.body as SeedCollectionBody
+  const count = Math.floor(Number(body.count ?? 0))
+  if (!Number.isInteger(count) || count < 1 || count > 20) {
+    res.status(400).json({ error: 'count must be an integer between 1 and 20' })
+    return
+  }
+
+  const db = getDb()
+  const collection = db
+    .prepare('SELECT id, title, anonymous, active_version_id FROM collections WHERE id = ?')
+    .get(id) as { id: number; title: string; anonymous: number; active_version_id: number | null } | undefined
+
+  if (!collection) {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  if (!collection.active_version_id) {
+    res.status(400).json({ error: 'Collection does not have an active version to seed' })
+    return
+  }
+
+  const [fields, colsByField] = fetchFields(collection.id, collection.active_version_id)
+  if (fields.length === 0) {
+    res.status(400).json({ error: 'Collection does not have any fields to seed' })
+    return
+  }
+
+  db.exec('BEGIN')
+  try {
+    for (let submissionIndex = 0; submissionIndex < count; submissionIndex += 1) {
+      const random = createSeededRandomSource(collection.id, submissionIndex)
+      const respondentName = collection.anonymous === 1 ? null : buildSeededName(random, submissionIndex)
+      const respondentEmail = collection.anonymous === 1
+        ? null
+        : `${respondentName?.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '')}@seed.example.com`
+
+      const insertedResponse = db
+        .prepare(
+          `INSERT INTO collection_responses
+             (collection_id, collection_version_id, respondent_name, respondent_email, editable_until)
+           VALUES (?, ?, ?, ?, NULL)`
+        )
+        .run(collection.id, collection.active_version_id, respondentName, respondentEmail)
+
+      const responseId = insertedResponse.lastInsertRowid as number
+
+      for (const field of fields) {
+        if (field.id === undefined) continue
+        const value = buildSeededFieldValue(field, colsByField.get(field.id) ?? [], random, submissionIndex)
+        if (value === null || value === '') continue
+
+        db.prepare(
+          `INSERT INTO collection_response_values (response_id, field_id, value)
+           VALUES (?, ?, ?)`
+        ).run(responseId, field.id, value)
+      }
+    }
+
+    db.exec('COMMIT')
+    res.status(201).json({ created: count, collectionId: collection.id, collectionTitle: collection.title })
+  } catch (err) {
+    db.exec('ROLLBACK')
+    console.error('[collections] seed:', err)
+    res.status(500).json({ error: 'Failed to seed collection data' })
   }
 })
 

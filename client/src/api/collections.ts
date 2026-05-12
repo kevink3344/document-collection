@@ -150,3 +150,15 @@ export async function getResponses(collectionId: number): Promise<CollectionResp
   })
   return handleResponse<CollectionResponse[]>(res)
 }
+
+export async function seedCollectionData(
+  collectionId: number,
+  payload: { count: number }
+): Promise<{ created: number; collectionId: number; collectionTitle: string }> {
+  const res = await fetch(`/api/collections/${collectionId}/seed`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  })
+  return handleResponse<{ created: number; collectionId: number; collectionTitle: string }>(res)
+}

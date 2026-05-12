@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Bell, ChevronDown, ChevronRight, Code2, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
+import { Bell, ChevronDown, ChevronRight, Code2, Database, ExternalLink, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
 import {
   createCategory,
   deleteCategory,
   listCategories,
   updateCategory,
 } from '../api/categories'
+import { listCollections, seedCollectionData } from '../api/collections'
 import { getPublicSetting, updateSetting } from '../api/settings'
 import { listUsers, createUser, deleteUser, updateUser, type AppUser } from '../api/users'
 import { useAuth } from '../contexts/AuthContext'
-import type { Category } from '../types'
+import type { Category, Collection } from '../types'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 
 const INPUT =
@@ -43,7 +44,15 @@ export default function SettingsPage() {
   const [notificationsExpanded, setNotificationsExpanded] = useState(false)
   const [loginPageExpanded, setLoginPageExpanded] = useState(false)
   const [usersExpanded, setUsersExpanded] = useState(false)
+  const [seedExpanded, setSeedExpanded] = useState(false)
   const [allUsers, setAllUsers] = useState<AppUser[]>([])
+  const [seedCollections, setSeedCollections] = useState<Collection[]>([])
+  const [seedCollectionsLoading, setSeedCollectionsLoading] = useState(false)
+  const [seedCollectionId, setSeedCollectionId] = useState('')
+  const [seedCount, setSeedCount] = useState('20')
+  const [seedSaving, setSeedSaving] = useState(false)
+  const [seedError, setSeedError] = useState<string | null>(null)
+  const [seedSuccess, setSeedSuccess] = useState<string | null>(null)
   const [usersLoading, setUsersLoading] = useState(false)
   const [newUserName, setNewUserName] = useState('')
   const [newUserEmail, setNewUserEmail] = useState('')
@@ -114,6 +123,17 @@ export default function SettingsPage() {
       .finally(() => setUsersLoading(false))
   }
 
+  function loadSeedCollections() {
+    setSeedCollectionsLoading(true)
+    listCollections()
+      .then(cols => {
+        setSeedCollections(cols)
+        setSeedCollectionId(current => current || String(cols[0]?.id ?? ''))
+      })
+      .catch(err => setSeedError((err as Error).message))
+      .finally(() => setSeedCollectionsLoading(false))
+  }
+
   async function handleCreateUser() {
     const name = newUserName.trim()
     const email = newUserEmail.trim()
@@ -151,6 +171,34 @@ export default function SettingsPage() {
       }
     } catch (err) {
       setUserDeleteError((err as Error).message)
+    }
+  }
+
+  async function handleSeedCollection() {
+    const collectionId = parseInt(seedCollectionId, 10)
+    const count = parseInt(seedCount.trim(), 10)
+
+    if (!Number.isInteger(collectionId)) {
+      setSeedError('Select a collection to seed.')
+      return
+    }
+
+    if (!Number.isInteger(count) || count < 1 || count > 20) {
+      setSeedError('Seed count must be a whole number between 1 and 20.')
+      return
+    }
+
+    setSeedSaving(true)
+    setSeedError(null)
+    setSeedSuccess(null)
+    try {
+      const result = await seedCollectionData(collectionId, { count })
+      setSeedSuccess(`Created ${result.created} seeded submissions for ${result.collectionTitle}.`)
+      loadSeedCollections()
+    } catch (err) {
+      setSeedError((err as Error).message)
+    } finally {
+      setSeedSaving(false)
     }
   }
 
@@ -262,6 +310,8 @@ export default function SettingsPage() {
       </div>
     )
   }
+
+  const selectedSeedCollection = seedCollections.find(collection => String(collection.id) === seedCollectionId) ?? null
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -1064,6 +1114,128 @@ export default function SettingsPage() {
                 <p className="text-xs text-[#94A3B8]">To log in as a user, use the ID shown above on the login screen.</p>
               </div>
 
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !seedExpanded
+              setSeedExpanded(next)
+              setSeedError(null)
+              setSeedSuccess(null)
+              if (next && seedCollections.length === 0) loadSeedCollections()
+            }}
+            className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+                <Database size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Seed Data</h2>
+                <p className="text-sm text-[#64748B] mt-1">Create up to 20 demo submissions at a time for an existing collection.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              {seedExpanded ? (
+                <ChevronDown size={18} className="text-[#64748B]" />
+              ) : (
+                <ChevronRight size={18} className="text-[#64748B]" />
+              )}
+            </div>
+          </button>
+
+          {seedExpanded && (
+            <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                    Collection
+                  </label>
+                  <select
+                    value={seedCollectionId}
+                    onChange={e => {
+                      setSeedCollectionId(e.target.value)
+                      setSeedError(null)
+                      setSeedSuccess(null)
+                    }}
+                    disabled={seedCollectionsLoading || seedSaving || seedCollections.length === 0}
+                    className={INPUT}
+                  >
+                    <option value="">Select a collection</option>
+                    {seedCollections.map(collection => (
+                      <option key={collection.id} value={collection.id}>
+                        {collection.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                    Seed Count
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={seedCount}
+                    onChange={e => {
+                      setSeedCount(e.target.value)
+                      setSeedError(null)
+                      setSeedSuccess(null)
+                    }}
+                    disabled={seedSaving}
+                    className={INPUT}
+                  />
+                  <p className="text-xs text-[#64748B] mt-1">Each run is capped at 20 submissions.</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4 text-sm text-[#475569] dark:text-[#CBD5E1] space-y-1">
+                <p>
+                  {selectedSeedCollection
+                    ? `Selected: ${selectedSeedCollection.title}`
+                    : 'Choose a collection to seed.'}
+                </p>
+                {selectedSeedCollection && (
+                  <p>
+                    Current responses: {selectedSeedCollection.responseCount ?? 0}
+                    {selectedSeedCollection.category ? ` • Category: ${selectedSeedCollection.category}` : ''}
+                  </p>
+                )}
+              </div>
+
+              {seedError && <p className="text-sm text-red-500">{seedError}</p>}
+              {seedSuccess && <p className="text-sm text-green-600 dark:text-green-400">{seedSuccess}</p>}
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleSeedCollection()}
+                  disabled={
+                    seedSaving ||
+                    seedCollectionsLoading ||
+                    !seedCollectionId ||
+                    seedCollections.length === 0
+                  }
+                  className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                >
+                  <Database size={14} />
+                  {seedSaving ? 'Seeding…' : 'Seed Collection'}
+                </button>
+                <button
+                  type="button"
+                  onClick={loadSeedCollections}
+                  disabled={seedCollectionsLoading || seedSaving}
+                  className="inline-flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#CBD5E1] text-sm font-medium px-4 py-2 rounded hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-60"
+                >
+                  {seedCollectionsLoading ? 'Loading…' : 'Refresh Collections'}
+                </button>
+              </div>
             </div>
           )}
         </section>
