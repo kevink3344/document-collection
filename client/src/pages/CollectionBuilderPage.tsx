@@ -1008,7 +1008,7 @@ export default function CollectionBuilderPage() {
                   onChange={e => setLogoUrl(e.target.value)}
                   className={`${INPUT.replace('px-3 py-2', 'px-1 py-1')}`}
                 />
-                <p className="mt-1 text-xs text-[#94A3B8]">Displayed above the survey title (max 150px wide). Supports SVG, PNG, etc.</p>
+                <p className="mt-1 text-xs text-[#94A3B8]">Displayed at the top of the survey banner (max 150px wide). Supports SVG, PNG, etc.</p>
               </div>
               <div>
                 <label htmlFor={`${formId}-cover`} className={LABEL}>

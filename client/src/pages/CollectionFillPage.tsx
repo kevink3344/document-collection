@@ -1298,18 +1298,18 @@ export default function CollectionFillPage() {
               ;(e.currentTarget as HTMLImageElement).style.display = 'none'
             }}
           />
+          {collection.logoUrl && (
+            <div className="absolute left-6 top-6 md:left-10 md:top-8 inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm p-px z-10">
+              <img
+                src={collection.logoUrl}
+                alt="Logo"
+                className="w-full h-auto"
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+              />
+            </div>
+          )}
           <div className="absolute inset-0 flex items-end p-6 md:p-10">
             <div className="space-y-2">
-              {collection.logoUrl && (
-                <div className="inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm p-px">
-                  <img
-                    src={collection.logoUrl}
-                    alt="Logo"
-                    className="w-full h-auto"
-                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                  />
-                </div>
-              )}
               <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">
                 {collection.title}
               </h1>
