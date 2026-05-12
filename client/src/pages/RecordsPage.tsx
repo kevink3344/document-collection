@@ -492,6 +492,99 @@ function downloadCsv(table: TableSummaryCard): void {
   URL.revokeObjectURL(url)
 }
 
+function formatResponseValueForCsv(field: CollectionField | undefined, rawValue: string | null): string {
+  const value = rawValue ?? ''
+  if (!field || value.trim() === '') {
+    return value
+  }
+
+  switch (field.type) {
+    case 'multiple_choice': {
+      try {
+        const selections = JSON.parse(value) as string[]
+        return Array.isArray(selections) ? selections.join('; ') : value
+      } catch {
+        return value
+      }
+    }
+    case 'confirmation':
+      return value === 'true' ? 'Confirmed' : 'Not confirmed'
+    case 'custom_table': {
+      try {
+        const rows = JSON.parse(value) as Array<Record<string, string>>
+        return Array.isArray(rows) ? JSON.stringify(rows) : value
+      } catch {
+        return value
+      }
+    }
+    case 'signature':
+      return value.startsWith('data:image') ? '[signature captured]' : value
+    default:
+      return value
+  }
+}
+
+function buildCollectionCsv(collection: Collection, responses: CollectionResponse[]): string {
+  const fields = [...collection.fields].sort((left, right) => {
+    if (left.page !== right.page) return left.page - right.page
+    return left.sortOrder - right.sortOrder
+  })
+
+  const labelCounts = new Map<string, number>()
+  const fieldColumns = fields.map((field) => {
+    const baseLabel = field.label.trim() || `Field ${field.id ?? ''}`.trim()
+    const nextCount = (labelCounts.get(baseLabel) ?? 0) + 1
+    labelCounts.set(baseLabel, nextCount)
+    return {
+      fieldId: field.id,
+      header: nextCount === 1 ? baseLabel : `${baseLabel} (${nextCount})`,
+      field,
+    }
+  })
+
+  const header = [
+    'Submission ID',
+    'Submitted At',
+    'Respondent Name',
+    'Respondent Email',
+    ...fieldColumns.map((column) => column.header),
+  ]
+
+  const lines = responses.map((response) => {
+    const valueMap = new Map(response.values.map((entry) => [entry.fieldId, entry.value]))
+    return [
+      String(response.id),
+      response.submittedAt,
+      response.respondentName ?? '',
+      response.respondentEmail ?? '',
+      ...fieldColumns.map((column) => {
+        if (column.fieldId === undefined) return ''
+        return formatResponseValueForCsv(column.field, valueMap.get(column.fieldId) ?? '')
+      }),
+    ]
+      .map(toCsvCell)
+      .join(',')
+  })
+
+  return [header.map(toCsvCell).join(','), ...lines].join('\n')
+}
+
+function downloadCollectionCsv(collection: Collection, responses: CollectionResponse[]): void {
+  const safeFilename = (collection.title.trim() || `collection-${collection.id}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || `collection-${collection.id}`
+  const blob = new Blob([buildCollectionCsv(collection, responses)], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${safeFilename}-records.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export default function RecordsPage() {
   const [collections, setCollections] = useState<Collection[]>([])
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null)
@@ -785,22 +878,33 @@ export default function RecordsPage() {
           </p>
         </div>
 
-        <div className="w-full md:max-w-xs">
+        <div className="w-full md:max-w-xl">
           <label className="block text-xs font-medium uppercase tracking-wide text-[#64748B] mb-1">
             Collection
           </label>
-          <select
-            value={selectedCollectionId ?? ''}
-            onChange={e => setSelectedCollectionId(Number(e.target.value))}
-            className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-            disabled={collections.length === 0}
-          >
-            {collections.map(collection => (
-              <option key={collection.id} value={collection.id}>
-                {collection.title} ({collection.responseCount ?? 0})
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              value={selectedCollectionId ?? ''}
+              onChange={e => setSelectedCollectionId(Number(e.target.value))}
+              className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+              disabled={collections.length === 0}
+            >
+              {collections.map(collection => (
+                <option key={collection.id} value={collection.id}>
+                  {collection.title} ({collection.responseCount ?? 0})
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => selectedCollection && downloadCollectionCsv(selectedCollection, responses)}
+              disabled={!selectedCollection || responses.length === 0}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded bg-[#2563EB] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Download size={14} />
+              Export CSV
+            </button>
+          </div>
         </div>
       </div>
 

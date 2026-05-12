@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
@@ -26,6 +26,15 @@ import { useAuth } from '../contexts/AuthContext'
 import type { Collection } from '../types'
 
 const COLLECTION_ORDER_PREFERENCE_KEY = 'collections_card_order'
+const UNCATEGORIZED_TAB = '__uncategorized__'
+
+function getCategoryTabValue(category: string | null): string {
+  return category?.trim() || UNCATEGORIZED_TAB
+}
+
+function getCategoryTabLabel(category: string | null): string {
+  return category?.trim() || 'Uncategorized'
+}
 
 function collectionOrderStorageKey(userId: number): string {
   return `dcp:collections-order:${userId}`
@@ -66,6 +75,35 @@ function readLocalCollectionOrder(userId: number): number[] {
 
 function writeLocalCollectionOrder(userId: number, ids: number[]): void {
   localStorage.setItem(collectionOrderStorageKey(userId), JSON.stringify(ids))
+}
+
+function reorderCollectionsWithinCategory(
+  items: Collection[],
+  categoryTab: string,
+  activeId: number,
+  overId: number,
+): Collection[] {
+  const inCategory = (collection: Collection) => getCategoryTabValue(collection.category) === categoryTab
+  const visibleCollections = items.filter(inCategory)
+  const oldIndex = visibleCollections.findIndex((collection) => collection.id === activeId)
+  const newIndex = visibleCollections.findIndex((collection) => collection.id === overId)
+
+  if (oldIndex === -1 || newIndex === -1) {
+    return items
+  }
+
+  const reorderedVisible = arrayMove(visibleCollections, oldIndex, newIndex)
+  let visiblePointer = 0
+
+  return items.map((collection) => {
+    if (!inCategory(collection)) {
+      return collection
+    }
+
+    const nextCollection = reorderedVisible[visiblePointer]
+    visiblePointer += 1
+    return nextCollection
+  })
 }
 
 interface CollectionCardProps {
@@ -248,6 +286,7 @@ export default function CollectionsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
+  const [activeCategoryTab, setActiveCategoryTab] = useState<string | null>(null)
   const latestOrderRef = useRef<string>('[]')
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: {
@@ -321,6 +360,55 @@ export default function CollectionsPage() {
     }
   }, [user])
 
+  const categoryTabs = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>()
+
+    collections.forEach((collection) => {
+      const key = getCategoryTabValue(collection.category)
+      const existing = counts.get(key)
+      if (existing) {
+        existing.count += 1
+        return
+      }
+
+      counts.set(key, {
+        label: getCategoryTabLabel(collection.category),
+        count: 1,
+      })
+    })
+
+    return Array.from(counts.entries()).map(([value, data]) => ({
+      value,
+      label: data.label,
+      count: data.count,
+    }))
+  }, [collections])
+
+  const visibleCollections = useMemo(() => {
+    if (!activeCategoryTab) {
+      return collections
+    }
+
+    return collections.filter(
+      (collection) => getCategoryTabValue(collection.category) === activeCategoryTab,
+    )
+  }, [activeCategoryTab, collections])
+
+  useEffect(() => {
+    if (categoryTabs.length === 0) {
+      setActiveCategoryTab(null)
+      return
+    }
+
+    setActiveCategoryTab((current) => {
+      if (current && categoryTabs.some((tab) => tab.value === current)) {
+        return current
+      }
+
+      return categoryTabs[0].value
+    })
+  }, [categoryTabs])
+
   async function handleDelete(col: Collection) {
     if (
       !window.confirm(
@@ -356,19 +444,22 @@ export default function CollectionsPage() {
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
-    if (!over || active.id === over.id) {
+    if (!over || active.id === over.id || !activeCategoryTab) {
       return
     }
 
     setCollections((prevCollections) => {
-      const oldIndex = prevCollections.findIndex((collection) => collection.id === active.id)
-      const newIndex = prevCollections.findIndex((collection) => collection.id === over.id)
+      const nextCollections = reorderCollectionsWithinCategory(
+        prevCollections,
+        activeCategoryTab,
+        Number(active.id),
+        Number(over.id),
+      )
 
-      if (oldIndex === -1 || newIndex === -1) {
+      if (nextCollections === prevCollections) {
         return prevCollections
       }
 
-      const nextCollections = arrayMove(prevCollections, oldIndex, newIndex)
       void persistCollectionOrder(nextCollections.map((collection) => collection.id))
       return nextCollections
     })
@@ -399,7 +490,7 @@ export default function CollectionsPage() {
             Collections
           </h1>
           <p className="text-sm text-[#64748B] mt-0.5">
-            {collections.length} collection{collections.length !== 1 ? 's' : ''}
+            {visibleCollections.length} collection{visibleCollections.length !== 1 ? 's' : ''}
           </p>
         </div>
         <button
@@ -425,11 +516,42 @@ export default function CollectionsPage() {
         </div>
       )}
 
+      {categoryTabs.length > 0 && (
+        <div className="border-b border-[#E2E8F0] dark:border-[#334155]">
+          <div className="flex flex-wrap gap-6">
+            {categoryTabs.map((tab) => {
+              const isActive = tab.value === activeCategoryTab
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  onClick={() => setActiveCategoryTab(tab.value)}
+                  className={[
+                    'border-b-2 pb-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'border-[#2563EB] text-[#2563EB]'
+                      : 'border-transparent text-[#64748B] hover:text-[#2563EB]',
+                  ].join(' ')}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {collections.length > 0 && visibleCollections.length === 0 && (
+        <div className="rounded border border-[#E2E8F0] bg-white p-6 text-sm text-[#64748B] dark:border-[#334155] dark:bg-[#1E293B] dark:text-[#94A3B8]">
+          No collections in this category.
+        </div>
+      )}
+
       {/* Grid */}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={collections.map((collection) => collection.id)} strategy={rectSortingStrategy}>
+        <SortableContext items={visibleCollections.map((collection) => collection.id)} strategy={rectSortingStrategy}>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {collections.map((collection) => (
+            {visibleCollections.map((collection) => (
               <SortableCollectionCard
                 key={collection.id}
                 collection={collection}

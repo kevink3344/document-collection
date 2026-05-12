@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, Save, History, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
+import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
@@ -981,13 +981,6 @@ export default function CollectionFillPage() {
     setShowResumeBanner(false)
   }
 
-  function handleSaveProgress() {
-    if (!slug || isPreview) return
-    saveDraft(slug, { respName, respEmail, values, currentPageIdx })
-    const now = new Date().toISOString()
-    setLastSavedAt(now)
-  }
-
   function isRequiredFieldFilled(field: CollectionField, value: string): boolean {
     if (!field.required) return true
     switch (field.type) {
@@ -1527,18 +1520,6 @@ export default function CollectionFillPage() {
                 >
                   Previous
                 </button>
-
-                {!isPreview && !editResponseId && (
-                  <button
-                    type="button"
-                    onClick={handleSaveProgress}
-                    title="Save progress"
-                    className="flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] font-medium px-3 py-2.5 rounded text-sm transition-colors"
-                  >
-                    <Save size={14} />
-                    Save
-                  </button>
-                )}
 
                 {!isLastPage ? (
                   <button
