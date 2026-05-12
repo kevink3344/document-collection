@@ -412,6 +412,7 @@ function normaliseIncomingFields(fields: FieldInput[]): string {
       page: Math.max(1, Math.floor(f.page ?? 1)),
       required: !!f.required,
       options: (f.options ?? []).map(o => o.trim()).filter(Boolean),
+      displayStyle: resolveFieldDisplayStyle(f.type, f.displayStyle),
       tableColumns: (f.tableColumns ?? []).map((c, ci) => ({
         name: (c.name ?? '').trim(),
         colType: c.colType,
@@ -443,6 +444,7 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
           return []
         }
       })(),
+      displayStyle: resolveFieldDisplayStyle(f.type, f.display_style ?? undefined),
       tableColumns: (colsByField.get(f.id) ?? []).map(col => ({
         name: col.name,
         colType: col.col_type,
