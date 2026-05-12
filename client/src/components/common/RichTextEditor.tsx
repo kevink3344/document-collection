@@ -17,13 +17,23 @@ interface RichTextEditorProps {
   readOnly?: boolean
 }
 
+interface FormatState {
+  bold: boolean
+  italic: boolean
+  underline: boolean
+  insertUnorderedList: boolean
+  insertOrderedList: boolean
+}
+
 function ToolbarButton({
   onClick,
   title,
+  active = false,
   children,
 }: {
   onClick: () => void
   title: string
+  active?: boolean
   children: React.ReactNode
 }) {
   return (
@@ -32,7 +42,13 @@ function ToolbarButton({
       title={title}
       onMouseDown={e => e.preventDefault()}
       onClick={onClick}
-      className="p-1.5 rounded border border-[#E2E8F0] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]"
+      aria-pressed={active}
+      className={[
+        'p-1.5 rounded border transition-colors',
+        active
+          ? 'border-[#2563EB] bg-[#DBEAFE] text-[#1D4ED8] dark:border-[#60A5FA] dark:bg-[#1E3A8A] dark:text-[#BFDBFE]'
+          : 'border-[#E2E8F0] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+      ].join(' ')}
     >
       {children}
     </button>
@@ -48,6 +64,56 @@ export default function RichTextEditor({
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const [showHtml, setShowHtml] = useState(false)
+  const [formatState, setFormatState] = useState<FormatState>({
+    bold: false,
+    italic: false,
+    underline: false,
+    insertUnorderedList: false,
+    insertOrderedList: false,
+  })
+  const contentClassName = [
+    'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] break-words',
+    '[&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1',
+    minHeightClassName,
+  ].join(' ')
+
+  function updateFormatState() {
+    const el = editorRef.current
+    const selection = window.getSelection()
+
+    if (!el || !selection || selection.rangeCount === 0) {
+      setFormatState({
+        bold: false,
+        italic: false,
+        underline: false,
+        insertUnorderedList: false,
+        insertOrderedList: false,
+      })
+      return
+    }
+
+    const range = selection.getRangeAt(0)
+    const withinEditor = el.contains(range.commonAncestorContainer)
+
+    if (!withinEditor) {
+      setFormatState({
+        bold: false,
+        italic: false,
+        underline: false,
+        insertUnorderedList: false,
+        insertOrderedList: false,
+      })
+      return
+    }
+
+    setFormatState({
+      bold: document.queryCommandState('bold'),
+      italic: document.queryCommandState('italic'),
+      underline: document.queryCommandState('underline'),
+      insertUnorderedList: document.queryCommandState('insertUnorderedList'),
+      insertOrderedList: document.queryCommandState('insertOrderedList'),
+    })
+  }
 
   useEffect(() => {
     if (showHtml) return
@@ -59,12 +125,25 @@ export default function RichTextEditor({
     }
   }, [showHtml, value])
 
+  useEffect(() => {
+    if (readOnly || showHtml) return
+
+    const handleSelectionChange = () => updateFormatState()
+
+    document.addEventListener('selectionchange', handleSelectionChange)
+
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange)
+    }
+  }, [readOnly, showHtml])
+
   function exec(command: string, commandValue?: string) {
     if (readOnly || !onChange) return
     const el = editorRef.current
     if (!el) return
     el.focus()
     document.execCommand(command, false, commandValue)
+    updateFormatState()
     onChange(el.innerHTML)
   }
 
@@ -75,10 +154,7 @@ export default function RichTextEditor({
       >
         <div
           ref={editorRef}
-          className={[
-            'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] prose dark:prose-invert prose-sm max-w-none',
-            minHeightClassName,
-          ].join(' ')}
+          className={contentClassName}
         />
       </div>
     )
@@ -87,19 +163,27 @@ export default function RichTextEditor({
   return (
     <div className="border border-[#E2E8F0] dark:border-[#334155] rounded overflow-hidden bg-white dark:bg-[#0F172A]">
       <div className="flex items-center gap-1 p-2 border-b border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#111827]">
-        <ToolbarButton title="Bold" onClick={() => exec('bold')}>
+        <ToolbarButton title="Bold" onClick={() => exec('bold')} active={formatState.bold}>
           <Bold size={14} />
         </ToolbarButton>
-        <ToolbarButton title="Italic" onClick={() => exec('italic')}>
+        <ToolbarButton title="Italic" onClick={() => exec('italic')} active={formatState.italic}>
           <Italic size={14} />
         </ToolbarButton>
-        <ToolbarButton title="Underline" onClick={() => exec('underline')}>
+        <ToolbarButton title="Underline" onClick={() => exec('underline')} active={formatState.underline}>
           <Underline size={14} />
         </ToolbarButton>
-        <ToolbarButton title="Bulleted list" onClick={() => exec('insertUnorderedList')}>
+        <ToolbarButton
+          title="Bulleted list"
+          onClick={() => exec('insertUnorderedList')}
+          active={formatState.insertUnorderedList}
+        >
           <List size={14} />
         </ToolbarButton>
-        <ToolbarButton title="Numbered list" onClick={() => exec('insertOrderedList')}>
+        <ToolbarButton
+          title="Numbered list"
+          onClick={() => exec('insertOrderedList')}
+          active={formatState.insertOrderedList}
+        >
           <ListOrdered size={14} />
         </ToolbarButton>
         <ToolbarButton title="Undo" onClick={() => exec('undo')}>
@@ -148,8 +232,8 @@ export default function RichTextEditor({
           onInput={e => onChange?.((e.currentTarget as HTMLDivElement).innerHTML)}
           data-placeholder={placeholder ?? 'Type here...'}
           className={[
-            'px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] focus:outline-none',
-            minHeightClassName,
+            contentClassName,
+            'focus:outline-none',
             'empty:before:content-[attr(data-placeholder)] empty:before:text-[#94A3B8] empty:before:pointer-events-none',
           ].join(' ')}
         />
