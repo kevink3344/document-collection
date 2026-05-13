@@ -20,6 +20,7 @@ export interface ReportKpi {
 
 export interface ReportData {
   kpi: ReportKpi
+  scopeLabel?: string
   submissionsOverTime: { date: string; count: number }[]
   collectionPerformance: {
     title: string
@@ -93,6 +94,7 @@ export function buildReportsSummaryPrompt(
   const windowLabel = days ? `last ${days} days` : 'all time'
 
   const payload = {
+    scope: data.scopeLabel ?? 'All surveys',
     dataWindow: windowLabel,
     kpi: data.kpi,
     submissionTrend: data.submissionsOverTime.slice(-14),
@@ -167,6 +169,7 @@ export function validateSummaryResponse(raw: string): AiSummaryOutput | null {
  */
 export function buildFallbackSummary(data: ReportData, days: number | null): AiSummaryOutput {
   const windowLabel = days ? `the last ${days} days` : 'all time'
+  const scopeLabel = data.scopeLabel ?? 'All surveys'
   const topCollection = data.collectionPerformance[0]
   const topCategory = data.categoryBreakdown[0]
 
@@ -189,7 +192,7 @@ export function buildFallbackSummary(data: ReportData, days: number | null): AiS
   }
 
   return {
-    summary: `Over ${windowLabel}, the platform recorded ${data.kpi.totalSubmissions} submission(s) across ${data.kpi.activeCollections} active collection(s). This summary was generated from live data without AI assistance.`,
+    summary: `${scopeLabel} recorded ${data.kpi.totalSubmissions} submission(s) over ${windowLabel}. This summary was generated from live data without AI assistance.`,
     findings,
     actions: [
       'Review collections with zero submissions and consider closing or promoting them.',

@@ -263,6 +263,14 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
       ? (focusRaw as FocusArea)
       : 'general'
 
+  const collectionIdRaw = req.body.collectionId as unknown
+  const collectionId =
+    typeof collectionIdRaw === 'number' && Number.isInteger(collectionIdRaw) && collectionIdRaw > 0
+      ? collectionIdRaw
+      : typeof collectionIdRaw === 'string' && /^\d+$/.test(collectionIdRaw)
+        ? Number(collectionIdRaw)
+        : null
+
   // ── Rate limit ───────────────────────────────────────────────
   if (userId !== undefined && !checkRateLimit(userId)) {
     res.status(429).json({ error: 'Rate limit exceeded. Please wait before generating another summary.' })
@@ -272,23 +280,49 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
   try {
     const db = getDb()
     const dateThreshold = days ? `datetime('now', '-${days} days')` : null
-    const subWhere = dateThreshold ? `WHERE submitted_at >= ${dateThreshold}` : ''
+    const selectedCollection = collectionId
+      ? db.prepare(`SELECT id, title, category, status FROM collections WHERE id = ?`).get(collectionId) as
+          | { id: number; title: string; category: string | null; status: string }
+          | undefined
+      : undefined
+
+    if (collectionId && !selectedCollection) {
+      res.status(404).json({ error: 'Survey not found.' })
+      return
+    }
+
+    const responseWhereParts: string[] = []
+    const responseParams: Array<string | number> = []
+
+    if (collectionId) {
+      responseWhereParts.push('collection_id = ?')
+      responseParams.push(collectionId)
+    }
+    if (dateThreshold) {
+      responseWhereParts.push(`submitted_at >= ${dateThreshold}`)
+    }
+
+    const subWhere = responseWhereParts.length > 0 ? `WHERE ${responseWhereParts.join(' AND ')}` : ''
 
     // ── Gather aggregates (same logic as /reports) ───────────
     const { totalSubmissions } = db
       .prepare(`SELECT COUNT(*) AS totalSubmissions FROM collection_responses ${subWhere}`)
-      .get() as { totalSubmissions: number }
+      .get(...responseParams) as { totalSubmissions: number }
 
-    const { activeCollections } = db
-      .prepare(`SELECT COUNT(*) AS activeCollections FROM collections WHERE status = 'published'`)
-      .get() as { activeCollections: number }
+    const activeCollections = selectedCollection
+      ? selectedCollection.status === 'published' ? 1 : 0
+      : ((db
+          .prepare(`SELECT COUNT(*) AS activeCollections FROM collections WHERE status = 'published'`)
+          .get() as { activeCollections: number }).activeCollections)
 
-    const { categoriesInUse } = db
-      .prepare(
-        `SELECT COUNT(DISTINCT category) AS categoriesInUse
-         FROM collections WHERE category IS NOT NULL AND status = 'published'`,
-      )
-      .get() as { categoriesInUse: number }
+    const categoriesInUse = selectedCollection
+      ? selectedCollection.category ? 1 : 0
+      : ((db
+          .prepare(
+            `SELECT COUNT(DISTINCT category) AS categoriesInUse
+             FROM collections WHERE category IS NOT NULL AND status = 'published'`,
+          )
+          .get() as { categoriesInUse: number }).categoriesInUse)
 
     const avgSubmissionsPerCollection =
       activeCollections > 0
@@ -301,34 +335,56 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
          FROM collection_responses ${subWhere}
          GROUP BY date(submitted_at) ORDER BY date ASC`,
       )
-      .all() as { date: string; count: number }[]
+      .all(...responseParams) as { date: string; count: number }[]
 
-    const crJoinCond = dateThreshold
-      ? `ON cr.collection_id = c.id AND cr.submitted_at >= ${dateThreshold}`
-      : `ON cr.collection_id = c.id`
+    const collectionPerformance = selectedCollection
+      ? ([db
+          .prepare(
+            `SELECT c.id, c.title, c.category, c.status,
+                    COUNT(cr.id) AS submissionCount, MAX(cr.submitted_at) AS lastActivity
+             FROM collections c
+             LEFT JOIN collection_responses cr
+               ON cr.collection_id = c.id ${dateThreshold ? `AND cr.submitted_at >= ${dateThreshold}` : ''}
+             WHERE c.id = ?
+             GROUP BY c.id`,
+          )
+          .get(collectionId) as { id: number; title: string; category: string | null; status: string; submissionCount: number; lastActivity: string | null }])
+      : (db
+          .prepare(
+            `SELECT c.id, c.title, c.category, c.status,
+                    COUNT(cr.id) AS submissionCount, MAX(cr.submitted_at) AS lastActivity
+             FROM collections c
+             LEFT JOIN collection_responses cr ${dateThreshold
+               ? `ON cr.collection_id = c.id AND cr.submitted_at >= ${dateThreshold}`
+               : `ON cr.collection_id = c.id`}
+             GROUP BY c.id ORDER BY submissionCount DESC, c.title ASC`,
+          )
+          .all() as { id: number; title: string; category: string | null; status: string; submissionCount: number; lastActivity: string | null }[])
 
-    const collectionPerformance = db
-      .prepare(
-        `SELECT c.id, c.title, c.category, c.status,
-                COUNT(cr.id) AS submissionCount, MAX(cr.submitted_at) AS lastActivity
-         FROM collections c
-         LEFT JOIN collection_responses cr ${crJoinCond}
-         GROUP BY c.id ORDER BY submissionCount DESC, c.title ASC`,
-      )
-      .all() as { id: number; title: string; category: string | null; status: string; submissionCount: number; lastActivity: string | null }[]
+    const categoryBreakdown = selectedCollection
+      ? [{ category: selectedCollection.category ?? 'Uncategorised', count: totalSubmissions }]
+      : (db
+          .prepare(
+            `SELECT COALESCE(c.category, 'Uncategorised') AS category, COUNT(cr.id) AS count
+             FROM collections c
+             LEFT JOIN collection_responses cr ${dateThreshold
+               ? `ON cr.collection_id = c.id AND cr.submitted_at >= ${dateThreshold}`
+               : `ON cr.collection_id = c.id`}
+             GROUP BY COALESCE(c.category, 'Uncategorised') ORDER BY count DESC`,
+          )
+          .all() as { category: string; count: number }[])
 
-    const categoryBreakdown = db
-      .prepare(
-        `SELECT COALESCE(c.category, 'Uncategorised') AS category, COUNT(cr.id) AS count
-         FROM collections c
-         LEFT JOIN collection_responses cr ${crJoinCond}
-         GROUP BY COALESCE(c.category, 'Uncategorised') ORDER BY count DESC`,
-      )
-      .all() as { category: string; count: number }[]
+    const userActivityWhereParts: string[] = ['cr.respondent_email = u.email']
+    const userActivityParams: Array<string | number> = []
+    if (collectionId) {
+      userActivityWhereParts.push('cr.collection_id = ?')
+      userActivityParams.push(collectionId)
+    }
+    if (dateThreshold) {
+      userActivityWhereParts.push(`cr.submitted_at >= ${dateThreshold}`)
+    }
 
-    const crUserJoinCond = dateThreshold
-      ? `ON cr.respondent_email = u.email AND cr.submitted_at >= ${dateThreshold}`
-      : `ON cr.respondent_email = u.email`
+    const crUserJoinCond = `ON ${userActivityWhereParts.join(' AND ')}`
 
     const userActivity =
       role === 'administrator'
@@ -340,10 +396,11 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
                LEFT JOIN collection_responses cr ${crUserJoinCond}
                GROUP BY u.id ORDER BY submissionCount DESC, u.name ASC`,
             )
-            .all() as { id: number; name: string; role: string; organization: string | null; submissionCount: number; lastActive: string | null }[])
+            .all(...userActivityParams) as { id: number; name: string; role: string; organization: string | null; submissionCount: number; lastActive: string | null }[])
         : []
 
     const reportData: ReportData = {
+      scopeLabel: selectedCollection ? `Survey: ${selectedCollection.title}` : 'All surveys',
       kpi: { totalSubmissions, activeCollections, categoriesInUse, avgSubmissionsPerCollection },
       submissionsOverTime,
       collectionPerformance,
@@ -379,6 +436,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
       generatedAt: new Date().toISOString(),
       model: usedAi ? (process.env.GROQ_MODEL ?? 'unknown') : 'fallback',
       dataWindow,
+      scopeLabel: reportData.scopeLabel,
       focus,
       aiAvailable: groqEnabled,
       usedAi,

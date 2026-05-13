@@ -16,8 +16,10 @@ import {
   CheckCheck,
 } from 'lucide-react'
 import { getReportsData, getAiReportsSummary, type ReportsData, type ReportsDatePreset, type AiSummaryResponse, type AiFocusArea } from '../api/stats'
+import { listCollections } from '../api/collections'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import { useAuth } from '../contexts/AuthContext'
+import type { Collection } from '../types'
 
 type SortCol = 'title' | 'submissionCount' | 'lastActivity' | 'status'
 type SortDir = 'asc' | 'desc'
@@ -163,11 +165,13 @@ export default function ReportsPage() {
   const [aiError, setAiError] = useState<string | null>(null)
   const [aiFocus, setAiFocus] = useState<AiFocusArea>('general')
   const [copied, setCopied] = useState(false)
+  const [surveyOptions, setSurveyOptions] = useState<Collection[]>([])
+  const [selectedSurveyId, setSelectedSurveyId] = useState<number | 'all'>('all')
 
   function generateSummary() {
     setAiLoading(true)
     setAiError(null)
-    getAiReportsSummary(preset, aiFocus)
+    getAiReportsSummary(preset, aiFocus, selectedSurveyId === 'all' ? undefined : selectedSurveyId)
       .then(setAiData)
       .catch(err => setAiError((err as Error).message))
       .finally(() => setAiLoading(false))
@@ -198,6 +202,17 @@ export default function ReportsPage() {
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
   }, [preset])
+
+  useEffect(() => {
+    listCollections()
+      .then(items => setSurveyOptions(items.slice().sort((a, b) => a.title.localeCompare(b.title))))
+      .catch(() => setSurveyOptions([]))
+  }, [])
+
+  useEffect(() => {
+    setAiData(null)
+    setAiError(null)
+  }, [preset, aiFocus, selectedSurveyId])
 
   // Sorted collection performance
   const sortedPerformance = useMemo(() => {
@@ -508,6 +523,17 @@ export default function ReportsPage() {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <select
+                  value={selectedSurveyId === 'all' ? 'all' : String(selectedSurveyId)}
+                  onChange={e => setSelectedSurveyId(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  disabled={aiLoading}
+                  className="text-xs border border-[#E2E8F0] dark:border-[#334155] rounded-md px-2 py-1.5 bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#2563EB] min-w-[180px]"
+                >
+                  <option value="all">All surveys</option>
+                  {surveyOptions.map(collection => (
+                    <option key={collection.id} value={collection.id}>{collection.title}</option>
+                  ))}
+                </select>
+                <select
                   value={aiFocus}
                   onChange={e => setAiFocus(e.target.value as AiFocusArea)}
                   disabled={aiLoading}
@@ -548,7 +574,7 @@ export default function ReportsPage() {
             <div className="px-4 py-4">
               {!aiData && !aiLoading && !aiError && (
                 <p className="text-sm text-[#64748B] text-center py-8">
-                  Click <span className="font-medium text-violet-600">Generate Summary</span> to produce an AI-powered insight for the selected date range.
+                  Click <span className="font-medium text-violet-600">Generate Summary</span> to produce an AI-powered insight for the selected date range and survey scope.
                 </p>
               )}
 
@@ -577,6 +603,8 @@ export default function ReportsPage() {
                       {aiData.usedAi ? <Sparkles size={10} /> : null}
                       {aiData.usedAi ? `AI · ${aiData.model}` : 'Deterministic fallback'}
                     </span>
+                    <span>{aiData.scopeLabel}</span>
+                    <span>·</span>
                     <span>{aiData.dataWindow}</span>
                     <span>·</span>
                     <span>Generated {new Date(aiData.generatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
