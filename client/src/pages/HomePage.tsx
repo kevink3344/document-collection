@@ -14,7 +14,7 @@ export default function HomePage() {
           mobileDrawerOpen={mobileNavOpen}
           onCloseMobileDrawer={() => setMobileNavOpen(false)}
         />
-        <main className="flex-1 overflow-auto p-6 md:p-8">
+        <main className="flex-1 overflow-auto p-6 pb-24 md:p-8 md:pb-8">
           <Outlet />
         </main>
       </div>

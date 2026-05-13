@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import type { CSSProperties } from 'react'
 import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
@@ -865,6 +866,7 @@ export default function CollectionFillPage() {
   const [formStartedAt, setFormStartedAt] = useState(() => Date.now())
   const [showQrCode, setShowQrCode] = useState(false)
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null)
+  const [logoPadding, setLogoPadding] = useState({ top: 0, right: 0, bottom: 0, left: 0 })
 
   // Draft persistence
   const [showResumeBanner, setShowResumeBanner] = useState(false)
@@ -912,6 +914,22 @@ export default function CollectionFillPage() {
     getPublicSetting('qr_code_enabled')
       .then(value => setShowQrCode(value === 'true'))
       .catch(() => setShowQrCode(false))
+  }, [])
+
+  useEffect(() => {
+    Promise.all([
+      getPublicSetting('image_logo_padding_top').catch(() => '0'),
+      getPublicSetting('image_logo_padding_right').catch(() => '0'),
+      getPublicSetting('image_logo_padding_bottom').catch(() => '0'),
+      getPublicSetting('image_logo_padding_left').catch(() => '0'),
+    ]).then(([top, right, bottom, left]) => {
+      setLogoPadding({
+        top: Math.max(0, Number.parseInt(top, 10) || 0),
+        right: Math.max(0, Number.parseInt(right, 10) || 0),
+        bottom: Math.max(0, Number.parseInt(bottom, 10) || 0),
+        left: Math.max(0, Number.parseInt(left, 10) || 0),
+      })
+    })
   }, [])
 
   useEffect(() => {
@@ -1218,6 +1236,13 @@ export default function CollectionFillPage() {
     }
   }
 
+  const logoPaddingStyle = useMemo<CSSProperties>(() => ({
+    paddingTop: `${logoPadding.top}px`,
+    paddingRight: `${logoPadding.right}px`,
+    paddingBottom: `${logoPadding.bottom}px`,
+    paddingLeft: `${logoPadding.left}px`,
+  }), [logoPadding.bottom, logoPadding.left, logoPadding.right, logoPadding.top])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0F172A] flex items-center justify-center text-[#64748B]">
@@ -1512,7 +1537,7 @@ export default function CollectionFillPage() {
             }}
           />
           {collection.logoUrl && (
-            <div className="absolute left-6 top-6 md:left-10 md:top-8 inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm p-px z-10">
+            <div style={logoPaddingStyle} className="absolute left-6 top-6 md:left-10 md:top-8 inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm z-10">
               <img
                 src={collection.logoUrl}
                 alt="Logo"
@@ -1557,7 +1582,7 @@ export default function CollectionFillPage() {
           {!collection.coverPhotoUrl && (
             <>
               {collection.logoUrl && (
-                <div className="inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm border border-[#E2E8F0] p-px">
+                <div style={logoPaddingStyle} className="inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm border border-[#E2E8F0]">
                   <img
                     src={collection.logoUrl}
                     alt="Logo"

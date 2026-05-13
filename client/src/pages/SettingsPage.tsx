@@ -90,6 +90,13 @@ export default function SettingsPage() {
   const [qrCodeSaving, setQrCodeSaving] = useState(false)
   const [qrCodeError, setQrCodeError] = useState<string | null>(null)
   const [qrCodeSaved, setQrCodeSaved] = useState(false)
+  const [logoPaddingTop, setLogoPaddingTop] = useState('0')
+  const [logoPaddingRight, setLogoPaddingRight] = useState('0')
+  const [logoPaddingBottom, setLogoPaddingBottom] = useState('0')
+  const [logoPaddingLeft, setLogoPaddingLeft] = useState('0')
+  const [logoPaddingSaving, setLogoPaddingSaving] = useState(false)
+  const [logoPaddingError, setLogoPaddingError] = useState<string | null>(null)
+  const [logoPaddingSaved, setLogoPaddingSaved] = useState(false)
 
   useEffect(() => {
     getPublicSetting('login_subtitle')
@@ -113,6 +120,18 @@ export default function SettingsPage() {
     getPublicSetting('qr_code_enabled')
       .then(val => setQrCodeEnabled(val === 'true'))
       .catch(() => setQrCodeEnabled(false))
+    getPublicSetting('image_logo_padding_top')
+      .then(setLogoPaddingTop)
+      .catch(() => setLogoPaddingTop('0'))
+    getPublicSetting('image_logo_padding_right')
+      .then(setLogoPaddingRight)
+      .catch(() => setLogoPaddingRight('0'))
+    getPublicSetting('image_logo_padding_bottom')
+      .then(setLogoPaddingBottom)
+      .catch(() => setLogoPaddingBottom('0'))
+    getPublicSetting('image_logo_padding_left')
+      .then(setLogoPaddingLeft)
+      .catch(() => setLogoPaddingLeft('0'))
   }, [])
 
   useEffect(() => {
@@ -222,6 +241,40 @@ export default function SettingsPage() {
       setQrCodeError((err as Error).message)
     } finally {
       setQrCodeSaving(false)
+    }
+  }
+
+  async function handleSaveLogoPadding() {
+    const rawValues = [
+      logoPaddingTop.trim(),
+      logoPaddingRight.trim(),
+      logoPaddingBottom.trim(),
+      logoPaddingLeft.trim(),
+    ]
+    const parsedValues = rawValues.map(value => Number(value))
+
+    if (parsedValues.some(value => !Number.isFinite(value) || value < 0 || !Number.isInteger(value))) {
+      setLogoPaddingError('Padding values must be whole numbers greater than or equal to 0.')
+      return
+    }
+
+    setLogoPaddingSaving(true)
+    setLogoPaddingError(null)
+    setLogoPaddingSaved(false)
+    try {
+      await updateSetting('image_logo_padding_top', String(parsedValues[0]))
+      await updateSetting('image_logo_padding_right', String(parsedValues[1]))
+      await updateSetting('image_logo_padding_bottom', String(parsedValues[2]))
+      await updateSetting('image_logo_padding_left', String(parsedValues[3]))
+      setLogoPaddingTop(String(parsedValues[0]))
+      setLogoPaddingRight(String(parsedValues[1]))
+      setLogoPaddingBottom(String(parsedValues[2]))
+      setLogoPaddingLeft(String(parsedValues[3]))
+      setLogoPaddingSaved(true)
+    } catch (err) {
+      setLogoPaddingError((err as Error).message)
+    } finally {
+      setLogoPaddingSaving(false)
     }
   }
 
@@ -534,6 +587,60 @@ export default function SettingsPage() {
               <span className="text-sm text-[#64748B]">Saving…</span>
             )}
             {qrCodeSaved && (
+              <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <div className="w-full flex items-start justify-between gap-4 px-5 py-4 text-left">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Code2 size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Image Logo URL Padding</h2>
+              <p className="text-sm text-[#64748B] mt-1">Set individual logo padding values for the survey logo wrapper. Defaults are 0 on all sides.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">Top</label>
+              <input type="number" min={0} value={logoPaddingTop} onChange={e => { setLogoPaddingTop(e.target.value); setLogoPaddingSaved(false); setLogoPaddingError(null) }} className={INPUT} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">Right</label>
+              <input type="number" min={0} value={logoPaddingRight} onChange={e => { setLogoPaddingRight(e.target.value); setLogoPaddingSaved(false); setLogoPaddingError(null) }} className={INPUT} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">Bottom</label>
+              <input type="number" min={0} value={logoPaddingBottom} onChange={e => { setLogoPaddingBottom(e.target.value); setLogoPaddingSaved(false); setLogoPaddingError(null) }} className={INPUT} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">Left</label>
+              <input type="number" min={0} value={logoPaddingLeft} onChange={e => { setLogoPaddingLeft(e.target.value); setLogoPaddingSaved(false); setLogoPaddingError(null) }} className={INPUT} />
+            </div>
+          </div>
+
+          {logoPaddingError && (
+            <p className="text-sm text-red-500">{logoPaddingError}</p>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              disabled={logoPaddingSaving}
+              onClick={() => void handleSaveLogoPadding()}
+              className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+            >
+              <Save size={14} />
+              {logoPaddingSaving ? 'Saving…' : 'Save Logo Padding'}
+            </button>
+            {logoPaddingSaved && (
               <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
             )}
           </div>
