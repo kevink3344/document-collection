@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
+import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
@@ -858,7 +858,9 @@ export default function CollectionFillPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [currentPageIdx, setCurrentPageIdx] = useState(0)
   const [pageError, setPageError] = useState<string | null>(null)
-  const [showInstructions, setShowInstructions] = useState(true)
+  const [activeTab, setActiveTab] = useState<'instructions' | 'questions'>('questions')
+  const [isReviewing, setIsReviewing] = useState(false)
+  const [formStartedAt, setFormStartedAt] = useState(() => Date.now())
 
   // Draft persistence
   const [showResumeBanner, setShowResumeBanner] = useState(false)
@@ -872,6 +874,10 @@ export default function CollectionFillPage() {
         setCollection(col)
         setCurrentPageIdx(0)
         setPageError(null)
+        setSubmitError(null)
+        setIsReviewing(false)
+        setFormStartedAt(Date.now())
+        setActiveTab(col.instructions?.trim() || col.instructionsDocUrl ? 'instructions' : 'questions')
         // Initialise default values
         const defaults: Record<number, string> = {}
         col.fields.forEach(f => {
@@ -925,6 +931,22 @@ export default function CollectionFillPage() {
     f => normalizePage(f.page) === currentPageNumber
   )
   const isLastPage = currentPageIdx === totalPages - 1
+  const progressRatio = Math.max(0, Math.min(1, (currentPageIdx + 1) / totalPages))
+  const progressPercent = Math.round(progressRatio * 100)
+  const estimatedTimeRemainingLabel = useMemo(() => {
+    const elapsedMs = Math.max(0, Date.now() - formStartedAt)
+    const elapsedMinutes = elapsedMs / 60000
+    const remainingPages = Math.max(0, totalPages - (currentPageIdx + 1))
+    const fallbackMinutes = Math.max(1, Math.ceil(Math.max(remainingPages, 0.5) * 0.75))
+
+    if (progressRatio < 0.2 || elapsedMinutes < 0.25) {
+      return `~${fallbackMinutes} min remaining`
+    }
+
+    const totalEstimatedMinutes = elapsedMinutes / progressRatio
+    const remainingMinutes = Math.max(1, Math.ceil(totalEstimatedMinutes - elapsedMinutes))
+    return `~${remainingMinutes} min remaining`
+  }, [currentPageIdx, formStartedAt, progressRatio, totalPages])
 
   useEffect(() => {
     if (currentPageIdx > totalPages - 1) {
@@ -965,6 +987,9 @@ export default function CollectionFillPage() {
     setRespEmail(pendingDraft.respEmail)
     setValues(pendingDraft.values)
     setCurrentPageIdx(pendingDraft.currentPageIdx)
+    setIsReviewing(false)
+    setFormStartedAt(Date.now())
+    setActiveTab('questions')
     setLastSavedAt(pendingDraft.savedAt)
     setPendingDraft(null)
     setShowResumeBanner(false)
@@ -976,9 +1001,26 @@ export default function CollectionFillPage() {
       setRespName(user?.name ?? '')
       setRespEmail(user?.email ?? '')
     }
+    setIsReviewing(false)
+    setFormStartedAt(Date.now())
+    setActiveTab(collection?.instructions?.trim() || collection?.instructionsDocUrl ? 'instructions' : 'questions')
     setLastSavedAt(null)
     setPendingDraft(null)
     setShowResumeBanner(false)
+  }
+
+  function getIdentityValidationError(): string | null {
+    if (!editResponseId && !collection?.anonymous && (!respName.trim() || !respEmail.trim())) {
+      return 'Please enter your name and email address.'
+    }
+    return null
+  }
+
+  function getFirstInvalidVisibleField(): CollectionField | null {
+    return visibleFields.find(field => {
+      const val = field.id !== undefined ? values[field.id] ?? '' : ''
+      return getFieldValidationError(field, val) !== null
+    }) ?? null
   }
 
   function isRequiredFieldFilled(field: CollectionField, value: string): boolean {
@@ -1037,6 +1079,9 @@ export default function CollectionFillPage() {
   function handleNextPage() {
     if (!collection) return
     setPageError(null)
+    setSubmitError(null)
+    setIsReviewing(false)
+    setActiveTab('questions')
 
     if (!collection.anonymous && !editResponseId && currentPageIdx === 0) {
       if (!respName.trim() || !respEmail.trim()) {
@@ -1058,22 +1103,53 @@ export default function CollectionFillPage() {
     setCurrentPageIdx(prev => Math.min(prev + 1, totalPages - 1))
   }
 
-  async function handleSubmit() {
-    if (!collection || !slug) return
+  function handleStartReview() {
+    if (!collection) return
 
-    if (!editResponseId && !collection.anonymous && (!respName.trim() || !respEmail.trim())) {
-      setSubmitError('Please enter your name and email address.')
+    setPageError(null)
+    setSubmitError(null)
+    setActiveTab('questions')
+
+    const identityError = getIdentityValidationError()
+    if (identityError) {
+      setCurrentPageIdx(0)
+      setSubmitError(identityError)
       return
     }
 
-    const invalidField = visibleFields.find(field => {
-      const val = field.id !== undefined ? values[field.id] ?? '' : ''
-      return getFieldValidationError(field, val) !== null
-    })
+    const invalidField = getFirstInvalidVisibleField()
     if (invalidField) {
       const val = invalidField.id !== undefined ? values[invalidField.id] ?? '' : ''
       const targetPage = pageNumbers.indexOf(normalizePage(invalidField.page))
       if (targetPage >= 0) setCurrentPageIdx(targetPage)
+      setSubmitError(getFieldValidationError(invalidField, val) ?? 'Please complete all required fields before reviewing.')
+      return
+    }
+
+    setIsReviewing(true)
+  }
+
+  async function handleSubmit() {
+    if (!collection || !slug) return
+
+    setPageError(null)
+
+    const identityError = getIdentityValidationError()
+    if (identityError) {
+      setCurrentPageIdx(0)
+      setIsReviewing(false)
+      setActiveTab('questions')
+      setSubmitError(identityError)
+      return
+    }
+
+    const invalidField = getFirstInvalidVisibleField()
+    if (invalidField) {
+      const val = invalidField.id !== undefined ? values[invalidField.id] ?? '' : ''
+      const targetPage = pageNumbers.indexOf(normalizePage(invalidField.page))
+      if (targetPage >= 0) setCurrentPageIdx(targetPage)
+      setIsReviewing(false)
+      setActiveTab('questions')
       setSubmitError(getFieldValidationError(invalidField, val) ?? 'Please complete all required fields before submitting.')
       return
     }
@@ -1144,10 +1220,107 @@ export default function CollectionFillPage() {
     setRespName('')
     setRespEmail('')
     setCurrentPageIdx(0)
+    setIsReviewing(false)
+    setFormStartedAt(Date.now())
+    setActiveTab(collection?.instructions?.trim() || collection?.instructionsDocUrl ? 'instructions' : 'questions')
     setSubmitted(false)
     setSubmitError(null)
     setPageError(null)
   }
+
+  function renderReviewValue(field: CollectionField, value: string) {
+    if (!value || value.trim() === '') {
+      return <span className="text-sm italic text-[#94A3B8]">No response</span>
+    }
+
+    switch (field.type) {
+      case 'multiple_choice': {
+        try {
+          const items = JSON.parse(value) as string[]
+          if (!Array.isArray(items) || items.length === 0) {
+            return <span className="text-sm italic text-[#94A3B8]">No response</span>
+          }
+          return (
+            <ul className="space-y-1 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
+              {items.map((item, index) => (
+                <li key={`${field.id}-${index}`}>{isOtherResponse(item) ? decodeOtherResponse(item) : item}</li>
+              ))}
+            </ul>
+          )
+        } catch {
+          return <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{value}</span>
+        }
+      }
+      case 'single_choice':
+        return <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{isOtherResponse(value) ? decodeOtherResponse(value) : value}</span>
+      case 'confirmation':
+        return <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{value === 'true' ? 'Confirmed' : 'Not confirmed'}</span>
+      case 'signature':
+        return value.startsWith('data:image')
+          ? <img src={value} alt="Signature" className="max-h-24 rounded border border-[#E2E8F0] dark:border-[#334155] bg-white p-1" />
+          : <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{value}</span>
+      case 'attachment':
+        return (
+          <a href={value} target="_blank" rel="noopener noreferrer" className="text-sm text-[#2563EB] underline break-all">
+            View attachment
+          </a>
+        )
+      case 'custom_table': {
+        try {
+          const rows = JSON.parse(value) as Array<Record<string, string>>
+          if (!Array.isArray(rows) || rows.length === 0) {
+            return <span className="text-sm italic text-[#94A3B8]">No rows</span>
+          }
+          const columns = Object.keys(rows[0] ?? {})
+          return (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs border border-[#E2E8F0] dark:border-[#334155] rounded">
+                <thead>
+                  <tr className="bg-[#F8FAFC] dark:bg-[#0F172A]">
+                    {columns.map(column => (
+                      <th key={column} className="px-2 py-1.5 text-left font-semibold text-[#475569] dark:text-[#94A3B8] border-b border-[#E2E8F0] dark:border-[#334155]">{column}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, rowIndex) => (
+                    <tr key={`${field.id}-${rowIndex}`}>
+                      {columns.map(column => (
+                        <td key={column} className="px-2 py-1.5 text-[#1E293B] dark:text-[#F1F5F9] border-t border-[#E2E8F0] dark:border-[#334155]">{row[column] ?? ''}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        } catch {
+          return <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{value}</span>
+        }
+      }
+      case 'matrix_likert_scale': {
+        try {
+          const responses = JSON.parse(value) as Record<string, string>
+          return (
+            <div className="space-y-1 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
+              {Object.entries(responses).map(([rowIndex, response]) => (
+                <div key={`${field.id}-${rowIndex}`}>Row {Number(rowIndex) + 1}: {response}</div>
+              ))}
+            </div>
+          )
+        } catch {
+          return <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{value}</span>
+        }
+      }
+      default:
+        return <span className="text-sm text-[#1E293B] dark:text-[#F1F5F9] whitespace-pre-wrap">{value}</span>
+    }
+  }
+
+  const reviewFieldsByPage = pageNumbers.map(pageNumber => ({
+    pageNumber,
+    fields: visibleFields.filter(field => normalizePage(field.page) === pageNumber && field.type !== 'comment'),
+  })).filter(group => group.fields.length > 0)
 
   if (submitted) {
     if (isPreview) {
@@ -1383,176 +1556,234 @@ export default function CollectionFillPage() {
         </div>
 
         <form onSubmit={e => e.preventDefault()}>
-          {/* Two-column layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Instructions */}
+          <div className="border-b border-[#E2E8F0] dark:border-[#334155] mb-6">
+            <div className="flex items-center gap-6">
+              <button
+                type="button"
+                onClick={() => setActiveTab('instructions')}
+                className={`border-b-2 pb-3 text-sm font-semibold transition-colors ${
+                  activeTab === 'instructions'
+                    ? 'border-[#2563EB] text-[#2563EB]'
+                    : 'border-transparent text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9]'
+                }`}
+              >
+                Instructions
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('questions')}
+                className={`border-b-2 pb-3 text-sm font-semibold transition-colors ${
+                  activeTab === 'questions'
+                    ? 'border-[#2563EB] text-[#2563EB]'
+                    : 'border-transparent text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9]'
+                }`}
+              >
+                Questions
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'instructions' ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] uppercase tracking-wide">
-                  Instructions
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setShowInstructions(v => !v)}
-                  className="flex items-center gap-1 text-xs text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
-                >
-                  {showInstructions ? (
-                    <><ChevronUp size={14} /> Hide</>
-                  ) : (
-                    <><ChevronDown size={14} /> Show</>
-                  )}
-                </button>
-              </div>
-              {showInstructions && (
+              {collection.instructions ? (
+                <div
+                  className="text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed [overflow-wrap:anywhere] [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-[#2563EB] [&_a]:underline [&_a]:hover:text-blue-700"
+                  dangerouslySetInnerHTML={{
+                    __html: sanitizeRichText(collection.instructions),
+                  }}
+                />
+              ) : (
+                <p className="text-sm text-[#94A3B8] italic">
+                  No instructions provided.
+                </p>
+              )}
+              {collection.instructionsDocUrl && (
+                <div className="border border-[#E2E8F0] dark:border-[#334155] rounded overflow-hidden">
+                  <iframe
+                    src={toEmbedUrl(collection.instructionsDocUrl)}
+                    title="Instructions document"
+                    className="w-full h-80"
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {isReviewing ? (
                 <>
-                  {collection.instructions ? (
-                    <div
-                      className="text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed [overflow-wrap:anywhere] [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-[#2563EB] [&_a]:underline [&_a]:hover:text-blue-700"
-                      dangerouslySetInnerHTML={{
-                        __html: sanitizeRichText(collection.instructions),
-                      }}
-                    />
-                  ) : (
-                    <p className="text-sm text-[#94A3B8] italic">
-                      No instructions provided.
-                    </p>
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Review Your Answers</h2>
+                    <p className="text-sm text-[#64748B]">Check your responses before final submission.</p>
+                  </div>
+
+                  {!collection.anonymous && !editResponseId && (
+                    <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4 space-y-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Your Name</p>
+                        <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{respName || 'No response'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Email Address</p>
+                        <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{respEmail || 'No response'}</p>
+                      </div>
+                    </div>
                   )}
-                  {collection.instructionsDocUrl && (
-                    <div className="border border-[#E2E8F0] dark:border-[#334155] rounded overflow-hidden">
-                      <iframe
-                        src={toEmbedUrl(collection.instructionsDocUrl)}
-                        title="Instructions document"
-                        className="w-full h-80"
+
+                  {reviewFieldsByPage.map(group => (
+                    <div key={group.pageNumber} className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] p-4 space-y-4">
+                      {totalPages > 1 && (
+                        <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Page {group.pageNumber}</h3>
+                      )}
+                      {group.fields.map(field => (
+                        <div key={field.id ?? `${group.pageNumber}-${field.label}`} className="space-y-1 border-t border-[#E2E8F0] dark:border-[#334155] first:border-t-0 first:pt-0 pt-4">
+                          <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">{field.label}</p>
+                          {renderReviewValue(field, field.id !== undefined ? values[field.id] ?? '' : '')}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
+                  {submitError && (
+                    <p className="text-sm text-red-500">{submitError}</p>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsReviewing(false)}
+                      className="flex-1 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] font-medium py-2.5 rounded text-sm transition-colors"
+                    >
+                      Back to Questions
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSubmit}
+                      disabled={submitting}
+                      className={`flex-1 font-medium py-2.5 rounded text-sm transition-colors disabled:opacity-50 text-white ${
+                        isPreview
+                          ? 'bg-amber-500 hover:bg-amber-600'
+                          : 'bg-[#2563EB] hover:bg-blue-700'
+                      }`}
+                    >
+                      {submitting
+                        ? (isPreview ? 'Testing…' : editResponseId ? 'Saving…' : 'Submitting…')
+                        : (isPreview ? 'Submit (Test)' : editResponseId ? 'Save Changes' : 'Submit')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {totalPages > 1 && (
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#64748B]">
+                      <span>Page {currentPageIdx + 1} of {totalPages}</span>
+                      <span>{progressPercent}% complete</span>
+                      <span>{estimatedTimeRemainingLabel}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-[#E2E8F0] dark:bg-[#334155] overflow-hidden">
+                      <div
+                        className="h-full bg-[#2563EB] transition-all"
+                        style={{ width: `${progressPercent}%` }}
                       />
                     </div>
+                  </div>
+                  )}
+
+                  {!collection.anonymous && !editResponseId && currentPageIdx === 0 && (
+                    <div className="space-y-3 pb-4 border-b border-[#E2E8F0] dark:border-[#334155]">
+                      <div>
+                        <label className={LABEL}>
+                          Your Name <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={respName}
+                          onChange={e => setRespName(e.target.value)}
+                          placeholder="Full name"
+                          className={INPUT}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className={LABEL}>
+                          Email Address <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="email"
+                          value={respEmail}
+                          onChange={e => setRespEmail(e.target.value)}
+                          placeholder="you@example.com"
+                          className={INPUT}
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {collection.fields.length === 0 && (
+                    <p className="text-sm text-[#94A3B8] italic">
+                      No form fields configured.
+                    </p>
+                  )}
+                  {fieldsOnCurrentPage.map(field =>
+                    field.id !== undefined ? (
+                      <FieldRenderer
+                        key={field.id}
+                        field={field}
+                        value={values[field.id] ?? ''}
+                        onChange={v => setValue(field.id!, v)}
+                        disabled={false}
+                      />
+                    ) : null
+                  )}
+
+                  {pageError && (
+                    <p className="text-sm text-red-500">{pageError}</p>
+                  )}
+                  {submitError && (
+                    <p className="text-sm text-red-500">{submitError}</p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPageError(null)
+                        setSubmitError(null)
+                        setCurrentPageIdx(prev => Math.max(0, prev - 1))
+                      }}
+                      disabled={currentPageIdx === 0}
+                      className="flex-1 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] disabled:opacity-40 font-medium py-2.5 rounded text-sm transition-colors"
+                    >
+                      Previous
+                    </button>
+
+                    {!isLastPage ? (
+                      <button
+                        type="button"
+                        onClick={handleNextPage}
+                        className="flex-1 bg-[#2563EB] hover:bg-blue-700 text-white font-medium py-2.5 rounded text-sm transition-colors"
+                      >
+                        Next
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleStartReview}
+                        className="flex-1 bg-[#2563EB] hover:bg-blue-700 text-white font-medium py-2.5 rounded text-sm transition-colors"
+                      >
+                        Review
+                      </button>
+                    )}
+                  </div>
+                  {lastSavedAt && !isPreview && (
+                    <p className="text-xs text-[#94A3B8] text-right -mt-1">
+                      Draft saved {new Date(lastSavedAt).toLocaleTimeString()}
+                    </p>
                   )}
                 </>
               )}
             </div>
-
-            {/* Form data */}
-            <div className="space-y-5">
-              <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] uppercase tracking-wide">
-                Questions
-              </h2>
-
-              {totalPages > 1 && (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs text-[#64748B]">
-                  <span>Page {currentPageIdx + 1} of {totalPages}</span>
-                  <span>{Math.round(((currentPageIdx + 1) / totalPages) * 100)}%</span>
-                </div>
-                <div className="h-2 rounded-full bg-[#E2E8F0] dark:bg-[#334155] overflow-hidden">
-                  <div
-                    className="h-full bg-[#2563EB] transition-all"
-                    style={{ width: `${((currentPageIdx + 1) / totalPages) * 100}%` }}
-                  />
-                </div>
-              </div>
-              )}
-
-              {/* Identity fields (hidden in edit mode — submission already has them) */}
-              {!collection.anonymous && !editResponseId && currentPageIdx === 0 && (
-                <div className="space-y-3 pb-4 border-b border-[#E2E8F0] dark:border-[#334155]">
-                  <div>
-                    <label className={LABEL}>
-                      Your Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={respName}
-                      onChange={e => setRespName(e.target.value)}
-                      placeholder="Full name"
-                      className={INPUT}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className={LABEL}>
-                      Email Address <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="email"
-                      value={respEmail}
-                      onChange={e => setRespEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      className={INPUT}
-                      required
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Dynamic fields */}
-              {collection.fields.length === 0 && (
-                <p className="text-sm text-[#94A3B8] italic">
-                  No form fields configured.
-                </p>
-              )}
-              {fieldsOnCurrentPage.map(field =>
-                field.id !== undefined ? (
-                  <FieldRenderer
-                    key={field.id}
-                    field={field}
-                    value={values[field.id] ?? ''}
-                    onChange={v => setValue(field.id!, v)}
-                    disabled={false}
-                  />
-                ) : null
-              )}
-
-              {/* Submit */}
-              {pageError && (
-                <p className="text-sm text-red-500">{pageError}</p>
-              )}
-              {submitError && (
-                <p className="text-sm text-red-500">{submitError}</p>
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPageError(null)
-                    setCurrentPageIdx(prev => Math.max(0, prev - 1))
-                  }}
-                  disabled={currentPageIdx === 0}
-                  className="flex-1 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] disabled:opacity-40 font-medium py-2.5 rounded text-sm transition-colors"
-                >
-                  Previous
-                </button>
-
-                {!isLastPage ? (
-                  <button
-                    type="button"
-                    onClick={handleNextPage}
-                    className="flex-1 bg-[#2563EB] hover:bg-blue-700 text-white font-medium py-2.5 rounded text-sm transition-colors"
-                  >
-                    Next
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleSubmit}
-                    disabled={submitting}
-                    className={`flex-1 font-medium py-2.5 rounded text-sm transition-colors disabled:opacity-50 text-white ${
-                      isPreview
-                        ? 'bg-amber-500 hover:bg-amber-600'
-                        : 'bg-[#2563EB] hover:bg-blue-700'
-                    }`}
-                  >
-                    {submitting
-                      ? (isPreview ? 'Testing…' : editResponseId ? 'Saving…' : 'Submitting…')
-                      : (isPreview ? 'Submit (Test)' : editResponseId ? 'Save Changes' : 'Submit')}
-                  </button>
-                )}
-              </div>
-              {lastSavedAt && !isPreview && (
-                <p className="text-xs text-[#94A3B8] text-right -mt-1">
-                  Draft saved {new Date(lastSavedAt).toLocaleTimeString()}
-                </p>
-              )}
-            </div>
-          </div>
+          )}
         </form>
       </div>
     </div>
