@@ -529,6 +529,7 @@ function buildCollectionCsv(collection: Collection, responses: CollectionRespons
     if (left.page !== right.page) return left.page - right.page
     return left.sortOrder - right.sortOrder
   })
+  const includeRespondentColumns = !collection.anonymous
 
   const labelCounts = new Map<string, number>()
   const fieldColumns = fields.map((field) => {
@@ -545,8 +546,7 @@ function buildCollectionCsv(collection: Collection, responses: CollectionRespons
   const header = [
     'Submission ID',
     'Submitted At',
-    'Respondent Name',
-    'Respondent Email',
+    ...(includeRespondentColumns ? ['Respondent Name', 'Respondent Email'] : []),
     ...fieldColumns.map((column) => column.header),
   ]
 
@@ -555,8 +555,7 @@ function buildCollectionCsv(collection: Collection, responses: CollectionRespons
     return [
       String(response.id),
       response.submittedAt,
-      response.respondentName ?? '',
-      response.respondentEmail ?? '',
+      ...(includeRespondentColumns ? [response.respondentName ?? '', response.respondentEmail ?? ''] : []),
       ...fieldColumns.map((column) => {
         if (column.fieldId === undefined) return ''
         return formatResponseValueForCsv(column.field, valueMap.get(column.fieldId) ?? '')
