@@ -414,6 +414,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
 
     let output = buildFallbackSummary(reportData, days)
     let usedAi = false
+    let aiFailureReason: string | null = null
 
     if (groqEnabled) {
       try {
@@ -423,9 +424,12 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
         if (validated) {
           output = validated
           usedAi = true
+        } else {
+          aiFailureReason = 'Groq returned a response that did not match the expected JSON summary format.'
         }
-      } catch {
-        // Groq failed — fallback already assigned above
+      } catch (err) {
+        aiFailureReason = err instanceof Error ? err.message : 'Unknown Groq error.'
+        console.error('[stats] Groq summary failed:', aiFailureReason)
       }
     }
 
@@ -440,6 +444,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
       focus,
       aiAvailable: groqEnabled,
       usedAi,
+      aiFailureReason,
     })
   } catch (err) {
     res.status(500).json({ error: (err as Error).message })

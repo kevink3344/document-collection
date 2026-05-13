@@ -77,6 +77,7 @@ export interface AiSummaryResponse {
   aiAvailable: boolean
   usedAi: boolean
   scopeLabel: string
+  aiFailureReason?: string | null
 }
 
 export async function getAiReportsSummary(

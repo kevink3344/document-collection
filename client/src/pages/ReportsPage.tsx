@@ -644,6 +644,12 @@ export default function ReportsPage() {
                     <p className="text-xs text-[#94A3B8] flex-1">{aiData.confidenceNote}</p>
                     <p className="text-xs text-[#94A3B8] italic">AI-generated summary — verify before decision-making.</p>
                   </div>
+
+                  {!aiData.usedAi && aiData.aiFailureReason && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                      <span className="font-semibold">Groq failure reason:</span> {aiData.aiFailureReason}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
