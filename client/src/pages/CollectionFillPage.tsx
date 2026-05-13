@@ -1301,10 +1301,21 @@ export default function CollectionFillPage() {
       case 'matrix_likert_scale': {
         try {
           const responses = JSON.parse(value) as Record<string, string>
+          let rowLabels: string[] = []
+          try {
+            if (field.options && field.options.length > 0 && typeof field.options[0] === 'string') {
+              const config = JSON.parse(field.options[0]) as { rows?: unknown }
+              rowLabels = Array.isArray(config.rows) ? config.rows.map(row => String(row)) : []
+            }
+          } catch {
+            rowLabels = []
+          }
           return (
             <div className="space-y-1 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
               {Object.entries(responses).map(([rowIndex, response]) => (
-                <div key={`${field.id}-${rowIndex}`}>Row {Number(rowIndex) + 1}: {response}</div>
+                <div key={`${field.id}-${rowIndex}`}>
+                  {rowLabels[Number(rowIndex)] ?? `Row ${Number(rowIndex) + 1}`}: {response}
+                </div>
               ))}
             </div>
           )
@@ -1606,6 +1617,15 @@ export default function CollectionFillPage() {
                   />
                 </div>
               )}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('questions')}
+                  className="inline-flex items-center justify-center bg-[#2563EB] hover:bg-blue-700 text-white font-medium px-4 py-2 rounded text-sm transition-colors"
+                >
+                  View Questions
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-5">
