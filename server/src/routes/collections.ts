@@ -516,6 +516,36 @@ function isoDateFromOffset(offsetDays: number): string {
   return date.toISOString().slice(0, 10)
 }
 
+function formatSqliteDateTime(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+function buildSeededSubmittedAt(random: SeedRandomSource): string {
+  const date = new Date()
+  const daysBack = Math.floor(random() * 30)
+  date.setDate(date.getDate() - daysBack)
+
+  const dayOfWeek = date.getDay()
+  if (dayOfWeek === 0) {
+    date.setDate(date.getDate() - 2)
+  } else if (dayOfWeek === 6) {
+    date.setDate(date.getDate() - 1)
+  }
+
+  const hour = 8 + Math.floor(random() * 10)
+  const minute = Math.floor(random() * 60)
+  const second = Math.floor(random() * 60)
+  date.setHours(hour, minute, second, 0)
+
+  return formatSqliteDateTime(date)
+}
+
 function buildSeededName(random: SeedRandomSource, submissionIndex: number): string {
   return `${pickSeedValue(SEED_FIRST_NAMES, random)} ${pickSeedValue(SEED_LAST_NAMES, random)} ${submissionIndex + 1}`
 }
@@ -967,14 +997,15 @@ router.post('/:id/seed', authenticateToken, (req: Request, res: Response) => {
       const respondentEmail = collection.anonymous === 1
         ? null
         : `${respondentName?.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '')}@seed.example.com`
+      const submittedAt = buildSeededSubmittedAt(random)
 
       const insertedResponse = db
         .prepare(
           `INSERT INTO collection_responses
-             (collection_id, collection_version_id, respondent_name, respondent_email, editable_until)
-           VALUES (?, ?, ?, ?, NULL)`
+             (collection_id, collection_version_id, respondent_name, respondent_email, editable_until, submitted_at)
+           VALUES (?, ?, ?, ?, NULL, ?)`
         )
-        .run(collection.id, collection.active_version_id, respondentName, respondentEmail)
+        .run(collection.id, collection.active_version_id, respondentName, respondentEmail, submittedAt)
 
       const responseId = insertedResponse.lastInsertRowid as number
 

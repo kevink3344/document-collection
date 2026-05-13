@@ -1136,7 +1136,7 @@ export default function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Seed Data</h2>
-                <p className="text-sm text-[#64748B] mt-1">Create up to 20 demo submissions at a time for an existing collection.</p>
+                <p className="text-sm text-[#64748B] mt-1">Create up to 20 demo submissions at a time with randomized submission dates from the last 30 days.</p>
               </div>
             </div>
             <div className="flex items-center gap-3 shrink-0">
