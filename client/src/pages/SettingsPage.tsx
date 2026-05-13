@@ -86,6 +86,10 @@ export default function SettingsPage() {
   const [notificationWindowSaving, setNotificationWindowSaving] = useState(false)
   const [notificationWindowError, setNotificationWindowError] = useState<string | null>(null)
   const [notificationWindowSaved, setNotificationWindowSaved] = useState(false)
+  const [qrCodeEnabled, setQrCodeEnabled] = useState(false)
+  const [qrCodeSaving, setQrCodeSaving] = useState(false)
+  const [qrCodeError, setQrCodeError] = useState<string | null>(null)
+  const [qrCodeSaved, setQrCodeSaved] = useState(false)
 
   useEffect(() => {
     getPublicSetting('login_subtitle')
@@ -106,6 +110,9 @@ export default function SettingsPage() {
         setLateDaysDraft(val)
       })
       .catch(() => {})
+    getPublicSetting('qr_code_enabled')
+      .then(val => setQrCodeEnabled(val === 'true'))
+      .catch(() => setQrCodeEnabled(false))
   }, [])
 
   useEffect(() => {
@@ -199,6 +206,22 @@ export default function SettingsPage() {
       setSeedError((err as Error).message)
     } finally {
       setSeedSaving(false)
+    }
+  }
+
+  async function handleQrCodeToggle(nextValue: boolean) {
+    setQrCodeEnabled(nextValue)
+    setQrCodeSaving(true)
+    setQrCodeError(null)
+    setQrCodeSaved(false)
+    try {
+      await updateSetting('qr_code_enabled', nextValue ? 'true' : 'false')
+      setQrCodeSaved(true)
+    } catch (err) {
+      setQrCodeEnabled(!nextValue)
+      setQrCodeError((err as Error).message)
+    } finally {
+      setQrCodeSaving(false)
     }
   }
 
@@ -470,6 +493,51 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <div className="w-full flex items-start justify-between gap-4 px-5 py-4 text-left">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Code2 size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">QR Code</h2>
+              <p className="text-sm text-[#64748B] mt-1">Show or hide the survey link QR code at the bottom of the public Instructions tab.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+          <label className="flex items-center justify-between gap-4 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Show QR code on survey instructions</p>
+              <p className="text-xs text-[#64748B] mt-1">Respondents can scan the QR code to open the same survey link on another device.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={qrCodeEnabled}
+              onChange={e => {
+                void handleQrCodeToggle(e.target.checked)
+              }}
+              disabled={qrCodeSaving}
+              className="h-4 w-4 accent-[#2563EB]"
+            />
+          </label>
+
+          {qrCodeError && (
+            <p className="text-sm text-red-500">{qrCodeError}</p>
+          )}
+
+          <div className="flex items-center gap-3">
+            {qrCodeSaving && (
+              <span className="text-sm text-[#64748B]">Saving…</span>
+            )}
+            {qrCodeSaved && (
+              <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* API Documentation */}

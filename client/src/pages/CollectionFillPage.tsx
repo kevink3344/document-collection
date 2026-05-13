@@ -3,10 +3,12 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
+import { getPublicSetting } from '../api/settings'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { sanitizeRichText } from '../utils/richText'
 import { useAuth } from '../contexts/AuthContext'
 import RichTextEditor from '../components/common/RichTextEditor'
+import QRCode from 'qrcode'
 import type { Collection, CollectionField } from '../types'
 
 // ── Style tokens ──────────────────────────────────────────────
@@ -861,6 +863,8 @@ export default function CollectionFillPage() {
   const [activeTab, setActiveTab] = useState<'instructions' | 'questions'>('questions')
   const [isReviewing, setIsReviewing] = useState(false)
   const [formStartedAt, setFormStartedAt] = useState(() => Date.now())
+  const [showQrCode, setShowQrCode] = useState(false)
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null)
 
   // Draft persistence
   const [showResumeBanner, setShowResumeBanner] = useState(false)
@@ -903,6 +907,31 @@ export default function CollectionFillPage() {
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
   }, [slug, isPreview])
+
+  useEffect(() => {
+    getPublicSetting('qr_code_enabled')
+      .then(value => setShowQrCode(value === 'true'))
+      .catch(() => setShowQrCode(false))
+  }, [])
+
+  useEffect(() => {
+    if (!showQrCode || !collection || !slug) {
+      setQrCodeDataUrl(null)
+      return
+    }
+
+    const surveyUrl = `${window.location.origin}/fill/${collection.slug}`
+    QRCode.toDataURL(surveyUrl, {
+      width: 132,
+      margin: 1,
+      color: {
+        dark: '#1E293B',
+        light: '#FFFFFF',
+      },
+    })
+      .then(setQrCodeDataUrl)
+      .catch(() => setQrCodeDataUrl(null))
+  }, [collection, showQrCode, slug])
 
   function setValue(fieldId: number, val: string) {
     setValues(prev => ({ ...prev, [fieldId]: val }))
@@ -1626,6 +1655,15 @@ export default function CollectionFillPage() {
                   View Questions
                 </button>
               </div>
+              {showQrCode && qrCodeDataUrl && (
+                <div className="pt-2 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Scan Survey QR Code</p>
+                  <div className="inline-flex flex-col items-center gap-2 rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-3">
+                    <img src={qrCodeDataUrl} alt="Survey QR code" className="h-[132px] w-[132px]" />
+                    <p className="text-xs text-[#64748B] text-center">Scan to open this survey link on another device.</p>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-5">
