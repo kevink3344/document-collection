@@ -9,6 +9,7 @@ import {
   Trash2,
   Eye,
   Copy,
+  X,
   Calendar,
   Tag,
   User,
@@ -287,6 +288,7 @@ export default function CollectionsPage() {
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
   const [activeCategoryTab, setActiveCategoryTab] = useState<string | null>(null)
+  const [templateLibraryOpen, setTemplateLibraryOpen] = useState(false)
   const latestOrderRef = useRef<string>('[]')
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: {
@@ -394,6 +396,10 @@ export default function CollectionsPage() {
     )
   }, [activeCategoryTab, collections])
 
+  const templateCollections = useMemo(() => {
+    return [...collections].sort((a, b) => a.title.localeCompare(b.title))
+  }, [collections])
+
   useEffect(() => {
     if (categoryTabs.length === 0) {
       setActiveCategoryTab(null)
@@ -442,6 +448,11 @@ export default function CollectionsPage() {
     }
   }
 
+  function handleUseTemplate(collectionId: number) {
+    setTemplateLibraryOpen(false)
+    navigate(`/collections/new?templateId=${collectionId}`)
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over || active.id === over.id || !activeCategoryTab) {
@@ -483,8 +494,99 @@ export default function CollectionsPage() {
 
   return (
     <div className="space-y-6">
+      {templateLibraryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setTemplateLibraryOpen(false)}
+            aria-label="Close template library"
+          />
+          <div className="relative w-full max-w-3xl max-h-[85vh] overflow-hidden rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] shadow-xl">
+            <div className="flex items-center justify-between gap-4 border-b border-[#E2E8F0] dark:border-[#334155] px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Survey Template Library</h2>
+                <p className="text-sm text-[#64748B] mt-1">Start a new survey using any existing collection as a template.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTemplateLibraryOpen(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded border border-[#E2E8F0] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]"
+                aria-label="Close template library"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(85vh-88px)] overflow-y-auto p-5">
+              {templateCollections.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[#CBD5E1] dark:border-[#334155] px-6 py-12 text-center">
+                  <ClipboardList size={34} className="mx-auto mb-3 text-[#CBD5E1]" />
+                  <p className="text-sm text-[#64748B]">No surveys are available yet to use as templates.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {templateCollections.map((collection) => (
+                    <div
+                      key={collection.id}
+                      className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-4 bg-[#F8FAFC] dark:bg-[#0F172A]/40"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] truncate">{collection.title}</h3>
+                            <span className={[
+                              'inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded',
+                              statusBadgeClass(collection.status),
+                            ].join(' ')}>
+                              {collection.status}
+                            </span>
+                            {collection.category && (
+                              <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-[2px] ${categoryBadge(collection.category)}`}>
+                                <Tag size={9} />
+                                {collection.category}
+                              </span>
+                            )}
+                          </div>
+                          {collection.description && (
+                            <p className="text-xs text-[#64748B] dark:text-[#94A3B8] line-clamp-2">
+                              {htmlToPlainText(collection.description)}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[#64748B]">
+                            {collection.createdByName && (
+                              <span className="flex items-center gap-1">
+                                <Users size={10} />
+                                {collection.createdByName}
+                              </span>
+                            )}
+                            <span className="flex items-center gap-1">
+                              <ClipboardList size={10} />
+                              {collection.responseCount ?? 0} response{collection.responseCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleUseTemplate(collection.id)}
+                          className="inline-flex items-center justify-center gap-1.5 rounded bg-[#2563EB] px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                        >
+                          <Copy size={14} />
+                          Use Template
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
             Collections
@@ -493,13 +595,23 @@ export default function CollectionsPage() {
             {visibleCollections.length} collection{visibleCollections.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
-          onClick={() => navigate('/collections/new')}
-          className="flex items-center gap-2 bg-[#2563EB] hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
-        >
-          <Plus size={15} />
-          New Collection
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setTemplateLibraryOpen(true)}
+            className="flex items-center gap-2 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] text-sm font-medium px-4 py-2 rounded transition-colors"
+          >
+            <Copy size={15} />
+            Template Library
+          </button>
+          <button
+            onClick={() => navigate('/collections/new')}
+            className="flex items-center gap-2 bg-[#2563EB] hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+          >
+            <Plus size={15} />
+            New Collection
+          </button>
+        </div>
       </div>
 
       {/* Empty state */}

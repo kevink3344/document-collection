@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
   ChevronUp,
@@ -71,19 +71,45 @@ function uid(): string {
   return Math.random().toString(36).slice(2)
 }
 
-function blankField(): BuilderField {
+function blankField(page = 1): BuilderField {
   return {
     _key: uid(),
     fieldKey: uid(),
     type: 'short_text',
     label: '',
-    page: 1,
+    page,
     required: false,
     options: [],
     displayStyle: 'radio',
     branchRules: [],
     tableColumns: [],
   }
+}
+
+function mapCollectionToBuilderFields(collection: Collection): BuilderField[] {
+  if (collection.fields.length === 0) {
+    return [blankField()]
+  }
+
+  return collection.fields.map(f => ({
+    _key: uid(),
+    fieldKey: f.fieldKey ?? uid(),
+    type: normalizeFieldType(f.type),
+    label: f.label,
+    page: f.page ?? 1,
+    required: f.required,
+    options: f.options ?? [],
+    displayStyle: resolveDisplayStyle(normalizeFieldType(f.type), f.displayStyle),
+    branchRules: f.branchRules ?? [],
+    tableColumns: (f.tableColumns ?? []).map(tc => ({
+      ...tc,
+      colType: normalizeColType(tc.colType),
+      listOptions:
+        tc.colType === 'list'
+          ? (tc.listOptions ?? []).map(opt => String(opt).trim()).filter(Boolean)
+          : null,
+    })),
+  }))
 }
 
 const FIELD_TYPE_LABELS: Record<FieldType, string> = {
@@ -139,8 +165,10 @@ const OTHER_OPTION_MARKER = '__DCP_OTHER_OPTION__'
 export default function CollectionBuilderPage() {
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const formId = useId()
   const isEdit = !!id
+  const templateId = !isEdit ? searchParams.get('templateId') : null
   const { showToast } = useToast()
 
   // Metadata
@@ -161,6 +189,7 @@ export default function CollectionBuilderPage() {
 
   // Fields
   const [fields, setFields] = useState<BuilderField[]>([blankField()])
+  const [activeBuilderPage, setActiveBuilderPage] = useState(1)
 
   // UI state
   const [saving, setSaving] = useState(false)
@@ -188,53 +217,81 @@ export default function CollectionBuilderPage() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [loadTick, setLoadTick] = useState(0)
 
+  const builderPages = useMemo(() => {
+    const pages = Array.from(
+      new Set(fields.map(field => Math.max(1, Math.floor(field.page || 1))))
+    ).sort((a, b) => a - b)
+
+    return pages.length > 0 ? pages : [1]
+  }, [fields])
+
+  const visibleFields = useMemo(
+    () => fields.filter(field => Math.max(1, Math.floor(field.page || 1)) === activeBuilderPage),
+    [activeBuilderPage, fields],
+  )
+
+  function applyCollectionToForm(col: Collection, options?: { asTemplate?: boolean }) {
+    const asTemplate = options?.asTemplate === true
+
+    setTitle(col.title)
+    setCollectionSlug(asTemplate ? null : col.slug)
+    setActiveVersionId(asTemplate ? null : col.activeVersionId ?? null)
+    setCurrentVersionNumber(asTemplate ? null : col.currentVersionNumber ?? null)
+    setDescription(col.description ? htmlToPlainText(col.description) : '')
+    setCategory(col.category ?? '')
+    setDateDue(asTemplate ? '' : col.dateDue ?? '')
+    setCoverPhotoUrl(col.coverPhotoUrl ?? '')
+    setLogoUrl(col.logoUrl ?? '')
+    setAnonymous(col.anonymous)
+    setAllowSubmissionEdits(col.allowSubmissionEdits)
+    setSubmissionEditWindowHours(String(col.submissionEditWindowHours ?? 24))
+    setStatus(asTemplate ? 'draft' : (col.status ?? 'draft'))
+    setInstructions(col.instructions ?? '')
+    setInstructionsDocUrl(col.instructionsDocUrl ?? '')
+    setFields(mapCollectionToBuilderFields(col))
+    setActiveBuilderPage(1)
+    setSaveError(null)
+  }
+
+  useEffect(() => {
+    setActiveBuilderPage(current => {
+      if (builderPages.includes(current)) {
+        return current
+      }
+
+      return builderPages[0]
+    })
+  }, [builderPages])
+
   // Load existing collection when editing
   useEffect(() => {
     if (!id) return
+    setLoadError(null)
     getCollection(parseInt(id, 10))
       .then(col => {
-        setTitle(col.title)
-        setCollectionSlug(col.slug)
-        setActiveVersionId(col.activeVersionId ?? null)
-        setCurrentVersionNumber(col.currentVersionNumber ?? null)
-        setDescription(col.description ? htmlToPlainText(col.description) : '')
-        setCategory(col.category ?? '')
-        setDateDue(col.dateDue ?? '')
-        setCoverPhotoUrl(col.coverPhotoUrl ?? '')
-        setLogoUrl(col.logoUrl ?? '')
-        setAnonymous(col.anonymous)
-        setAllowSubmissionEdits(col.allowSubmissionEdits)
-        setSubmissionEditWindowHours(String(col.submissionEditWindowHours ?? 24))
-        setStatus(col.status ?? 'draft')
-        setInstructions(col.instructions ?? '')
-        setInstructionsDocUrl(col.instructionsDocUrl ?? '')
-        setFields(
-          col.fields.length > 0
-            ? col.fields.map(f => ({
-                _key: uid(),
-                fieldKey: f.fieldKey ?? uid(),
-                type: normalizeFieldType(f.type),
-                label: f.label,
-                page: f.page ?? 1,
-                required: f.required,
-                options: f.options ?? [],
-                displayStyle: resolveDisplayStyle(normalizeFieldType(f.type), f.displayStyle),
-                branchRules: f.branchRules ?? [],
-                tableColumns: (f.tableColumns ?? []).map(tc => ({
-                  ...tc,
-                  colType: normalizeColType(tc.colType),
-                  listOptions:
-                    tc.colType === 'list'
-                      ? (tc.listOptions ?? []).map(opt => String(opt).trim()).filter(Boolean)
-                      : null,
-                })),
-              }))
-            : [blankField()]
-        )
+        applyCollectionToForm(col)
         setLoadTick(t => t + 1)
       })
       .catch(err => setLoadError((err as Error).message))
   }, [id, isEdit])
+
+  useEffect(() => {
+    if (isEdit || !templateId) return
+
+    const parsedId = Number(templateId)
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+      setLoadError('Template not found.')
+      return
+    }
+
+    setLoadError(null)
+    getCollection(parsedId)
+      .then(col => {
+        applyCollectionToForm(col, { asTemplate: true })
+        showToast(`Template loaded from "${col.title}"`, 'success')
+      })
+      .catch(err => setLoadError((err as Error).message))
+  }, [isEdit, showToast, templateId])
 
   useEffect(() => {
     listCategories()
@@ -396,11 +453,24 @@ export default function CollectionBuilderPage() {
 
   function moveField(key: string, dir: -1 | 1) {
     setFields(prev => {
-      const idx = prev.findIndex(f => f._key === key)
+      const currentField = prev.find(f => f._key === key)
+      if (!currentField) return prev
+
+      const samePageIndices = prev
+        .map((field, index) => ({ field, index }))
+        .filter(({ field }) => Math.max(1, Math.floor(field.page || 1)) === Math.max(1, Math.floor(currentField.page || 1)))
+
+      const pageIndex = samePageIndices.findIndex(({ field }) => field._key === key)
+      const targetPageIndex = pageIndex + dir
+
+      if (pageIndex === -1 || targetPageIndex < 0 || targetPageIndex >= samePageIndices.length) {
+        return prev
+      }
+
       const next = [...prev]
-      const target = idx + dir
-      if (target < 0 || target >= next.length) return prev
-      ;[next[idx], next[target]] = [next[target], next[idx]]
+      const sourceIndex = samePageIndices[pageIndex].index
+      const targetIndex = samePageIndices[targetPageIndex].index
+      ;[next[sourceIndex], next[targetIndex]] = [next[targetIndex], next[sourceIndex]]
       return next
     })
   }
@@ -728,7 +798,7 @@ export default function CollectionBuilderPage() {
               <ArrowLeft size={18} />
             </button>
             <h1 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
-              {isEdit ? 'Edit Collection' : 'New Collection'}
+              {isEdit ? 'Edit Collection' : templateId ? 'New Collection From Template' : 'New Collection'}
             </h1>
             <span
               className={[
@@ -1259,7 +1329,7 @@ export default function CollectionBuilderPage() {
                   <span className="text-[11px] text-[#94A3B8]">Save the collection to configure branching</span>
                 )}
                 <button
-                  onClick={() => setFields(prev => [...prev, blankField()])}
+                  onClick={() => setFields(prev => [...prev, blankField(activeBuilderPage)])}
                   className="flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
                 >
                   <Plus size={13} />
@@ -1268,13 +1338,31 @@ export default function CollectionBuilderPage() {
               </div>
             </div>
 
+            <div className="flex flex-wrap gap-2">
+              {builderPages.map(pageNumber => (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  onClick={() => setActiveBuilderPage(pageNumber)}
+                  className={[
+                    'px-3 py-2 text-sm font-semibold border-b-2 transition-colors rounded-t',
+                    activeBuilderPage === pageNumber
+                      ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-transparent text-[#64748B] hover:text-[#2563EB] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                  ].join(' ')}
+                >
+                  Page {pageNumber}
+                </button>
+              ))}
+            </div>
+
             <div className="space-y-3">
-              {fields.map((field, idx) => (
+              {visibleFields.map((field, idx) => (
                 <FieldCard
                   key={field._key}
                   field={field}
                   index={idx}
-                  total={fields.length}
+                  total={visibleFields.length}
                   onUpdate={patch => updateField(field._key, patch)}
                   onRemove={() => removeField(field._key)}
                   onMoveUp={() => moveField(field._key, -1)}
@@ -1291,7 +1379,7 @@ export default function CollectionBuilderPage() {
             </div>
 
             <button
-              onClick={() => setFields(prev => [...prev, blankField()])}
+              onClick={() => setFields(prev => [...prev, blankField(activeBuilderPage)])}
               className="w-full border-2 border-dashed border-[#E2E8F0] dark:border-[#334155] rounded-lg py-3 text-sm text-[#94A3B8] hover:border-[#2563EB] hover:text-[#2563EB] transition-colors flex items-center justify-center gap-2"
             >
               <Plus size={15} />
