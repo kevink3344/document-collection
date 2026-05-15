@@ -84,11 +84,12 @@ export async function getAiReportsSummary(
   days: ReportsDatePreset = 30,
   focus: AiFocusArea = 'general',
   collectionId?: number,
+  promptText?: string,
 ): Promise<AiSummaryResponse> {
   const res = await fetch('/api/stats/reports/summary-ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ days, focus, collectionId }),
+    body: JSON.stringify({ days, focus, collectionId, promptText }),
   })
   handleUnauthorizedResponse(res)
   if (res.status === 429) throw new Error('Rate limit reached. Please wait before generating another summary.')

@@ -271,6 +271,11 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
         ? Number(collectionIdRaw)
         : null
 
+  const promptTextRaw = req.body.promptText as unknown
+  const promptText = typeof promptTextRaw === 'string'
+    ? promptTextRaw.trim().slice(0, 4000)
+    : ''
+
   // ── Rate limit ───────────────────────────────────────────────
   if (userId !== undefined && !checkRateLimit(userId)) {
     res.status(429).json({ error: 'Rate limit exceeded. Please wait before generating another summary.' })
@@ -418,7 +423,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
 
     if (groqEnabled) {
       try {
-        const messages = buildReportsSummaryPrompt(reportData, days, focus)
+        const messages = buildReportsSummaryPrompt(reportData, days, focus, promptText)
         const result = await callGroq(messages, GROQ_MAX_TOKENS)
         const validated = validateSummaryResponse(result.content)
         if (validated) {

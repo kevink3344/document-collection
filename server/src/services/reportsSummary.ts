@@ -42,6 +42,8 @@ export interface ReportData {
 
 export type FocusArea = 'general' | 'trend' | 'categories' | 'collections' | 'users'
 
+export const DEFAULT_ADMIN_PROMPT_TEXT = 'Provide a concise executive-ready summary that highlights the most important patterns, risks, opportunities, and recommended next actions for administrators.'
+
 const FOCUS_INSTRUCTIONS: Record<FocusArea, string> = {
   general: 'Provide a balanced overview covering all dimensions of the data.',
   trend:
@@ -90,8 +92,10 @@ export function buildReportsSummaryPrompt(
   data: ReportData,
   days: number | null,
   focus: FocusArea,
+  promptText?: string,
 ): GroqMessage[] {
   const windowLabel = days ? `last ${days} days` : 'all time'
+  const effectivePrompt = promptText?.trim() || DEFAULT_ADMIN_PROMPT_TEXT
 
   const payload = {
     scope: data.scopeLabel ?? 'All surveys',
@@ -121,7 +125,7 @@ export function buildReportsSummaryPrompt(
     { role: 'system', content: SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `${FOCUS_INSTRUCTIONS[focus]}\n\nData:\n${JSON.stringify(payload, null, 2)}`,
+      content: `${FOCUS_INSTRUCTIONS[focus]}\n\nAdministrator instructions:\n${effectivePrompt}\n\nData:\n${JSON.stringify(payload, null, 2)}`,
     },
   ]
 }

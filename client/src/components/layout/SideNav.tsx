@@ -4,6 +4,7 @@ import {
   Database,
   FileText,
   BarChart3,
+  Sparkles,
   Settings,
   ClipboardCheck,
   X,
@@ -20,6 +21,7 @@ interface NavItem {
   icon: LucideIcon
   label: string
   to: string
+  roles?: Array<'administrator' | 'team_manager' | 'user'>
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -27,6 +29,7 @@ const NAV_ITEMS: NavItem[] = [
   { icon: Database,        label: 'Collections',     to: '/collections'      },
   { icon: FileText,        label: 'Records',         to: '/records'          },
   { icon: BarChart3,       label: 'Reports',         to: '/reports'          },
+  { icon: Sparkles,        label: 'AI Summary',      to: '/ai-summary',      roles: ['administrator'] },
   { icon: Settings,        label: 'Settings',        to: '/settings'         },
 ]
 
@@ -43,7 +46,7 @@ export default function SideNav({
   const visibleNavItems =
     user?.role === 'user'
       ? USER_NAV_ITEMS
-      : NAV_ITEMS
+      : NAV_ITEMS.filter(item => !item.roles || (user ? item.roles.includes(user.role) : false))
 
   return (
     <>
