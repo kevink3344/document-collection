@@ -6,8 +6,7 @@ import { getPublicSetting } from '../api/settings'
 import { getPublicSummaryStats, type PublicSummaryStats } from '../api/stats'
 import type { User, UserRole } from '../types'
 
-// Pre-seeded users matching server seed data
-const EXISTING_USERS: User[] = [
+const FALLBACK_USERS: User[] = [
   {
     id: 1,
     name: 'Jon Rivera',
@@ -59,8 +58,10 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const { signIn } = useAuth()
 
+  const [existingUsers, setExistingUsers] = useState<User[]>(FALLBACK_USERS)
+
   const [selectedUserId, setSelectedUserId] = useState<string>(
-    String(EXISTING_USERS[0].id)
+    String(FALLBACK_USERS[0].id)
   )
   const [signingIn, setSigningIn] = useState(false)
   const [loginMessage, setLoginMessage] = useState(
@@ -79,6 +80,26 @@ export default function LoginPage() {
     getPublicSummaryStats()
       .then(setPublicStats)
       .catch(() => { /* keep default counts */ })
+
+    fetch('/api/auth/users')
+      .then(async res => {
+        const data = await res.json() as User[] | { error?: string }
+        if (!res.ok || !Array.isArray(data)) {
+          throw new Error('Unable to load users')
+        }
+
+        setExistingUsers(data)
+        setSelectedUserId(currentUserId => {
+          if (data.some(user => String(user.id) === currentUserId)) {
+            return currentUserId
+          }
+
+          return data.length > 0 ? String(data[0].id) : ''
+        })
+      })
+      .catch(() => {
+        /* keep fallback users */
+      })
   }, [])
 
   const [regName, setRegName] = useState('')
@@ -89,6 +110,10 @@ export default function LoginPage() {
     setSigningIn(true)
     setError(null)
     try {
+      if (!selectedUserId) {
+        throw new Error('No user available to sign in')
+      }
+
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -174,10 +199,11 @@ export default function LoginPage() {
           <select
             value={selectedUserId}
             onChange={e => setSelectedUserId(e.target.value)}
+            disabled={existingUsers.length === 0}
             className={INPUT_CLASS + ' mb-3 appearance-none cursor-pointer'}
             style={{ backgroundImage: 'none' }}
           >
-            {EXISTING_USERS.map(u => (
+            {existingUsers.map(u => (
               <option key={u.id} value={String(u.id)}>
                 {u.name}, {u.organizationName ?? 'Unassigned'} ({ROLE_LABELS[u.role]})
               </option>
@@ -186,7 +212,7 @@ export default function LoginPage() {
 
           <button
             onClick={handleSelectSignIn}
-            disabled={signingIn}
+            disabled={signingIn || existingUsers.length === 0}
             className="w-full bg-[#1E293B] dark:bg-[#F1F5F9] text-white dark:text-[#0F172A] font-semibold py-2.5 text-sm tracking-wide rounded-[2px] hover:bg-[#0F172A] dark:hover:bg-white transition-colors disabled:opacity-50 mb-8"
           >
             {signingIn ? 'Signing in…' : 'Sign In as Selected User'}

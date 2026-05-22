@@ -44,6 +44,30 @@ function signUserToken(user: DbUser): string {
 
 /**
  * @swagger
+ * /api/auth/users:
+ *   get:
+ *     summary: List users available in the demo/prototype login selector
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: List of users
+ */
+router.get('/users', (_req: Request, res: Response) => {
+  const db = getDb()
+  const users = db
+    .prepare(
+      `SELECT u.*, o.name AS organization_name
+       FROM users u
+       LEFT JOIN organizations o ON o.id = u.organization_id
+       ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`
+    )
+    .all() as unknown as DbUser[]
+
+  res.json(users.map(toApiUser))
+})
+
+/**
+ * @swagger
  * /api/auth/login:
  *   post:
  *     summary: Sign in as an existing user (by userId — demo/prototype flow)
