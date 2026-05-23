@@ -153,6 +153,71 @@ export function createSchema(db: AppDatabase): void {
   `)
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_events (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+      type            TEXT    NOT NULL CHECK(type IN ('due_soon', 'overdue', 'system')),
+      title           TEXT    NOT NULL,
+      message         TEXT    NOT NULL,
+      collection_id   INTEGER REFERENCES collections(id) ON DELETE CASCADE,
+      collection_slug TEXT,
+      due_date        TEXT,
+      target_type     TEXT    CHECK(target_type IN ('collection', 'submission', 'user', 'organization', 'system')),
+      target_id       INTEGER,
+      action_url      TEXT,
+      priority        TEXT    NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high')),
+      metadata        TEXT,
+      dedupe_key      TEXT    UNIQUE,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_deliveries (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id          INTEGER NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
+      recipient_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      recipient_email   TEXT,
+      channel           TEXT    NOT NULL CHECK(channel IN ('in_app', 'email')),
+      recipient_role    TEXT    NOT NULL DEFAULT 'primary' CHECK(recipient_role IN ('primary', 'cc')),
+      status            TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'failed', 'read', 'dismissed')),
+      sent_at           TEXT,
+      read_at           TEXT,
+      failed_at         TEXT,
+      failure_reason    TEXT,
+      dedupe_key        TEXT    UNIQUE,
+      created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_preferences (
+      user_id              INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      in_app_enabled       INTEGER NOT NULL DEFAULT 1,
+      email_enabled        INTEGER NOT NULL DEFAULT 0,
+      due_soon             INTEGER NOT NULL DEFAULT 1,
+      overdue              INTEGER NOT NULL DEFAULT 1,
+      collection_updates   INTEGER NOT NULL DEFAULT 1,
+      submission_activity  INTEGER NOT NULL DEFAULT 1,
+      admin_events         INTEGER NOT NULL DEFAULT 1,
+      updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_email_ccs (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      cc_email           TEXT    NOT NULL,
+      notification_types TEXT,
+      is_active          INTEGER NOT NULL DEFAULT 1,
+      created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, cc_email)
+    );
+  `)
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS user_preferences (
       user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       key        TEXT    NOT NULL,

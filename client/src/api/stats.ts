@@ -50,8 +50,11 @@ export async function getStats(): Promise<DashboardStats> {
   return res.json() as Promise<DashboardStats>
 }
 
-export async function getPublicSummaryStats(): Promise<PublicSummaryStats> {
-  const res = await fetch('/api/stats/public-summary')
+export async function getPublicSummaryStats(organizationId?: number): Promise<PublicSummaryStats> {
+  const url = organizationId
+    ? `/api/stats/public-summary?organizationId=${organizationId}`
+    : '/api/stats/public-summary'
+  const res = await fetch(url)
   if (!res.ok) throw new Error('Failed to load public summary stats')
   return res.json() as Promise<PublicSummaryStats>
 }

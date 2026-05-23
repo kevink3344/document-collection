@@ -128,6 +128,14 @@ function ensureOrganization(database: AppDatabase, name: string, description?: s
   return Number(inserted.lastInsertRowid)
 }
 
+function tableExists(database: AppDatabase, tableName: string): boolean {
+  const row = database
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`)
+    .get(tableName)
+
+  return Boolean(row)
+}
+
 function normalizeSqlitePath(databaseUrl: string): string {
   return databaseUrl.replace(/^sqlite:\/\//, '').trim()
 }
@@ -619,5 +627,162 @@ function runMigrations(db: AppDatabase): void {
   if (!settingsExists) {
     db.exec(`CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
     console.log('[db] Migration: created app_settings table')
+  }
+
+  if (!tableExists(db, 'notification_events')) {
+    db.exec(`
+      CREATE TABLE notification_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+        type            TEXT    NOT NULL CHECK(type IN ('due_soon', 'overdue', 'system')),
+        title           TEXT    NOT NULL,
+        message         TEXT    NOT NULL,
+        collection_id   INTEGER REFERENCES collections(id) ON DELETE CASCADE,
+        collection_slug TEXT,
+        due_date        TEXT,
+        target_type     TEXT    CHECK(target_type IN ('collection', 'submission', 'user', 'organization', 'system')),
+        target_id       INTEGER,
+        action_url      TEXT,
+        priority        TEXT    NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high')),
+        metadata        TEXT,
+        dedupe_key      TEXT    UNIQUE,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+    console.log('[db] Migration: created notification_events table')
+  }
+
+  if (!tableExists(db, 'notification_deliveries')) {
+    db.exec(`
+      CREATE TABLE notification_deliveries (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id          INTEGER NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
+        recipient_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        recipient_email   TEXT,
+        channel           TEXT    NOT NULL CHECK(channel IN ('in_app', 'email')),
+        recipient_role    TEXT    NOT NULL DEFAULT 'primary' CHECK(recipient_role IN ('primary', 'cc')),
+        status            TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'failed', 'read', 'dismissed')),
+        sent_at           TEXT,
+        read_at           TEXT,
+        failed_at         TEXT,
+        failure_reason    TEXT,
+        dedupe_key        TEXT    UNIQUE,
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+    console.log('[db] Migration: created notification_deliveries table')
+  }
+
+  if (!tableExists(db, 'notification_preferences')) {
+    db.exec(`
+      CREATE TABLE notification_preferences (
+        user_id              INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        in_app_enabled       INTEGER NOT NULL DEFAULT 1,
+        email_enabled        INTEGER NOT NULL DEFAULT 0,
+        due_soon             INTEGER NOT NULL DEFAULT 1,
+        overdue              INTEGER NOT NULL DEFAULT 1,
+        collection_updates   INTEGER NOT NULL DEFAULT 1,
+        submission_activity  INTEGER NOT NULL DEFAULT 1,
+        admin_events         INTEGER NOT NULL DEFAULT 1,
+        updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+    console.log('[db] Migration: created notification_preferences table')
+  }
+
+  if (!tableExists(db, 'notification_email_ccs')) {
+    db.exec(`
+      CREATE TABLE notification_email_ccs (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        cc_email           TEXT    NOT NULL,
+        notification_types TEXT,
+        is_active          INTEGER NOT NULL DEFAULT 1,
+        created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, cc_email)
+      )
+    `)
+    console.log('[db] Migration: created notification_email_ccs table')
+  }
+
+  if (tableExists(db, 'notifications')) {
+    db.exec('BEGIN')
+    try {
+      const legacyNotifications = db
+        .prepare(`
+          SELECT n.id, n.user_id, n.collection_id, n.collection_slug, n.type, n.title, n.message,
+                 n.due_date, n.is_read, n.created_at, n.read_at, c.organization_id
+          FROM notifications n
+          LEFT JOIN collections c ON c.id = n.collection_id
+        `)
+        .all() as Array<{
+          id: number
+          user_id: number
+          collection_id: number
+          collection_slug: string
+          type: 'due_soon' | 'overdue'
+          title: string
+          message: string
+          due_date: string
+          is_read: number
+          created_at: string
+          read_at: string | null
+          organization_id: number | null
+        }>
+
+      for (const notification of legacyNotifications) {
+        const eventDedupeKey = `legacy:${notification.collection_id}:${notification.type}:${notification.due_date}`
+        let event = db
+          .prepare('SELECT id FROM notification_events WHERE dedupe_key = ?')
+          .get(eventDedupeKey) as unknown as { id: number } | undefined
+
+        if (!event) {
+          const insertedEvent = db
+            .prepare(
+              `INSERT INTO notification_events (
+                 organization_id, type, title, message, collection_id, collection_slug, due_date,
+                 target_type, target_id, action_url, priority, dedupe_key, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'collection', ?, ?, 'normal', ?, ?)`
+            )
+            .run(
+              notification.organization_id,
+              notification.type,
+              notification.title,
+              notification.message,
+              notification.collection_id,
+              notification.collection_slug,
+              notification.due_date,
+              notification.collection_id,
+              `/fill/${notification.collection_slug}`,
+              eventDedupeKey,
+              notification.created_at,
+            )
+
+          event = { id: Number(insertedEvent.lastInsertRowid) }
+        }
+
+        const deliveryDedupeKey = `legacy:${notification.id}:in_app`
+        db.prepare(
+          `INSERT OR IGNORE INTO notification_deliveries (
+             event_id, recipient_user_id, recipient_email, channel, recipient_role,
+             status, sent_at, read_at, dedupe_key, created_at
+           ) VALUES (?, ?, NULL, 'in_app', 'primary', ?, ?, ?, ?, ?)`
+        ).run(
+          event.id,
+          notification.user_id,
+          notification.is_read === 1 ? 'read' : 'sent',
+          notification.created_at,
+          notification.read_at,
+          deliveryDedupeKey,
+          notification.created_at,
+        )
+      }
+
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
   }
 }

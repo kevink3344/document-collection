@@ -16,22 +16,46 @@ const router = Router()
 /**
  * GET /api/stats/public-summary
  * Returns lightweight counts for the signed-out login screen.
+ * Accepts an optional ?organizationId= query parameter to scope counts to one org.
  */
-router.get('/public-summary', (_req: Request, res: Response): void => {
+router.get('/public-summary', (req: Request, res: Response): void => {
   try {
     const db = getDb()
+    const rawOrgId = req.query.organizationId
+    const orgId = rawOrgId && !isNaN(Number(rawOrgId)) ? Number(rawOrgId) : null
 
-    const { categoryCount } = db
-      .prepare(`SELECT COUNT(*) AS categoryCount FROM categories`)
-      .get() as { categoryCount: number }
+    const { categoryCount } = orgId
+      ? (db
+          .prepare(
+            `SELECT COUNT(DISTINCT category) AS categoryCount
+             FROM collections
+             WHERE organization_id = ? AND category IS NOT NULL`
+          )
+          .get(orgId) as { categoryCount: number })
+      : (db
+          .prepare(`SELECT COUNT(*) AS categoryCount FROM categories`)
+          .get() as { categoryCount: number })
 
-    const { collectionCount } = db
-      .prepare(`SELECT COUNT(*) AS collectionCount FROM collections`)
-      .get() as { collectionCount: number }
+    const { collectionCount } = orgId
+      ? (db
+          .prepare(`SELECT COUNT(*) AS collectionCount FROM collections WHERE organization_id = ?`)
+          .get(orgId) as { collectionCount: number })
+      : (db
+          .prepare(`SELECT COUNT(*) AS collectionCount FROM collections`)
+          .get() as { collectionCount: number })
 
-    const { submissionCount } = db
-      .prepare(`SELECT COUNT(*) AS submissionCount FROM collection_responses`)
-      .get() as { submissionCount: number }
+    const { submissionCount } = orgId
+      ? (db
+          .prepare(
+            `SELECT COUNT(*) AS submissionCount
+             FROM collection_responses cr
+             JOIN collections c ON c.id = cr.collection_id
+             WHERE c.organization_id = ?`
+          )
+          .get(orgId) as { submissionCount: number })
+      : (db
+          .prepare(`SELECT COUNT(*) AS submissionCount FROM collection_responses`)
+          .get() as { submissionCount: number })
 
     res.json({
       categoryCount,

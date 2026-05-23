@@ -13,6 +13,7 @@ interface DbUser {
   organization: string | null
   organization_id: number | null
   organization_name?: string | null
+  organization_description?: string | null
   created_at: string
 }
 
@@ -24,6 +25,7 @@ function toApiUser(u: DbUser) {
     role: u.role,
     organizationId: u.organization_id,
     organizationName: u.organization_name ?? u.organization,
+    organizationDescription: u.organization_description ?? null,
     ...(u.organization ? { organization: u.organization } : {}),
     createdAt: u.created_at,
   }
@@ -56,7 +58,7 @@ router.get('/users', (_req: Request, res: Response) => {
   const db = getDb()
   const users = db
     .prepare(
-      `SELECT u.*, o.name AS organization_name
+      `SELECT u.*, o.name AS organization_name, o.description AS organization_description
        FROM users u
        LEFT JOIN organizations o ON o.id = u.organization_id
        ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`

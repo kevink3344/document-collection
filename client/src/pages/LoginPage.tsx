@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
@@ -60,6 +60,32 @@ export default function LoginPage() {
 
   const [existingUsers, setExistingUsers] = useState<User[]>(FALLBACK_USERS)
 
+  // Derive unique orgs from the loaded users list
+  const organizations = useMemo(() => {
+    const seen = new Map<number, { name: string; description: string | null | undefined }>()
+    for (const u of existingUsers) {
+      if (u.organizationId != null && !seen.has(u.organizationId)) {
+        seen.set(u.organizationId, {
+          name: u.organizationName ?? `Org ${u.organizationId}`,
+          description: u.organizationDescription,
+        })
+      }
+    }
+    return Array.from(seen.entries()).map(([id, { name, description }]) => ({ id, name, description }))
+  }, [existingUsers])
+
+  const [selectedOrgId, setSelectedOrgId] = useState<number | null>(
+    FALLBACK_USERS[0].organizationId ?? null
+  )
+
+  const filteredUsers = useMemo(
+    () =>
+      selectedOrgId == null
+        ? existingUsers
+        : existingUsers.filter(u => u.organizationId === selectedOrgId),
+    [existingUsers, selectedOrgId]
+  )
+
   const [selectedUserId, setSelectedUserId] = useState<string>(
     String(FALLBACK_USERS[0].id)
   )
@@ -70,6 +96,19 @@ export default function LoginPage() {
   const [loginSubtitle, setLoginSubtitle] = useState('Enterprise Staff Support')
   const [publicStats, setPublicStats] = useState<PublicSummaryStats>(DEFAULT_PUBLIC_STATS)
 
+  // When org changes, reset user selection to first user in that org
+  useEffect(() => {
+    const first = filteredUsers[0]
+    setSelectedUserId(first ? String(first.id) : '')
+  }, [selectedOrgId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch stats whenever the selected org changes
+  useEffect(() => {
+    getPublicSummaryStats(selectedOrgId ?? undefined)
+      .then(setPublicStats)
+      .catch(() => { /* keep default counts */ })
+  }, [selectedOrgId])
+
   useEffect(() => {
     getPublicSetting('login_message')
       .then(setLoginMessage)
@@ -77,9 +116,6 @@ export default function LoginPage() {
     getPublicSetting('login_subtitle')
       .then(setLoginSubtitle)
       .catch(() => { /* keep default */ })
-    getPublicSummaryStats()
-      .then(setPublicStats)
-      .catch(() => { /* keep default counts */ })
 
     fetch('/api/auth/users')
       .then(async res => {
@@ -89,6 +125,12 @@ export default function LoginPage() {
         }
 
         setExistingUsers(data)
+        setSelectedOrgId(orgId => {
+          // Keep current org if it still exists in the new data, else pick first
+          const firstOrgId = data.find(u => u.organizationId != null)?.organizationId ?? null
+          if (orgId != null && data.some(u => u.organizationId === orgId)) return orgId
+          return firstOrgId
+        })
         setSelectedUserId(currentUserId => {
           if (data.some(user => String(user.id) === currentUserId)) {
             return currentUserId
@@ -196,16 +238,37 @@ export default function LoginPage() {
             Pick a profile to continue, or create a new user account below.
           </p>
 
+          {/* Organization dropdown */}
+          <label className="block text-[10px] font-semibold tracking-[0.18em] text-[#64748B] dark:text-[#475569] uppercase mb-1.5">
+            Organization
+          </label>
+          <select
+            value={selectedOrgId ?? ''}
+            onChange={e => setSelectedOrgId(e.target.value ? Number(e.target.value) : null)}
+            className={INPUT_CLASS + ' mb-4 appearance-none cursor-pointer'}
+            style={{ backgroundImage: 'none' }}
+          >
+            {organizations.map(org => (
+              <option key={org.id} value={org.id}>
+                {org.description ? `${org.description} (${org.name})` : org.name}
+              </option>
+            ))}
+          </select>
+
+          {/* User dropdown — filtered by selected org */}
+          <label className="block text-[10px] font-semibold tracking-[0.18em] text-[#64748B] dark:text-[#475569] uppercase mb-1.5">
+            User
+          </label>
           <select
             value={selectedUserId}
             onChange={e => setSelectedUserId(e.target.value)}
-            disabled={existingUsers.length === 0}
+            disabled={filteredUsers.length === 0}
             className={INPUT_CLASS + ' mb-3 appearance-none cursor-pointer'}
             style={{ backgroundImage: 'none' }}
           >
-            {existingUsers.map(u => (
+            {filteredUsers.map(u => (
               <option key={u.id} value={String(u.id)}>
-                {u.name}, {u.organizationName ?? 'Unassigned'} ({ROLE_LABELS[u.role]})
+                {u.name} ({ROLE_LABELS[u.role]})
               </option>
             ))}
           </select>

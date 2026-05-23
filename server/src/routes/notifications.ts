@@ -1,39 +1,51 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator } from '../middleware/organizationAccess'
-import { generateDueDateNotifications } from '../services/notifications'
+import {
+  addNotificationEmailCc,
+  deleteNotificationEmailCc,
+  generateDueDateNotifications,
+  getNotificationPreferences,
+  getUnreadInAppNotificationCount,
+  listInAppNotificationsForUser,
+  listNotificationEmailCcs,
+  markAllInAppNotificationsRead,
+  markInAppNotificationRead,
+  updateNotificationPreferences,
+  type NotificationPreferences,
+  type NotificationType,
+} from '../services/notifications'
 
 const router = Router()
 
-interface DbNotification {
-  id: number
-  user_id: number
-  collection_id: number
-  collection_slug: string
-  type: 'due_soon' | 'overdue'
-  title: string
-  message: string
-  due_date: string
-  is_read: number
-  created_at: string
-  read_at: string | null
-}
-
-function toApiNotification(n: DbNotification) {
-  return {
-    id: n.id,
-    userId: n.user_id,
-    collectionId: n.collection_id,
-    collectionSlug: n.collection_slug,
-    type: n.type,
-    title: n.title,
-    message: n.message,
-    dueDate: n.due_date,
-    isRead: n.is_read === 1,
-    createdAt: n.created_at,
-    readAt: n.read_at,
+function parsePreferenceUpdates(body: unknown): Partial<NotificationPreferences> | null {
+  if (!body || typeof body !== 'object') {
+    return null
   }
+
+  const payload = body as Record<string, unknown>
+  const updates: Partial<NotificationPreferences> = {}
+  const boolKeys: Array<keyof NotificationPreferences> = [
+    'inAppEnabled',
+    'emailEnabled',
+    'dueSoon',
+    'overdue',
+    'collectionUpdates',
+    'submissionActivity',
+    'adminEvents',
+  ]
+
+  for (const key of boolKeys) {
+    if (key in payload) {
+      if (typeof payload[key] !== 'boolean') {
+        return null
+      }
+
+      updates[key] = payload[key] as boolean
+    }
+  }
+
+  return updates
 }
 
 /**
@@ -64,30 +76,7 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
   }
 
   generateDueDateNotifications()
-
-  const db = getDb()
-  const params: Array<number> = [context.id]
-  const scopeClause = !isAdministrator(context) && context.organizationId
-    ? 'AND c.organization_id = ?'
-    : !isAdministrator(context)
-      ? 'AND 1 = 0'
-      : ''
-  if (scopeClause.includes('?')) {
-    params.push(context.organizationId!)
-  }
-  const rows = db
-    .prepare(
-      `SELECT n.*
-       FROM notifications n
-       JOIN collections c ON c.id = n.collection_id
-       WHERE n.user_id = ?
-       ${scopeClause}
-       ORDER BY is_read ASC, created_at DESC
-       LIMIT 100`
-    )
-    .all(...params) as unknown as DbNotification[]
-
-  res.json(rows.map(toApiNotification))
+  res.json(listInAppNotificationsForUser(context.id, context.organizationId, isAdministrator(context)))
 })
 
 /**
@@ -120,27 +109,7 @@ router.get('/unread-count', authenticateToken, (req: Request, res: Response) => 
   }
 
   generateDueDateNotifications()
-
-  const db = getDb()
-  const params: Array<number> = [context.id]
-  const scopeClause = !isAdministrator(context) && context.organizationId
-    ? 'AND c.organization_id = ?'
-    : !isAdministrator(context)
-      ? 'AND 1 = 0'
-      : ''
-  if (scopeClause.includes('?')) {
-    params.push(context.organizationId!)
-  }
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS count
-       FROM notifications n
-       JOIN collections c ON c.id = n.collection_id
-       WHERE n.user_id = ? AND n.is_read = 0 ${scopeClause}`
-    )
-    .get(...params) as unknown as { count: number }
-
-  res.json({ count: row.count })
+  res.json({ count: getUnreadInAppNotificationCount(context.id, context.organizationId, isAdministrator(context)) })
 })
 
 /**
@@ -182,33 +151,13 @@ router.patch('/:id/read', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare(
-      `SELECT n.*
-       FROM notifications n
-       JOIN collections c ON c.id = n.collection_id
-       WHERE n.id = ? AND n.user_id = ? ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}`
-    )
-    .get(...(!isAdministrator(context) && context.organizationId ? [id, context.id, context.organizationId] : [id, context.id])) as unknown as DbNotification | undefined
-
-  if (!existing) {
+  const updated = markInAppNotificationRead(id, context.id, context.organizationId, isAdministrator(context))
+  if (!updated) {
     res.status(404).json({ error: 'Notification not found' })
     return
   }
 
-  db.prepare(
-    `UPDATE notifications
-     SET is_read = 1,
-         read_at = COALESCE(read_at, datetime('now'))
-     WHERE id = ? AND user_id = ?`
-  ).run(id, context.id)
-
-  const updated = db
-    .prepare('SELECT * FROM notifications WHERE id = ? AND user_id = ?')
-    .get(id, context.id) as unknown as DbNotification
-
-  res.json(toApiNotification(updated))
+  res.json(updated)
 })
 
 /**
@@ -240,32 +189,171 @@ router.patch('/read-all', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const ids = db
-    .prepare(
-      `SELECT n.id
-       FROM notifications n
-       JOIN collections c ON c.id = n.collection_id
-       WHERE n.user_id = ? AND n.is_read = 0 ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}`
-    )
-    .all(...(!isAdministrator(context) && context.organizationId ? [context.id, context.organizationId] : [context.id])) as Array<{ id: number }>
+  res.json({ updated: markAllInAppNotificationsRead(context.id, context.organizationId, isAdministrator(context)) })
+})
 
-  if (ids.length === 0) {
-    res.json({ updated: 0 })
+/**
+ * @swagger
+ * /api/notifications/preferences:
+ *   get:
+ *     summary: Get notification preferences for the authenticated user
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Notification preferences
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/NotificationPreferences'
+ */
+router.get('/preferences', authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.sub
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const placeholders = ids.map(() => '?').join(',')
-  const result = db
-    .prepare(
-      `UPDATE notifications
-       SET is_read = 1,
-           read_at = COALESCE(read_at, datetime('now'))
-       WHERE id IN (${placeholders})`
-    )
-    .run(...ids.map((row) => row.id))
+  res.json(getNotificationPreferences(userId))
+})
 
-  res.json({ updated: Number(result.changes ?? 0) })
+/**
+ * @swagger
+ * /api/notifications/preferences:
+ *   put:
+ *     summary: Update notification preferences for the authenticated user
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/NotificationPreferences'
+ *     responses:
+ *       200:
+ *         description: Updated notification preferences
+ */
+router.put('/preferences', authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.sub
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+
+  const updates = parsePreferenceUpdates(req.body)
+  if (!updates || Object.keys(updates).length === 0) {
+    res.status(400).json({ error: 'At least one boolean preference is required' })
+    return
+  }
+
+  res.json(updateNotificationPreferences(userId, updates))
+})
+
+/**
+ * @swagger
+ * /api/notifications/email-ccs:
+ *   get:
+ *     summary: List configured email CC recipients for the authenticated user
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Email CC recipients
+ */
+router.get('/email-ccs', authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.sub
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+
+  res.json(listNotificationEmailCcs(userId))
+})
+
+/**
+ * @swagger
+ * /api/notifications/email-ccs:
+ *   post:
+ *     summary: Add or update an email CC recipient for the authenticated user
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/NotificationEmailCcInput'
+ *     responses:
+ *       200:
+ *         description: Stored email CC recipient
+ */
+router.post('/email-ccs', authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.sub
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+
+  const { email, notificationTypes } = req.body as {
+    email?: unknown
+    notificationTypes?: unknown
+  }
+
+  if (typeof email !== 'string' || !email.trim()) {
+    res.status(400).json({ error: 'email is required' })
+    return
+  }
+
+  if (
+    notificationTypes !== undefined
+    && notificationTypes !== null
+    && (!Array.isArray(notificationTypes)
+      || notificationTypes.some((value) => value !== 'due_soon' && value !== 'overdue' && value !== 'system'))
+  ) {
+    res.status(400).json({ error: 'notificationTypes must be an array of supported notification types' })
+    return
+  }
+
+  try {
+    res.json(addNotificationEmailCc(userId, email, (notificationTypes ?? null) as NotificationType[] | null))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Unable to save email CC recipient' })
+  }
+})
+
+/**
+ * @swagger
+ * /api/notifications/email-ccs/{id}:
+ *   delete:
+ *     summary: Delete an email CC recipient for the authenticated user
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.delete('/email-ccs/:id', authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.sub
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+
+  const id = parseInt(req.params.id, 10)
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: 'Invalid email CC ID' })
+    return
+  }
+
+  if (!deleteNotificationEmailCc(userId, id)) {
+    res.status(404).json({ error: 'Email CC recipient not found' })
+    return
+  }
+
+  res.json({ deleted: true })
 })
 
 export default router

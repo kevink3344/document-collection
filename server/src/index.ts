@@ -16,7 +16,7 @@ import notificationsRouter from './routes/notifications'
 import statsRouter from './routes/stats'
 import mySubmissionsRouter from './routes/my-submissions'
 import healthRouter from './routes/health'
-import { generateDueDateNotifications } from './services/notifications'
+import { dispatchPendingEmailNotifications, generateDueDateNotifications } from './services/notifications'
 
 const app = express()
 const PORT = process.env.PORT ?? 4000
@@ -56,8 +56,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 // ── Database ─────────────────────────────────────────────────
 setupDatabase()
 generateDueDateNotifications()
+dispatchPendingEmailNotifications()
 setInterval(() => {
   generateDueDateNotifications()
+  dispatchPendingEmailNotifications()
 }, NOTIFICATION_SWEEP_INTERVAL_MS)
 
 // ── Swagger ──────────────────────────────────────────────────

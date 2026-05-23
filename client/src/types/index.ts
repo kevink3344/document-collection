@@ -7,6 +7,7 @@ export interface User {
   role: UserRole
   organizationId: number | null
   organizationName: string | null
+  organizationDescription?: string | null
   organization?: string
   createdAt: string
 }
@@ -130,14 +131,19 @@ export interface Category {
 
 export interface AppNotification {
   id: number
-  userId: number
-  collectionId: number
-  collectionSlug: string
-  type: 'due_soon' | 'overdue'
+  deliveryId: number
+  eventId: number
+  userId: number | null
+  collectionId: number | null
+  collectionSlug: string | null
+  type: 'due_soon' | 'overdue' | 'system'
   title: string
   message: string
-  dueDate: string
+  dueDate: string | null
   isRead: boolean
   createdAt: string
   readAt: string | null
+  actionUrl: string | null
+  channel: 'in_app' | 'email'
+  recipientRole: 'primary' | 'cc'
 }

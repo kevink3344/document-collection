@@ -66,6 +66,16 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
   }
 
   function openNotificationTarget(n: AppNotification) {
+    if (n.actionUrl) {
+      navigate(n.actionUrl)
+      return
+    }
+
+    if (!n.collectionId || !n.collectionSlug) {
+      navigate('/notifications')
+      return
+    }
+
     if (user?.role === 'user') {
       navigate(`/fill/${n.collectionSlug}`)
       return
@@ -124,8 +134,8 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
       {/* Right: Icon actions */}
       <div className="flex items-center gap-0.5">
 
-        {/* Notifications — visible to regular users only */}
-        {user?.role === 'user' && <div className="relative" ref={notificationsRef}>
+        {/* Notifications */}
+        {user && <div className="relative" ref={notificationsRef}>
           <button
             className={`${NAV_BTN} relative`}
             title="Notifications"

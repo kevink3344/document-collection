@@ -37,6 +37,15 @@ export default function NotificationsPage() {
   const unreadCount = items.filter(n => !n.isRead).length
 
   function openTarget(notification: AppNotification) {
+    if (notification.actionUrl) {
+      navigate(notification.actionUrl)
+      return
+    }
+
+    if (!notification.collectionId || !notification.collectionSlug) {
+      return
+    }
+
     if (user?.role === 'user') {
       navigate(`/fill/${notification.collectionSlug}`)
       return
@@ -106,7 +115,9 @@ export default function NotificationsPage() {
                   <div>
                   <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{item.title}</p>
                   <p className="text-sm text-[#475569] dark:text-[#94A3B8] mt-1">{item.message}</p>
-                  <p className="text-xs text-[#64748B] mt-1">Due: {item.dueDate}</p>
+                  {item.dueDate && (
+                    <p className="text-xs text-[#64748B] mt-1">Due: {item.dueDate}</p>
+                  )}
                   <p className="text-xs text-[#94A3B8] mt-0.5">{timeAgo(item.createdAt)}</p>
                   </div>
                 </div>

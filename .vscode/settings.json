@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^git add -A ; git commit -m \"Separated Organization and User for login\" ; git push origin main$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
