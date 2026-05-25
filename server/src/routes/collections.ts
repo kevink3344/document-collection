@@ -933,9 +933,10 @@ router.get('/public/:slug', (req: Request, res: Response) => {
 router.post('/public/:slug/responses', (req: Request, res: Response) => {
   const db = getDb()
   const col = db
-    .prepare('SELECT id, anonymous, status, active_version_id, allow_submission_edits, submission_edit_window_hours FROM collections WHERE slug = ?')
+    .prepare('SELECT id, title, anonymous, status, active_version_id, allow_submission_edits, submission_edit_window_hours FROM collections WHERE slug = ?')
     .get(req.params.slug) as unknown as {
       id: number
+      title: string
       anonymous: number
       status: 'draft' | 'published'
       active_version_id: number | null
