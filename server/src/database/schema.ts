@@ -19,7 +19,7 @@ export function createSchema(db: AppDatabase): void {
       name         TEXT    NOT NULL,
       email        TEXT    UNIQUE NOT NULL,
       role         TEXT    NOT NULL DEFAULT 'user'
-                           CHECK(role IN ('administrator', 'team_manager', 'user')),
+                           CHECK(role IN ('super_admin', 'administrator', 'team_manager', 'user')),
       organization TEXT,
       organization_id INTEGER REFERENCES organizations(id),
       created_at   TEXT    NOT NULL DEFAULT (datetime('now'))

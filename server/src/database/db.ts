@@ -845,6 +845,42 @@ function runMigrations(db: AppDatabase): void {
     console.log(`[db] Seeded default "General" category for organization ${org.id}`)
   }
 
+  // ── Rebuild users table if CHECK constraint is missing super_admin ──────────
+  const usersSchema = (
+    db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='users'`)
+      .get() as unknown as { sql: string } | undefined
+  )?.sql ?? ''
+  if (!usersSchema.includes('super_admin')) {
+    db.exec('PRAGMA foreign_keys = OFF')
+    db.exec('PRAGMA legacy_alter_table = ON')
+    db.exec('BEGIN')
+    try {
+      db.exec('ALTER TABLE users RENAME TO users_old')
+      db.exec(`
+        CREATE TABLE users (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          name             TEXT    NOT NULL,
+          email            TEXT    NOT NULL UNIQUE,
+          role             TEXT    NOT NULL DEFAULT 'user'
+                                   CHECK(role IN ('super_admin', 'administrator', 'team_manager', 'user')),
+          organization     TEXT,
+          created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+          organization_id  INTEGER REFERENCES organizations(id)
+        )
+      `)
+      db.exec(`INSERT INTO users SELECT id, name, email, role, organization, created_at, organization_id FROM users_old`)
+      db.exec('DROP TABLE users_old')
+      db.exec('COMMIT')
+      console.log('[db] Migration: rebuilt users table to add super_admin to role CHECK constraint')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    } finally {
+      db.exec('PRAGMA legacy_alter_table = OFF')
+      db.exec('PRAGMA foreign_keys = ON')
+    }
+  }
+
   // ── Promote null-org administrators to super_admin ──────────────────────────
   const promoted = db
     .prepare(`UPDATE users SET role = 'super_admin' WHERE role = 'administrator' AND organization_id IS NULL`)
