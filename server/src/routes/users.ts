@@ -284,7 +284,7 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
 
   const organization = db
     .prepare('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1')
-    .get(resolvedOrgId) as unknown as { id: number; name: string } | undefined
+    .get(organizationId) as unknown as { id: number; name: string } | undefined
 
   if (!organization) {
     res.status(400).json({ error: 'Selected organization does not exist' })
