@@ -272,7 +272,7 @@ function getPreviewUserContext(req: Request): RequestUserContext | null {
 
     req.user = {
       sub: payload.sub,
-      role: (payload as { role?: 'administrator' | 'team_manager' | 'user' }).role ?? 'user',
+      role: (payload as { role?: 'super_admin' | 'administrator' | 'team_manager' | 'user' }).role ?? 'user',
       organizationId: (payload as { organizationId?: number | null }).organizationId,
       organizationName: (payload as { organizationName?: string | null }).organizationName,
     }

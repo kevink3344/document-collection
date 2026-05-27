@@ -9,7 +9,6 @@ export default function DashboardPage() {
   const dashboardTitle = user?.organizationName ? `${user.organizationName} Dashboard` : 'Dashboard'
   const isPrivileged = user?.role === 'administrator' || user?.role === 'team_manager'
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [kpiStats, setKpiStats] = useState<DashboardStats | null>(null)
   const [trendData, setTrendData] = useState<TrendData | null>(null)
 
@@ -28,14 +27,6 @@ export default function DashboardPage() {
     return (
       <div className="flex items-center justify-center h-40 text-[#64748B]">
         Loading…
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-4 text-red-700 dark:text-red-400 text-sm">
-        {error}
       </div>
     )
   }

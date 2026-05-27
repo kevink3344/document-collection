@@ -4,7 +4,7 @@ export interface AppUser {
   id: number
   name: string
   email: string
-  role: 'administrator' | 'team_manager' | 'user'
+  role: 'super_admin' | 'administrator' | 'team_manager' | 'user'
   organizationId: number | null
   organizationName: string | null
   organization?: string
@@ -28,7 +28,7 @@ export async function listUsers(): Promise<AppUser[]> {
 export async function createUser(payload: {
   name: string
   email: string
-  role?: 'administrator' | 'team_manager' | 'user'
+  role?: 'super_admin' | 'administrator' | 'team_manager' | 'user'
   organizationId: number
 }): Promise<AppUser> {
   const res = await fetch('/api/users', {
@@ -44,7 +44,7 @@ export async function updateUser(
   payload: {
     name: string
     email: string
-    role: 'administrator' | 'team_manager' | 'user'
+    role: 'super_admin' | 'administrator' | 'team_manager' | 'user'
     organizationId: number
   }
 ): Promise<AppUser> {

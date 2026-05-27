@@ -9,7 +9,7 @@ interface DbUser {
   id: number
   name: string
   email: string
-  role: 'administrator' | 'team_manager' | 'user'
+  role: 'super_admin' | 'administrator' | 'team_manager' | 'user'
   organization: string | null
   organization_id: number | null
   organization_name?: string | null

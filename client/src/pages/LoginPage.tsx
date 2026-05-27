@@ -14,6 +14,7 @@ const FALLBACK_USERS: User[] = [
     role: 'administrator',
     organizationId: 1,
     organizationName: 'TSD',
+    organizationSlug: 'tsd',
     createdAt: '',
   },
   {
@@ -23,6 +24,7 @@ const FALLBACK_USERS: User[] = [
     role: 'team_manager',
     organizationId: 1,
     organizationName: 'TSD',
+    organizationSlug: 'tsd',
     createdAt: '',
   },
   {
@@ -32,6 +34,7 @@ const FALLBACK_USERS: User[] = [
     role: 'user',
     organizationId: 1,
     organizationName: 'TSD',
+    organizationSlug: 'tsd',
     createdAt: '',
   },
 ]
