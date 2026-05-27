@@ -85,7 +85,7 @@ export default function SubmissionTrendChart({ data }: Props) {
                 backgroundColor: 'white',
                 color: '#1E293B',
               }}
-              labelFormatter={(label: string) => `Date: ${label}`}
+              labelFormatter={(label: unknown) => `Date: ${String(label)}`}
             />
             <Legend
               wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
