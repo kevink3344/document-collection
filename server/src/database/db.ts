@@ -20,28 +20,25 @@ function hasForeignKeyTarget(database: AppDatabase, tableName: string, targetTab
 
 function rebuildCollectionResponseValues(database: AppDatabase): void {
   database.exec('PRAGMA foreign_keys = OFF')
-  database.exec('BEGIN')
   try {
-    database.exec('ALTER TABLE collection_response_values RENAME TO collection_response_values_old')
-    database.exec(`
-      CREATE TABLE collection_response_values (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        response_id INTEGER NOT NULL REFERENCES collection_responses(id) ON DELETE CASCADE,
-        field_id    INTEGER NOT NULL REFERENCES collection_fields(id),
-        value       TEXT
-      )
-    `)
-    database.exec(`
-      INSERT INTO collection_response_values (id, response_id, field_id, value)
-      SELECT id, response_id, field_id, value
-      FROM collection_response_values_old
-    `)
-    database.exec('DROP TABLE collection_response_values_old')
-    database.exec('COMMIT')
+    database.transaction(() => {
+      database.prepare('ALTER TABLE collection_response_values RENAME TO collection_response_values_old').run()
+      database.prepare(`
+        CREATE TABLE collection_response_values (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          response_id INTEGER NOT NULL REFERENCES collection_responses(id) ON DELETE CASCADE,
+          field_id    INTEGER NOT NULL REFERENCES collection_fields(id),
+          value       TEXT
+        )
+      `).run()
+      database.prepare(`
+        INSERT INTO collection_response_values (id, response_id, field_id, value)
+        SELECT id, response_id, field_id, value
+        FROM collection_response_values_old
+      `).run()
+      database.prepare('DROP TABLE collection_response_values_old').run()
+    })()
     console.log('[db] Migration: rebuilt collection_response_values to refresh collection_fields foreign key')
-  } catch (err) {
-    database.exec('ROLLBACK')
-    throw err
   } finally {
     database.exec('PRAGMA foreign_keys = ON')
   }
@@ -49,40 +46,37 @@ function rebuildCollectionResponseValues(database: AppDatabase): void {
 
 function rebuildCollectionTableColumns(database: AppDatabase, preserveListOptions: boolean): void {
   database.exec('PRAGMA foreign_keys = OFF')
-  database.exec('BEGIN')
   try {
-    database.exec('ALTER TABLE collection_table_columns RENAME TO collection_table_columns_old')
-    database.exec(`
-      CREATE TABLE collection_table_columns (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        field_id     INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
-        name         TEXT    NOT NULL,
-        col_type     TEXT    NOT NULL DEFAULT 'text'
-                             CHECK(col_type IN ('text','number','date','checkbox','list')),
-        list_options TEXT,
-        sort_order   INTEGER NOT NULL DEFAULT 0
-      )
-    `)
-    database.exec(`
-      INSERT INTO collection_table_columns (id, field_id, name, col_type, list_options, sort_order)
-      SELECT
-        id,
-        field_id,
-        name,
-        CASE
-          WHEN col_type IN ('text','number','date','checkbox','list') THEN col_type
-          ELSE 'text'
-        END,
-        ${preserveListOptions ? 'list_options' : 'NULL'},
-        sort_order
-      FROM collection_table_columns_old
-    `)
-    database.exec('DROP TABLE collection_table_columns_old')
-    database.exec('COMMIT')
+    database.transaction(() => {
+      database.prepare('ALTER TABLE collection_table_columns RENAME TO collection_table_columns_old').run()
+      database.prepare(`
+        CREATE TABLE collection_table_columns (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          field_id     INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
+          name         TEXT    NOT NULL,
+          col_type     TEXT    NOT NULL DEFAULT 'text'
+                               CHECK(col_type IN ('text','number','date','checkbox','list')),
+          list_options TEXT,
+          sort_order   INTEGER NOT NULL DEFAULT 0
+        )
+      `).run()
+      database.prepare(`
+        INSERT INTO collection_table_columns (id, field_id, name, col_type, list_options, sort_order)
+        SELECT
+          id,
+          field_id,
+          name,
+          CASE
+            WHEN col_type IN ('text','number','date','checkbox','list') THEN col_type
+            ELSE 'text'
+          END,
+          ${preserveListOptions ? 'list_options' : 'NULL'},
+          sort_order
+        FROM collection_table_columns_old
+      `).run()
+      database.prepare('DROP TABLE collection_table_columns_old').run()
+    })()
     console.log('[db] Migration: rebuilt collection_table_columns to refresh collection_fields foreign key')
-  } catch (err) {
-    database.exec('ROLLBACK')
-    throw err
   } finally {
     database.exec('PRAGMA foreign_keys = ON')
   }
@@ -249,8 +243,7 @@ export function getDb(): AppDatabase {
     if (target.mode === 'turso') {
       try {
         console.log(`[db] Using Turso database: ${target.url}`)
-        process.env.LIBSQL_AUTH_TOKEN = target.authToken
-        db = new Database(target.url)
+        db = new Database(target.url, { authToken: target.authToken })
         db.prepare('SELECT 1').get()
         return db
       } catch (err) {
@@ -357,26 +350,21 @@ function runMigrations(db: AppDatabase): void {
     ensureOrganization(db, row.name)
   }
 
-  db.exec('BEGIN')
-  try {
-    const users = db
-      .prepare('SELECT id, organization, organization_id FROM users')
-      .all() as unknown as Array<{ id: number; organization: string | null; organization_id: number | null }>
+  // Only backfill organization_id on users that don't have it yet
+  const usersNeedingOrg = db
+    .prepare('SELECT id, organization, organization_id FROM users WHERE organization_id IS NULL')
+    .all() as unknown as Array<{ id: number; organization: string | null; organization_id: number | null }>
 
-    for (const user of users) {
+  if (usersNeedingOrg.length > 0) {
+    for (const user of usersNeedingOrg) {
       const organizationName = user.organization?.trim() || 'TSD'
-      const organizationId = user.organization_id ?? ensureOrganization(db, organizationName)
+      const organizationId = ensureOrganization(db, organizationName)
       db.prepare('UPDATE users SET organization_id = ?, organization = ? WHERE id = ?').run(
         organizationId,
         organizationName,
         user.id,
       )
     }
-
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
   }
 
   // Add columns introduced after the initial schema without dropping existing data
@@ -480,41 +468,38 @@ function runMigrations(db: AppDatabase): void {
     // Disable FK enforcement so renaming collection_fields doesn't break
     // the collection_table_columns FK reference during the rebuild.
     db.exec('PRAGMA foreign_keys = OFF')
-    db.exec('BEGIN')
     try {
-      db.exec('ALTER TABLE collection_fields RENAME TO collection_fields_old')
-      db.exec(`
-        CREATE TABLE collection_fields (
-          id            INTEGER PRIMARY KEY AUTOINCREMENT,
-          collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
-          version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
-          field_key     TEXT,
-          type          TEXT    NOT NULL CHECK(type IN (
-                          'short_text','date','long_text','single_choice','multiple_choice',
-                          'attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale'
-                        )),
-          label         TEXT    NOT NULL,
-          page_number   INTEGER NOT NULL DEFAULT 1,
-          required      INTEGER NOT NULL DEFAULT 0,
-          options       TEXT,
-          display_style TEXT    NOT NULL DEFAULT 'radio',
-          branch_rules  TEXT,
-          sort_order    INTEGER NOT NULL DEFAULT 0
-        )
-      `)
-      db.exec(`
-        INSERT INTO collection_fields
-          (id, collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
-        SELECT
-          id, collection_id, version_id, COALESCE(NULLIF(trim(field_key), ''), 'field-' || id), type, label, page_number, required, options, display_style, branch_rules, sort_order
-        FROM collection_fields_old
-      `)
-      db.exec('DROP TABLE collection_fields_old')
-      db.exec('COMMIT')
+      db.transaction(() => {
+        db.prepare('ALTER TABLE collection_fields RENAME TO collection_fields_old').run()
+        db.prepare(`
+          CREATE TABLE collection_fields (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+            version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
+            field_key     TEXT,
+            type          TEXT    NOT NULL CHECK(type IN (
+                            'short_text','date','long_text','single_choice','multiple_choice',
+                            'attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale'
+                          )),
+            label         TEXT    NOT NULL,
+            page_number   INTEGER NOT NULL DEFAULT 1,
+            required      INTEGER NOT NULL DEFAULT 0,
+            options       TEXT,
+            display_style TEXT    NOT NULL DEFAULT 'radio',
+            branch_rules  TEXT,
+            sort_order    INTEGER NOT NULL DEFAULT 0
+          )
+        `).run()
+        db.prepare(`
+          INSERT INTO collection_fields
+            (id, collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
+          SELECT
+            id, collection_id, version_id, COALESCE(NULLIF(trim(field_key), ''), 'field-' || id), type, label, page_number, required, options, display_style, branch_rules, sort_order
+          FROM collection_fields_old
+        `).run()
+        db.prepare('DROP TABLE collection_fields_old').run()
+      })()
       console.log('[db] Migration: rebuilt collection_fields to support date, rating, comment, and matrix_likert_scale types')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
     } finally {
       db.exec('PRAGMA foreign_keys = ON')
     }
@@ -560,8 +545,7 @@ function runMigrations(db: AppDatabase): void {
   }
 
   // Backfill collection versions and version links for legacy data.
-  db.exec('BEGIN')
-  try {
+  db.transaction(() => {
     const cols = db.prepare(`SELECT id, status, created_by, active_version_id FROM collections`).all() as unknown as Array<{
       id: number
       status: 'draft' | 'published'
@@ -613,12 +597,7 @@ function runMigrations(db: AppDatabase): void {
         .prepare(`UPDATE collections SET organization_id = COALESCE(organization_id, ?) WHERE id = ?`)
         .run(creator?.organization_id ?? defaultOrganizationId, col.id)
     }
-
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  })()
 
   // Ensure app_settings table exists (for DBs created before this feature)
   const settingsExists = db
@@ -707,8 +686,7 @@ function runMigrations(db: AppDatabase): void {
   }
 
   if (tableExists(db, 'notifications')) {
-    db.exec('BEGIN')
-    try {
+    db.transaction(() => {
       const legacyNotifications = db
         .prepare(`
           SELECT n.id, n.user_id, n.collection_id, n.collection_slug, n.type, n.title, n.message,
@@ -778,12 +756,7 @@ function runMigrations(db: AppDatabase): void {
           notification.created_at,
         )
       }
-
-      db.exec('COMMIT')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+    })()
   }
 
   // ── Categories: add organization_id and enforce per-org uniqueness ──────────
@@ -803,10 +776,9 @@ function runMigrations(db: AppDatabase): void {
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='categories'`)
     .get() as unknown as { sql: string } | undefined
   if (categoriesSqlRow?.sql && !categoriesSqlRow.sql.includes('UNIQUE(name, organization_id)')) {
-    db.exec('BEGIN')
-    try {
-      db.exec('ALTER TABLE categories RENAME TO categories_old')
-      db.exec(`
+    db.transaction(() => {
+      db.prepare('ALTER TABLE categories RENAME TO categories_old').run()
+      db.prepare(`
         CREATE TABLE categories (
           id              INTEGER PRIMARY KEY AUTOINCREMENT,
           name            TEXT    NOT NULL,
@@ -815,18 +787,14 @@ function runMigrations(db: AppDatabase): void {
           created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
           UNIQUE(name, organization_id)
         )
-      `)
-      db.exec(`
+      `).run()
+      db.prepare(`
         INSERT OR IGNORE INTO categories (id, name, sort_order, organization_id, created_at)
         SELECT id, name, sort_order, organization_id, created_at FROM categories_old
-      `)
-      db.exec('DROP TABLE categories_old')
-      db.exec('COMMIT')
-      console.log('[db] Migration: rebuilt categories table with per-org unique constraint')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+      `).run()
+      db.prepare('DROP TABLE categories_old').run()
+    })()
+    console.log('[db] Migration: rebuilt categories table with per-org unique constraint')
   }
 
   // Seed "General" for any organization that has no categories
@@ -853,28 +821,25 @@ function runMigrations(db: AppDatabase): void {
   if (!usersSchema.includes('super_admin')) {
     db.exec('PRAGMA foreign_keys = OFF')
     db.exec('PRAGMA legacy_alter_table = ON')
-    db.exec('BEGIN')
     try {
-      db.exec('ALTER TABLE users RENAME TO users_old')
-      db.exec(`
-        CREATE TABLE users (
-          id               INTEGER PRIMARY KEY AUTOINCREMENT,
-          name             TEXT    NOT NULL,
-          email            TEXT    NOT NULL UNIQUE,
-          role             TEXT    NOT NULL DEFAULT 'user'
-                                   CHECK(role IN ('super_admin', 'administrator', 'team_manager', 'user')),
-          organization     TEXT,
-          created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
-          organization_id  INTEGER REFERENCES organizations(id)
-        )
-      `)
-      db.exec(`INSERT INTO users SELECT id, name, email, role, organization, created_at, organization_id FROM users_old`)
-      db.exec('DROP TABLE users_old')
-      db.exec('COMMIT')
+      db.transaction(() => {
+        db.prepare('ALTER TABLE users RENAME TO users_old').run()
+        db.prepare(`
+          CREATE TABLE users (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            name             TEXT    NOT NULL,
+            email            TEXT    NOT NULL UNIQUE,
+            role             TEXT    NOT NULL DEFAULT 'user'
+                                     CHECK(role IN ('super_admin', 'administrator', 'team_manager', 'user')),
+            organization     TEXT,
+            created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            organization_id  INTEGER REFERENCES organizations(id)
+          )
+        `).run()
+        db.prepare(`INSERT INTO users SELECT id, name, email, role, organization, created_at, organization_id FROM users_old`).run()
+        db.prepare('DROP TABLE users_old').run()
+      })()
       console.log('[db] Migration: rebuilt users table to add super_admin to role CHECK constraint')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
     } finally {
       db.exec('PRAGMA legacy_alter_table = OFF')
       db.exec('PRAGMA foreign_keys = ON')

@@ -247,17 +247,12 @@ export function seedData(db: AppDatabase): void {
       'INSERT INTO users (name, email, role, organization_id, organization) VALUES (?, ?, ?, ?, ?)'
     )
 
-    db.exec('BEGIN')
-    try {
+    db.transaction(() => {
       insertUser.run('Jon Rivera',  'jon@datacollectionpro.com',   'administrator', defaultOrganization.id, 'TSD')
       insertUser.run('Sarah Chen',  'sarah@datacollectionpro.com', 'team_manager', defaultOrganization.id, 'TSD')
       insertUser.run('Mike Torres', 'mike@datacollectionpro.com',  'user', defaultOrganization.id, 'TSD')
-      db.exec('COMMIT')
-      console.log('[db] Seed users inserted')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+    })()
+    console.log('[db] Seed users inserted')
   }
 
   const categories = [
@@ -278,16 +273,9 @@ export function seedData(db: AppDatabase): void {
     'INSERT OR IGNORE INTO categories (name, sort_order, organization_id) VALUES (?, ?, ?)'
   )
 
-  db.exec('BEGIN')
-  try {
-    categories.forEach((name, index) => {
-      insertCategory.run(name, index, firstOrgId)
-    })
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  categories.forEach((name, index) => {
+    insertCategory.run(name, index, firstOrgId)
+  })
 
   // Seed default app settings
   db.prepare(
