@@ -243,7 +243,7 @@ export function getDb(): AppDatabase {
     if (target.mode === 'turso') {
       try {
         console.log(`[db] Using Turso database: ${target.url}`)
-        db = new Database(target.url, { authToken: target.authToken })
+        db = new Database(target.url, { authToken: target.authToken } as Database.Options)
         db.prepare('SELECT 1').get()
         return db
       } catch (err) {
