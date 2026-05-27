@@ -152,6 +152,19 @@ export async function getResponses(collectionId: number): Promise<CollectionResp
   return handleResponse<CollectionResponse[]>(res)
 }
 
+export async function upsertStaffFields(
+  collectionId: number,
+  responseId: number,
+  values: { fieldId: number; value: string }[]
+): Promise<void> {
+  const res = await fetch(`/api/collections/${collectionId}/responses/${responseId}/staff-fields`, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ values }),
+  })
+  return handleResponse<void>(res)
+}
+
 export async function seedCollectionData(
   collectionId: number,
   payload: { count: number }

@@ -83,6 +83,7 @@ interface DbField {
   display_style: string
   branch_rules: string | null
   sort_order: number
+  staff_only: number
 }
 
 interface DbTableColumn {
@@ -143,6 +144,7 @@ interface FieldInput {
   branchRules?: FieldBranchRule[]
   tableColumns?: TableColumnInput[]
   sortOrder?: number
+  staffOnly?: boolean
 }
 
 function parseBranchRules(raw: string | null): FieldBranchRule[] | null {
@@ -313,13 +315,9 @@ function fetchAccessibleCollectionById(
   context: RequestUserContext,
 ): DbCollection | undefined {
   const db = getDb()
-  const query = isAdministrator(context)
-    ? `${COL_SELECT} WHERE c.id = ?`
-    : `${COL_SELECT} WHERE c.id = ? AND c.organization_id = ?`
-
   return db
-    .prepare(query)
-    .get(...(isAdministrator(context) ? [id] : [id, context.organizationId])) as unknown as DbCollection | undefined
+    .prepare(`${COL_SELECT} WHERE c.id = ? AND c.organization_id = ?`)
+    .get(id, context.organizationId) as unknown as DbCollection | undefined
 }
 
 // ── Serialisers ───────────────────────────────────────────────
@@ -364,6 +362,7 @@ function toApiCollection(
       displayStyle: resolveFieldDisplayStyle(f.type, f.display_style),
       branchRules: parseBranchRules(f.branch_rules),
       sortOrder: f.sort_order,
+      staffOnly: f.staff_only === 1,
       tableColumns:
         f.type === 'custom_table'
           ? (colsByField.get(f.id) ?? []).map(col => ({
@@ -428,8 +427,8 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
@@ -442,7 +441,8 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
         field.options?.length ? JSON.stringify(field.options) : null,
         resolveFieldDisplayStyle(field.type, field.displayStyle),
         serialiseBranchRules(field.branchRules),
-        field.sortOrder ?? idx
+        field.sortOrder ?? idx,
+        field.staffOnly ? 1 : 0
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
       const fieldId = r.lastInsertRowid as number
@@ -470,8 +470,8 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
@@ -484,7 +484,8 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
         field.options?.length ? JSON.stringify(field.options) : null,
         resolveFieldDisplayStyle(field.type, field.displayStyle),
         serialiseBranchRules(field.branchRules),
-        field.sortOrder ?? idx
+        field.sortOrder ?? idx,
+        field.staffOnly ? 1 : 0
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
       const fieldId = r.lastInsertRowid as number
@@ -760,6 +761,7 @@ function normaliseIncomingFields(fields: FieldInput[]): string {
         sortOrder: c.sortOrder ?? ci,
       })),
       sortOrder: f.sortOrder ?? i,
+      staffOnly: !!f.staffOnly,
     }))
   )
 }
@@ -801,6 +803,7 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
         sortOrder: col.sort_order,
       })),
       sortOrder: f.sort_order ?? i,
+      staffOnly: f.staff_only === 1,
     }))
   )
 }
@@ -860,14 +863,16 @@ router.get('/public/:slug', (req: Request, res: Response) => {
 
   const canPreviewDraft =
     !!previewUser &&
-    (isAdministrator(previewUser) || previewUser.organizationId === c?.organization_id)
+    previewUser.organizationId === c?.organization_id
 
   if (!c || (c.status !== 'published' && !canPreviewDraft)) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
-  const [fields, colsByField] = fetchFields(c.id, c.active_version_id)
-  res.json(toApiCollection(c, fields, colsByField))
+  const [allFields, colsByField] = fetchFields(c.id, c.active_version_id)
+  // Strip staff-only fields — the fill page is for submitters, not staff
+  const publicFields = allFields.filter(f => !f.staff_only)
+  res.json(toApiCollection(c, publicFields, colsByField))
 })
 
 /**
@@ -1205,12 +1210,9 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
   }
 
   const db = getDb()
-  const query = isAdministrator(context)
-    ? `${COL_SELECT} ORDER BY c.created_at DESC`
-    : `${COL_SELECT} WHERE c.organization_id = ? ORDER BY c.created_at DESC`
   const cols = db
-    .prepare(query)
-    .all(...(isAdministrator(context) ? [] : [context.organizationId])) as unknown as DbCollection[]
+    .prepare(`${COL_SELECT} WHERE c.organization_id = ? ORDER BY c.created_at DESC`)
+    .all(context.organizationId) as unknown as DbCollection[]
 
   const result = cols.map(c => {
     const { n } = db
@@ -1928,6 +1930,93 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
       })),
     }))
   )
+})
+
+/**
+ * PUT /api/collections/:id/responses/:responseId/staff-fields
+ * Upsert values for staff-only fields on a specific response. Staff roles only.
+ */
+router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: Request, res: Response): void => {
+  const id = parseInt(req.params.id, 10)
+  const responseId = parseInt(req.params.responseId, 10)
+  if (isNaN(id) || isNaN(responseId)) {
+    res.status(400).json({ error: 'Invalid ID' })
+    return
+  }
+
+  const context = loadRequestUserContext(req)
+  if (!context) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  if (context.role === 'user') {
+    res.status(403).json({ error: 'Staff access required' })
+    return
+  }
+
+  const body = req.body as { values?: { fieldId: number; value: string }[] }
+  if (!Array.isArray(body.values)) {
+    res.status(400).json({ error: 'values array is required' })
+    return
+  }
+
+  try {
+    const db = getDb()
+
+    // Verify collection is accessible to this staff member
+    const collection = fetchAccessibleCollectionById(id, context)
+    if (!collection) {
+      res.status(404).json({ error: 'Collection not found' })
+      return
+    }
+
+    // Verify response belongs to collection
+    const responseRow = db
+      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
+      .get(responseId, id) as { id: number } | undefined
+    if (!responseRow) {
+      res.status(404).json({ error: 'Response not found' })
+      return
+    }
+
+    // Validate all provided fieldIds are staff-only fields for this collection
+    if (body.values.length > 0) {
+      const fieldIds = body.values.map(v => v.fieldId)
+      const ph = fieldIds.map(() => '?').join(',')
+      const staffFields = db
+        .prepare(
+          `SELECT id FROM collection_fields WHERE id IN (${ph}) AND staff_only = 1 AND collection_id = ?`
+        )
+        .all(...fieldIds, id) as { id: number }[]
+      const staffFieldIds = new Set(staffFields.map(f => f.id))
+      const badId = fieldIds.find(fid => !staffFieldIds.has(fid))
+      if (badId !== undefined) {
+        res.status(400).json({ error: `Field ${badId} is not a staff-only field for this collection` })
+        return
+      }
+    }
+
+    // Upsert values inside a transaction
+    db.transaction(() => {
+      for (const val of body.values) {
+        const existing = db
+          .prepare('SELECT id FROM collection_response_values WHERE response_id = ? AND field_id = ?')
+          .get(responseId, val.fieldId) as { id: number } | undefined
+        if (existing) {
+          db.prepare('UPDATE collection_response_values SET value = ? WHERE response_id = ? AND field_id = ?')
+            .run(val.value ?? null, responseId, val.fieldId)
+        } else {
+          db.prepare('INSERT INTO collection_response_values (response_id, field_id, value) VALUES (?, ?, ?)')
+            .run(responseId, val.fieldId, val.value ?? null)
+        }
+      }
+    })()
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[collections] staff-fields upsert:', err)
+    res.status(500).json({ error: 'Failed to save staff fields' })
+  }
 })
 
 export default router

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Calendar, ClipboardList, Mail, Tag, User, Download } from 'lucide-react'
-import { getCollection, getResponses, listCollections } from '../api/collections'
+import { Calendar, ClipboardList, LayoutGrid, Lock, Mail, Save, Table2, Tag, User, Download } from 'lucide-react'
+import { getCollection, getResponses, listCollections, upsertStaffFields } from '../api/collections'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import type { Collection, CollectionField, CollectionResponse } from '../types'
 
@@ -584,15 +584,170 @@ function downloadCollectionCsv(collection: Collection, responses: CollectionResp
   URL.revokeObjectURL(url)
 }
 
+const STAFF_INPUT =
+  'w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] ' +
+  'text-[#1E293B] dark:text-[#F1F5F9] placeholder-[#94A3B8] px-2.5 py-1.5 text-sm rounded ' +
+  'focus:outline-none focus:ring-2 focus:ring-amber-400'
+
+function StaffFieldEditor({
+  field,
+  value,
+  onChange,
+}: {
+  field: CollectionField
+  value: string
+  onChange: (v: string) => void
+}) {
+  if (
+    field.type === 'comment' ||
+    field.type === 'custom_table' ||
+    field.type === 'matrix_likert_scale'
+  ) {
+    return <p className="text-xs text-[#94A3B8] italic">Complex field — view only</p>
+  }
+
+  if (field.type === 'long_text') {
+    return (
+      <textarea
+        className={STAFF_INPUT}
+        rows={3}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Enter value…"
+      />
+    )
+  }
+
+  if (field.type === 'date') {
+    return (
+      <input
+        type="date"
+        className={STAFF_INPUT}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+    )
+  }
+
+  if (field.type === 'confirmation') {
+    return (
+      <label className="flex items-center gap-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] cursor-pointer">
+        <input
+          type="checkbox"
+          checked={value === 'true'}
+          onChange={e => onChange(e.target.checked ? 'true' : 'false')}
+          className="accent-amber-500"
+        />
+        Confirmed
+      </label>
+    )
+  }
+
+  if (field.type === 'single_choice') {
+    const options = field.options ?? []
+    return (
+      <select className={STAFF_INPUT} value={value} onChange={e => onChange(e.target.value)}>
+        <option value="">— select —</option>
+        {options.map(opt => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    )
+  }
+
+  if (field.type === 'multiple_choice') {
+    const options = field.options ?? []
+    let selected: string[] = []
+    try {
+      const parsed = JSON.parse(value) as unknown
+      selected = Array.isArray(parsed) ? parsed.map(String) : value ? [value] : []
+    } catch {
+      selected = value ? [value] : []
+    }
+    return (
+      <div className="flex flex-col gap-1">
+        {options.map(opt => (
+          <label
+            key={opt}
+            className="flex items-center gap-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              checked={selected.includes(opt)}
+              onChange={e => {
+                const next = e.target.checked
+                  ? [...selected, opt]
+                  : selected.filter(s => s !== opt)
+                onChange(JSON.stringify(next))
+              }}
+              className="accent-amber-500"
+            />
+            {opt}
+          </label>
+        ))}
+      </div>
+    )
+  }
+
+  if (field.type === 'rating') {
+    const num = Number(value) || 0
+    return (
+      <div className="flex items-center gap-1 flex-wrap">
+        {[1, 2, 3, 4, 5].map(n => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onChange(String(n))}
+            className={[
+              'w-8 h-8 rounded text-sm font-medium transition-colors',
+              n <= num
+                ? 'bg-amber-400 text-white'
+                : 'bg-[#F1F5F9] dark:bg-[#334155] text-[#64748B] hover:bg-amber-100',
+            ].join(' ')}
+          >
+            {n}
+          </button>
+        ))}
+        {num > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="text-xs text-[#94A3B8] ml-1 hover:text-red-400 transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  // short_text, signature, attachment
+  return (
+    <input
+      type="text"
+      className={STAFF_INPUT}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder="Enter value…"
+    />
+  )
+}
+
 export default function RecordsPage() {
   const [collections, setCollections] = useState<Collection[]>([])
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null)
   const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null)
   const [responses, setResponses] = useState<CollectionResponse[]>([])
   const [view, setView] = useState<RecordsView>('summary')
+  const [individualLayout, setIndividualLayout] = useState<'card' | 'table'>('card')
   const [loadingCollections, setLoadingCollections] = useState(true)
   const [loadingResponses, setLoadingResponses] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expandedStaffResponseId, setExpandedStaffResponseId] = useState<number | null>(null)
+  const [staffEdits, setStaffEdits] = useState<Record<number, Record<number, string>>>({})
+  const [staffSaveState, setStaffSaveState] = useState<Record<number, 'idle' | 'saving' | 'saved' | 'error'>>({})
 
   useEffect(() => {
     listCollections()
@@ -626,6 +781,33 @@ export default function RecordsPage() {
       .catch(err => setError((err as Error).message))
       .finally(() => setLoadingResponses(false))
   }, [selectedCollectionId])
+
+  const staffFields = useMemo(
+    () => (selectedCollection?.fields ?? []).filter(f => f.staffOnly),
+    [selectedCollection]
+  )
+
+  async function handleSaveStaffNotes(responseId: number) {
+    if (!selectedCollection?.id) return
+    const edits = staffEdits[responseId] ?? {}
+    const values = Object.entries(edits).map(([fieldId, value]) => ({
+      fieldId: Number(fieldId),
+      value,
+    }))
+    setStaffSaveState(prev => ({ ...prev, [responseId]: 'saving' }))
+    try {
+      await upsertStaffFields(selectedCollection.id, responseId, values)
+      const updated = await getResponses(selectedCollection.id)
+      setResponses(updated)
+      setStaffSaveState(prev => ({ ...prev, [responseId]: 'saved' }))
+      setTimeout(() => {
+        setStaffSaveState(prev => ({ ...prev, [responseId]: 'idle' }))
+      }, 2000)
+    } catch (err) {
+      console.error('[RecordsPage] saveStaffNotes:', err)
+      setStaffSaveState(prev => ({ ...prev, [responseId]: 'error' }))
+    }
+  }
 
   const collectionsWithResponses = useMemo(
     () => collections.filter(item => (item.responseCount ?? 0) > 0),
@@ -944,31 +1126,65 @@ export default function RecordsPage() {
                 {responses.length} submitted item{responses.length !== 1 ? 's' : ''}
               </p>
             </div>
-            <div className="inline-flex rounded overflow-hidden border border-[#CBD5E1] dark:border-[#334155] w-fit">
-              <button
-                type="button"
-                onClick={() => setView('summary')}
-                className={[
-                  'px-4 py-2 text-sm font-medium transition-colors',
-                  view === 'summary'
-                    ? 'bg-[#2563EB] text-white'
-                    : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
-                ].join(' ')}
-              >
-                Summary
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('individual')}
-                className={[
-                  'px-4 py-2 text-sm font-medium transition-colors border-l border-[#CBD5E1] dark:border-[#334155]',
-                  view === 'individual'
-                    ? 'bg-[#2563EB] text-white'
-                    : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
-                ].join(' ')}
-              >
-                Individual
-              </button>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="inline-flex rounded overflow-hidden border border-[#CBD5E1] dark:border-[#334155] w-fit">
+                <button
+                  type="button"
+                  onClick={() => setView('summary')}
+                  className={[
+                    'px-4 py-2 text-sm font-medium transition-colors',
+                    view === 'summary'
+                      ? 'bg-[#2563EB] text-white'
+                      : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                  ].join(' ')}
+                >
+                  Summary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('individual')}
+                  className={[
+                    'px-4 py-2 text-sm font-medium transition-colors border-l border-[#CBD5E1] dark:border-[#334155]',
+                    view === 'individual'
+                      ? 'bg-[#2563EB] text-white'
+                      : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                  ].join(' ')}
+                >
+                  Individual
+                </button>
+              </div>
+              {view === 'individual' && (
+                <div className="inline-flex rounded overflow-hidden border border-[#CBD5E1] dark:border-[#334155] w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setIndividualLayout('card')}
+                    title="Card view"
+                    className={[
+                      'px-3 py-2 text-sm font-medium transition-colors flex items-center gap-1.5',
+                      individualLayout === 'card'
+                        ? 'bg-[#2563EB] text-white'
+                        : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                    ].join(' ')}
+                  >
+                    <LayoutGrid size={14} />
+                    Card
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIndividualLayout('table')}
+                    title="Table view"
+                    className={[
+                      'px-3 py-2 text-sm font-medium transition-colors border-l border-[#CBD5E1] dark:border-[#334155] flex items-center gap-1.5',
+                      individualLayout === 'table'
+                        ? 'bg-[#2563EB] text-white'
+                        : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                    ].join(' ')}
+                  >
+                    <Table2 size={14} />
+                    Table
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           {error && (
@@ -1088,7 +1304,77 @@ export default function RecordsPage() {
         </div>
       )}
 
-      {!loadingResponses && selectedCollection && responses.length > 0 && view === 'individual' && (
+      {!loadingResponses && selectedCollection && responses.length > 0 && view === 'individual' && individualLayout === 'table' && (() => {
+        const regularFields = selectedCollection.fields.filter(f => !f.staffOnly && f.id !== undefined)
+        const staffOnlyFields = selectedCollection.fields.filter(f => f.staffOnly && f.id !== undefined)
+
+        function cellDisplay(f: CollectionField, value: string | undefined): string {
+          const raw = value ?? ''
+          if (!raw) return '—'
+          if (f.type === 'signature') return '[Signature]'
+          if (f.type === 'attachment') return '[Attachment]'
+          if (f.type === 'custom_table') return '[Table]'
+          if (f.type === 'confirmation') return raw === 'true' ? 'Yes' : 'No'
+          return raw
+        }
+
+        const thClass = 'text-left text-xs font-medium border-b px-3 py-2.5 whitespace-nowrap'
+        const tdClass = 'border-b px-3 py-2 max-w-[200px] truncate'
+
+        return (
+          <div className="overflow-x-auto rounded-lg border border-[#E2E8F0] dark:border-[#334155]">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-[#F8FAFC] dark:bg-[#0F172A]">
+                  <th className={`${thClass} text-[#64748B] border-[#E2E8F0] dark:border-[#334155]`}>#</th>
+                  <th className={`${thClass} text-[#64748B] border-[#E2E8F0] dark:border-[#334155]`}>Date</th>
+                  <th className={`${thClass} text-[#64748B] border-[#E2E8F0] dark:border-[#334155]`}>Respondent</th>
+                  {regularFields.map(f => (
+                    <th key={f.id} className={`${thClass} text-[#64748B] border-[#E2E8F0] dark:border-[#334155]`}>
+                      {f.label}
+                    </th>
+                  ))}
+                  {staffOnlyFields.map(f => (
+                    <th key={f.id} className={`${thClass} text-amber-600 dark:text-amber-500 border-[#E2E8F0] dark:border-[#334155]`}>
+                      <span className="flex items-center gap-1">
+                        <Lock size={11} />
+                        {f.label}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {responses.map((response, rowIdx) => (
+                  <tr
+                    key={response.id}
+                    className={rowIdx % 2 === 0 ? 'bg-white dark:bg-[#1E293B]' : 'bg-[#F8FAFC] dark:bg-[#0F172A]'}
+                  >
+                    <td className={`${tdClass} text-[#1E293B] dark:text-[#F1F5F9] border-[#E2E8F0] dark:border-[#334155] whitespace-nowrap`}>{response.id}</td>
+                    <td className={`${tdClass} text-[#64748B] border-[#E2E8F0] dark:border-[#334155] whitespace-nowrap`}>{formatSubmittedAt(response.submittedAt)}</td>
+                    <td className={`${tdClass} text-[#64748B] border-[#E2E8F0] dark:border-[#334155] whitespace-nowrap`}>
+                      {response.respondentName || 'Anonymous'}
+                      {response.respondentEmail ? ` (${response.respondentEmail})` : ''}
+                    </td>
+                    {regularFields.map(f => (
+                      <td key={f.id} className={`${tdClass} text-[#1E293B] dark:text-[#F1F5F9] border-[#E2E8F0] dark:border-[#334155]`}>
+                        {cellDisplay(f, response.values.find(v => v.fieldId === f.id)?.value)}
+                      </td>
+                    ))}
+                    {staffOnlyFields.map(f => (
+                      <td key={f.id} className={`${tdClass} text-amber-700 dark:text-amber-400 border-[#E2E8F0] dark:border-[#334155] bg-amber-50/40 dark:bg-amber-900/10`}>
+                        {cellDisplay(f, response.values.find(v => v.fieldId === f.id)?.value)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })()}
+
+      {!loadingResponses && selectedCollection && responses.length > 0 && view === 'individual' && individualLayout === 'card' && (
         <div className="space-y-4">
           {responses.map(response => (
             <section
@@ -1123,7 +1409,12 @@ export default function RecordsPage() {
                 <p className="text-sm text-[#64748B]">No field values were submitted.</p>
               ) : (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  {response.values.map(answer => {
+                  {response.values
+                    .filter(answer => {
+                      const f = fieldMap.get(answer.fieldId)
+                      return !f?.staffOnly
+                    })
+                    .map(answer => {
                     const field = fieldMap.get(answer.fieldId)
                     return (
                       <div
@@ -1137,6 +1428,118 @@ export default function RecordsPage() {
                       </div>
                     )
                   })}
+                </div>
+              )}
+
+              {staffFields.length > 0 && (
+                <div className="border-t border-amber-200 dark:border-amber-800 pt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-400">
+                      <Lock size={14} />
+                      Staff Notes
+                    </div>
+                    {expandedStaffResponseId !== response.id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const init: Record<number, string> = {}
+                          staffFields.forEach(field => {
+                            if (field.id !== undefined) {
+                              const existing = response.values.find(v => v.fieldId === field.id)
+                              init[field.id] = existing?.value ?? ''
+                            }
+                          })
+                          setStaffEdits(prev => ({ ...prev, [response.id]: init }))
+                          setExpandedStaffResponseId(response.id)
+                        }}
+                        className="text-xs px-2.5 py-1 rounded border border-amber-400 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {expandedStaffResponseId === response.id && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedStaffResponseId(null)}
+                        className="text-xs text-[#94A3B8] hover:text-[#64748B] transition-colors"
+                      >
+                        Collapse
+                      </button>
+                    )}
+                  </div>
+
+                  {expandedStaffResponseId !== response.id ? (
+                    // Read-only preview
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      {staffFields.map(field => {
+                        if (field.id === undefined) return null
+                        const answer = response.values.find(v => v.fieldId === field.id)
+                        return (
+                          <div
+                            key={`staff-ro-${response.id}-${field.id}`}
+                            className="rounded border border-amber-200 dark:border-amber-800 p-3 bg-amber-50/40 dark:bg-amber-900/10"
+                          >
+                            <p className="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-500 mb-1.5">
+                              {field.label || `Field #${field.id}`}
+                            </p>
+                            {answer?.value
+                              ? renderResponseValue(field, answer.value)
+                              : <p className="text-xs text-[#94A3B8] italic">Not set</p>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    // Editable panel
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        {staffFields.map(field => {
+                          if (field.id === undefined) return null
+                          const currentValue = (staffEdits[response.id] ?? {})[field.id] ?? ''
+                          return (
+                            <div
+                              key={`staff-edit-${response.id}-${field.id}`}
+                              className="rounded border border-amber-200 dark:border-amber-800 p-3 bg-amber-50/40 dark:bg-amber-900/10"
+                            >
+                              <p className="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-500 mb-1.5">
+                                {field.label || `Field #${field.id}`}
+                              </p>
+                              <StaffFieldEditor
+                                field={field}
+                                value={currentValue}
+                                onChange={v =>
+                                  setStaffEdits(prev => ({
+                                    ...prev,
+                                    [response.id]: {
+                                      ...(prev[response.id] ?? {}),
+                                      [field.id as number]: v,
+                                    },
+                                  }))
+                                }
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveStaffNotes(response.id)}
+                          disabled={staffSaveState[response.id] === 'saving'}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+                        >
+                          <Save size={13} />
+                          {staffSaveState[response.id] === 'saving' ? 'Saving…' : 'Save Staff Notes'}
+                        </button>
+                        {staffSaveState[response.id] === 'saved' && (
+                          <span className="text-xs text-green-600 dark:text-green-400">Saved!</span>
+                        )}
+                        {staffSaveState[response.id] === 'error' && (
+                          <span className="text-xs text-red-500">Failed to save. Try again.</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </section>

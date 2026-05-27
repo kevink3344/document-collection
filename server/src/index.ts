@@ -55,12 +55,22 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // ── Database ─────────────────────────────────────────────────
 setupDatabase()
-generateDueDateNotifications()
-dispatchPendingEmailNotifications()
-setInterval(() => {
-  generateDueDateNotifications()
-  dispatchPendingEmailNotifications()
-}, NOTIFICATION_SWEEP_INTERVAL_MS)
+
+function runNotificationSweep() {
+  try {
+    generateDueDateNotifications()
+  } catch (err) {
+    console.error('[notifications] generateDueDateNotifications failed:', (err as Error).message)
+  }
+  try {
+    dispatchPendingEmailNotifications()
+  } catch (err) {
+    console.error('[notifications] dispatchPendingEmailNotifications failed:', (err as Error).message)
+  }
+}
+
+runNotificationSweep()
+setInterval(runNotificationSweep, NOTIFICATION_SWEEP_INTERVAL_MS)
 
 // ── Swagger ──────────────────────────────────────────────────
 setupSwagger(app)

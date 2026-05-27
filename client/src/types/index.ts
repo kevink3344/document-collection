@@ -75,6 +75,7 @@ export interface CollectionField {
   branchRules?: FieldBranchRule[] | null
   sortOrder: number
   tableColumns: TableColumn[] | null
+  staffOnly?: boolean
 }
 
 export interface Collection {

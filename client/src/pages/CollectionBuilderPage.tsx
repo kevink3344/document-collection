@@ -12,6 +12,7 @@ import {
   Eye,
   Copy,
   Upload,
+  Lock,
 } from 'lucide-react'
 import {
   createCollection,
@@ -53,6 +54,7 @@ interface BuilderField {
   displayStyle: FieldDisplayStyle
   branchRules: FieldBranchRule[]
   tableColumns: TableColumn[]
+  staffOnly: boolean
 }
 
 function resolveDisplayStyle(type: FieldType, displayStyle?: string | null): FieldDisplayStyle {
@@ -83,6 +85,7 @@ function blankField(page = 1): BuilderField {
     displayStyle: 'radio',
     branchRules: [],
     tableColumns: [],
+    staffOnly: false,
   }
 }
 
@@ -109,6 +112,7 @@ function mapCollectionToBuilderFields(collection: Collection): BuilderField[] {
           ? (tc.listOptions ?? []).map(opt => String(opt).trim()).filter(Boolean)
           : null,
     })),
+    staffOnly: f.staffOnly ?? false,
   }))
 }
 
@@ -615,6 +619,7 @@ export default function CollectionBuilderPage() {
             sortOrder: ci,
           })),
           sortOrder: i,
+          staffOnly: f.staffOnly,
         })),
     }
   }
@@ -1440,7 +1445,12 @@ function FieldCard({
   const hasOtherOption = field.options.includes(OTHER_OPTION_MARKER)
 
   return (
-    <div className="border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-3 space-y-3 bg-[#FAFAFA] dark:bg-[#0F172A]">
+    <div className={[
+      'border rounded-lg p-3 space-y-3 bg-[#FAFAFA] dark:bg-[#0F172A]',
+      field.staffOnly
+        ? 'border-amber-400 dark:border-amber-600'
+        : 'border-[#E2E8F0] dark:border-[#334155]',
+    ].join(' ')}>
       {/* Row 1: type selector + move/delete */}
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold text-[#94A3B8] w-5 text-center shrink-0">
@@ -1531,6 +1541,16 @@ function FieldCard({
               onChange={e => onUpdate({ page: Math.max(1, Number(e.target.value) || 1) })}
               className={`${FIELD_INPUT} w-16`}
             />
+          </label>
+          <label className="flex items-center gap-1 text-xs cursor-pointer select-none text-amber-600 dark:text-amber-500">
+            <input
+              type="checkbox"
+              checked={field.staffOnly}
+              onChange={e => onUpdate({ staffOnly: e.target.checked })}
+              className="accent-amber-500 w-3.5 h-3.5"
+            />
+            <Lock size={11} />
+            Staff only
           </label>
         </div>
 

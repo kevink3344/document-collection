@@ -167,6 +167,7 @@ router.get('/:responseId', (req: Request, res: Response): void => {
          FROM collection_response_values crv
          JOIN collection_fields cf ON cf.id = crv.field_id
          WHERE crv.response_id = ?
+           AND (cf.staff_only IS NULL OR cf.staff_only = 0)
          ORDER BY cf.page_number ASC, cf.sort_order ASC`
       )
       .all(responseId) as unknown as DbValueRow[]

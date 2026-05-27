@@ -79,23 +79,14 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
   if (global) {
     const q = req.query.organizationId
     const parsed = q != null ? parseInt(q as string, 10) : NaN
-    orgFilter = Number.isFinite(parsed) ? parsed : null
+    // If an explicit org is requested use it, otherwise default to the super_admin's own org
+    orgFilter = Number.isFinite(parsed) ? parsed : userOrgId
   } else {
     orgFilter = userOrgId
   }
 
   let rows: DbCategory[]
-  if (global && orgFilter === null) {
-    // Global admin with no filter — return all categories across all orgs
-    rows = db
-      .prepare(`
-        SELECT c.id, c.name, c.sort_order, c.organization_id, o.name AS organization_name
-        FROM categories c
-        LEFT JOIN organizations o ON o.id = c.organization_id
-        ORDER BY o.name COLLATE NOCASE, c.sort_order, c.name COLLATE NOCASE
-      `)
-      .all() as unknown as DbCategory[]
-  } else if (orgFilter !== null) {
+  if (orgFilter !== null) {
     rows = db
       .prepare(`
         SELECT c.id, c.name, c.sort_order, c.organization_id, o.name AS organization_name

@@ -460,6 +460,11 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: added collection_fields.branch_rules')
   }
 
+  if (!fieldColNames.has('staff_only')) {
+    db.exec(`ALTER TABLE collection_fields ADD COLUMN staff_only INTEGER NOT NULL DEFAULT 0`)
+    console.log('[db] Migration: added collection_fields.staff_only')
+  }
+
   // Rebuild collection_fields if the CHECK constraint doesn't include newer field types.
   const fieldsSqlRow = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
