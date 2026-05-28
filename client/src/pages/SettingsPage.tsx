@@ -1,5 +1,26 @@
 import { Fragment, useEffect, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
+import {
+  DndContext,
+  type DragEndEvent,
+  type DragStartEvent,
+  type CollisionDetection,
+  DragOverlay,
+  PointerSensor,
+  closestCenter,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  useDroppable,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { getPreference, updatePreference } from '../api/preferences'
 import {
   createOrganization,
   deleteOrganization,
@@ -25,6 +46,139 @@ const INPUT =
   'w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] ' +
   'text-[#1E293B] dark:text-[#F1F5F9] placeholder-[#94A3B8] px-3 py-2 text-sm rounded ' +
   'focus:outline-none focus:ring-2 focus:ring-[#2563EB]'
+
+// ─── Settings panel layout ─────────────────────────────────────────────────
+type PanelId =
+  | 'organizations'
+  | 'categories'
+  | 'notifications'
+  | 'login-page'
+  | 'users'
+  | 'locations'
+  | 'qr-code'
+  | 'logo-padding'
+  | 'api'
+  | 'seed'
+
+type TabId = 'general' | 'other'
+type PanelLayout = Record<TabId, PanelId[]>
+
+const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
+const DEFAULT_PANEL_LAYOUT: PanelLayout = {
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'users', 'locations'],
+  other: ['qr-code', 'logo-padding', 'api', 'seed'],
+}
+const PANEL_LABELS: Record<PanelId, string> = {
+  organizations: 'Organizations',
+  categories: 'Categories',
+  notifications: 'Notifications',
+  'login-page': 'Login Page',
+  users: 'User Accounts',
+  locations: 'Locations',
+  'qr-code': 'QR Code',
+  'logo-padding': 'Image Logo URL Padding',
+  api: 'API Documentation',
+  seed: 'Seed Data',
+}
+
+const ALL_PANEL_IDS: PanelId[] = [
+  ...DEFAULT_PANEL_LAYOUT.general,
+  ...DEFAULT_PANEL_LAYOUT.other,
+]
+
+function mergeStoredLayout(stored: unknown): PanelLayout {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return DEFAULT_PANEL_LAYOUT
+  const s = stored as Record<string, unknown>
+  const storedGeneral = Array.isArray(s.general) ? (s.general as string[]) : []
+  const storedOther = Array.isArray(s.other) ? (s.other as string[]) : []
+  const storedAll = [...storedGeneral, ...storedOther]
+  const missing = ALL_PANEL_IDS.filter(id => !storedAll.includes(id))
+  return {
+    general: [
+      ...storedGeneral.filter(id => ALL_PANEL_IDS.includes(id as PanelId)),
+      ...missing,
+    ] as PanelId[],
+    other: storedOther.filter(id => ALL_PANEL_IDS.includes(id as PanelId)) as PanelId[],
+  }
+}
+
+function SettingsSortablePanel({ id, children }: { id: PanelId; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`group flex items-start gap-1.5 ${isDragging ? 'opacity-40' : ''}`}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="mt-[14px] p-1.5 rounded cursor-grab select-none touch-none text-[#CBD5E1] dark:text-[#475569] hover:text-[#94A3B8] dark:hover:text-[#94A3B8] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none"
+        title="Drag to reorder"
+        tabIndex={-1}
+        aria-label={`Drag ${PANEL_LABELS[id]} panel to reorder`}
+      >
+        <GripVertical size={14} />
+      </button>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  )
+}
+
+function DroppableTabButton({
+  tab,
+  label,
+  isActive,
+  isDragging,
+  onClick,
+}: {
+  tab: TabId
+  label: string
+  isActive: boolean
+  isDragging: boolean
+  onClick: () => void
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `drop-tab-${tab}` })
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={onClick}
+      className={[
+        'relative px-5 py-3 text-sm font-medium border-b-2 transition-colors',
+        isActive
+          ? 'border-[#2563EB] text-[#2563EB] dark:text-blue-400 dark:border-blue-400'
+          : 'border-transparent text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9]',
+        isDragging && !isActive && isOver
+          ? 'ring-2 ring-inset ring-[#2563EB] rounded-t text-[#2563EB] dark:text-blue-400'
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {label}
+      {isDragging && !isActive && (
+        <span
+          className={`absolute inset-0 rounded-t pointer-events-none transition-colors ${
+            isOver ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+          }`}
+        />
+      )}
+    </button>
+  )
+}
+
+// Prefer pointer-within for the tab drop zones, fall back to closestCenter for panel sorting
+const tabAwareCollision: CollisionDetection = args => {
+  const tabHits = pointerWithin(args).filter(c =>
+    String(c.id).startsWith('drop-tab-')
+  )
+  if (tabHits.length > 0) return tabHits
+  return closestCenter(args)
+}
+
+// ─── End settings panel layout ───────────────────────────────────────────────
 
 function getUserRoleBadgeClass(role: AppUser['role']): string {
   return role === 'super_admin'
@@ -156,6 +310,10 @@ export default function SettingsPage() {
   const [logoPaddingSaving, setLogoPaddingSaving] = useState(false)
   const [logoPaddingError, setLogoPaddingError] = useState<string | null>(null)
   const [logoPaddingSaved, setLogoPaddingSaved] = useState(false)
+  // Panel layout
+  const [activeTab, setActiveTab] = useState<TabId>('general')
+  const [panelLayout, setPanelLayout] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT)
+  const [draggingId, setDraggingId] = useState<PanelId | null>(null)
 
   useEffect(() => {
     getPublicSetting('login_subtitle')
@@ -224,6 +382,20 @@ export default function SettingsPage() {
       loadUsers()
     }
   }, [user?.role])
+
+  useEffect(() => {
+    getPreference(SETTINGS_LAYOUT_PREF)
+      .then(val => {
+        if (val) {
+          try {
+            setPanelLayout(mergeStoredLayout(JSON.parse(val)))
+          } catch {
+            // ignore parse errors, use default
+          }
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   function loadOrganizations() {
     setOrganizationsLoading(true)
@@ -700,6 +872,66 @@ export default function SettingsPage() {
     }
   }
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  )
+
+  function getTabForPanel(id: PanelId): TabId {
+    return panelLayout.other.includes(id) ? 'other' : 'general'
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    setDraggingId(event.active.id as PanelId)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    setDraggingId(null)
+    if (!over) return
+    const activeId = active.id as PanelId
+    const overId = over.id as string
+    // Dropped on a tab drop zone
+    if (overId === 'drop-tab-general' || overId === 'drop-tab-other') {
+      const targetTab: TabId = overId === 'drop-tab-general' ? 'general' : 'other'
+      const sourceTab = getTabForPanel(activeId)
+      if (sourceTab === targetTab) return
+      const newLayout: PanelLayout = {
+        general: panelLayout.general.filter(id => id !== activeId),
+        other: panelLayout.other.filter(id => id !== activeId),
+      }
+      newLayout[targetTab] = [...newLayout[targetTab], activeId]
+      setPanelLayout(newLayout)
+      setActiveTab(targetTab)
+      updatePreference(SETTINGS_LAYOUT_PREF, JSON.stringify(newLayout)).catch(() => {})
+      return
+    }
+    // Dropped on a specific panel
+    const overPanel = overId as PanelId
+    const sourceTab = getTabForPanel(activeId)
+    const overTab = getTabForPanel(overPanel)
+    if (sourceTab !== overTab) {
+      // Cross-tab via panel drop
+      const sourceList = panelLayout[sourceTab].filter(id => id !== activeId)
+      const targetList = [...panelLayout[overTab]]
+      const overIndex = targetList.indexOf(overPanel)
+      targetList.splice(overIndex >= 0 ? overIndex : targetList.length, 0, activeId)
+      const newLayout: PanelLayout = { ...panelLayout, [sourceTab]: sourceList, [overTab]: targetList }
+      setPanelLayout(newLayout)
+      setActiveTab(overTab)
+      updatePreference(SETTINGS_LAYOUT_PREF, JSON.stringify(newLayout)).catch(() => {})
+      return
+    }
+    if (activeId === overPanel) return
+    const list = panelLayout[sourceTab]
+    const oldIndex = list.indexOf(activeId)
+    const newIndex = list.indexOf(overPanel)
+    if (oldIndex === -1 || newIndex === -1) return
+    const newList = arrayMove(list, oldIndex, newIndex)
+    const newLayout: PanelLayout = { ...panelLayout, [sourceTab]: newList }
+    setPanelLayout(newLayout)
+    updatePreference(SETTINGS_LAYOUT_PREF, JSON.stringify(newLayout)).catch(() => {})
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-40 text-[#64748B]">Loading settings…</div>
   }
@@ -715,19 +947,9 @@ export default function SettingsPage() {
   const selectedSeedCollection = seedCollections.find(collection => String(collection.id) === seedCollectionId) ?? null
   const organizationOptions = organizations.filter(org => org.isActive)
 
-  return (
-    <div className="space-y-6 max-w-4xl">
-      <div>
-        <h1 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Settings</h1>
-        <p className="text-sm text-[#64748B] mt-0.5">Manage collection categories used throughout the application.</p>
-      </div>
-
-      {error && (
-        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-4 text-red-700 dark:text-red-400 text-sm">
-          {error}
-        </div>
-      )}
-
+  function renderPanel(id: PanelId): React.ReactNode {
+    switch (id) {
+      case 'categories': return (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -912,7 +1134,8 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
-
+      )
+      case 'qr-code': return (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -970,7 +1193,8 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
-
+      )
+      case 'logo-padding': return (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -1037,8 +1261,8 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
-
-      {/* API Documentation */}
+      )
+      case 'api': return (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -1082,8 +1306,8 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
-
-      {/* Notifications */}
+      )
+      case 'notifications': return (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -1251,8 +1475,8 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
-
-      {/* Login Page */}
+      )
+      case 'login-page': return (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -1374,9 +1598,9 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
-
-      {/* Organizations */}
-      {user?.role === 'super_admin' && <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+      )
+      case 'organizations': return user?.role !== 'super_admin' ? null : (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button
           type="button"
           onClick={() => setOrganizationsExpanded(expanded => !expanded)}
@@ -1555,10 +1779,9 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
-      </section>}
-
-      {/* Locations */}
-      {(user?.role === 'super_admin' || user?.role === 'administrator') && (
+      </section>
+      )
+      case 'locations': return (user?.role !== 'super_admin' && user?.role !== 'administrator') ? null : (
         <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
           <button
             type="button"
@@ -1785,9 +2008,8 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
-      )}
-
-        {/* User Accounts */}
+      )
+      case 'users': return (
         <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
           <button
             type="button"
@@ -2337,7 +2559,8 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
-
+      )
+      case 'seed': return (
         <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
           <button
             type="button"
@@ -2459,6 +2682,65 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
-    </div>
+      )
+      default: return null
+    }
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={tabAwareCollision}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="max-w-4xl">
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Settings</h1>
+          <p className="text-sm text-[#64748B] mt-0.5">Manage collection categories used throughout the application.</p>
+        </div>
+
+        {error && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-4 text-red-700 dark:text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="flex border-b border-[#E2E8F0] dark:border-[#334155] mb-6">
+          <DroppableTabButton
+            tab="general"
+            label="General"
+            isActive={activeTab === 'general'}
+            isDragging={draggingId !== null}
+            onClick={() => setActiveTab('general')}
+          />
+          <DroppableTabButton
+            tab="other"
+            label="Other"
+            isActive={activeTab === 'other'}
+            isDragging={draggingId !== null}
+            onClick={() => setActiveTab('other')}
+          />
+        </div>
+
+        <SortableContext items={panelLayout[activeTab]} strategy={verticalListSortingStrategy}>
+          <div className="space-y-6">
+            {panelLayout[activeTab].map(id => (
+              <SettingsSortablePanel key={id} id={id}>
+                {renderPanel(id)}
+              </SettingsSortablePanel>
+            ))}
+          </div>
+        </SortableContext>
+
+        <DragOverlay>
+          {draggingId && (
+            <div className="bg-white dark:bg-[#1E293B] border border-[#2563EB] rounded-lg px-5 py-4 shadow-lg text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9] opacity-90">
+              {PANEL_LABELS[draggingId]}
+            </div>
+          )}
+        </DragOverlay>
+      </div>
+    </DndContext>
   )
 }
