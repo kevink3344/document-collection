@@ -207,7 +207,7 @@ const VALID_DAYS = new Set([7, 30, 90])
 router.get('/reports', authenticateToken, (req: Request, res: Response): void => {
   const context = loadRequestUserContext(req)
   const role = context?.role
-  if (role !== 'administrator' && role !== 'team_manager') {
+  if (role !== 'super_admin' && role !== 'administrator' && role !== 'team_manager') {
     res.status(403).json({ error: 'Forbidden' })
     return
   }
@@ -353,7 +353,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
   const role = context?.role
   const userId = context?.id
 
-  if (role !== 'administrator' && role !== 'team_manager') {
+  if (role !== 'super_admin' && role !== 'administrator' && role !== 'team_manager') {
     res.status(403).json({ error: 'Forbidden' })
     return
   }
