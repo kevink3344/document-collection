@@ -26,11 +26,11 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard'        },
-  { icon: Database,        label: 'Collections',     to: '/collections'      },
-  { icon: FileText,        label: 'Records',         to: '/records'          },
-  { icon: BarChart3,       label: 'Reports',         to: '/reports'          },
+  { icon: Database,        label: 'Collections',     to: '/collections',     roles: ['super_admin', 'administrator', 'team_manager'] },
+  { icon: FileText,        label: 'Records',         to: '/records',         roles: ['super_admin', 'administrator', 'team_manager', 'reviewer'] },
+  { icon: BarChart3,       label: 'Reports',         to: '/reports',         roles: ['super_admin', 'administrator', 'team_manager'] },
   { icon: Sparkles,        label: 'AI Summary',      to: '/ai-summary',      roles: ['super_admin', 'administrator'] },
-  { icon: Settings,        label: 'Settings',        to: '/settings'         },
+  { icon: Settings,        label: 'Settings',        to: '/settings',        roles: ['super_admin', 'administrator', 'team_manager'] },
 ]
 
 const USER_NAV_ITEMS: NavItem[] = [

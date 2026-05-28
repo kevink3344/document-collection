@@ -510,6 +510,52 @@ function runMigrations(db: AppDatabase): void {
     }
   }
 
+  // ── Add 'location' to collection_fields CHECK constraint ─────────────────
+  const fieldsSqlRowForLocation = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
+    .get() as unknown as { sql: string } | undefined
+  const supportsLocationType = fieldsSqlRowForLocation?.sql?.includes("'location'") ?? false
+
+  if (!supportsLocationType) {
+    db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      db.transaction(() => {
+        db.prepare('ALTER TABLE collection_fields RENAME TO collection_fields_pre_location').run()
+        db.prepare(`
+          CREATE TABLE collection_fields (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+            version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
+            field_key     TEXT,
+            type          TEXT    NOT NULL CHECK(type IN (
+                            'short_text','date','long_text','single_choice','multiple_choice',
+                            'attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale',
+                            'location'
+                          )),
+            label         TEXT    NOT NULL,
+            page_number   INTEGER NOT NULL DEFAULT 1,
+            required      INTEGER NOT NULL DEFAULT 0,
+            options       TEXT,
+            display_style TEXT    NOT NULL DEFAULT 'radio',
+            branch_rules  TEXT,
+            sort_order    INTEGER NOT NULL DEFAULT 0
+          )
+        `).run()
+        db.prepare(`
+          INSERT INTO collection_fields
+            (id, collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order)
+          SELECT
+            id, collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order
+          FROM collection_fields_pre_location
+        `).run()
+        db.prepare('DROP TABLE collection_fields_pre_location').run()
+      })()
+      console.log('[db] Migration: rebuilt collection_fields to support location type')
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON')
+    }
+  }
+
   const existingResponseCols = db
     .prepare(`PRAGMA table_info(collection_responses)`)
     .all() as unknown as { name: string }[]
@@ -529,7 +575,10 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: added collection_responses.last_edited_at')
   }
 
-  if (hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_old')) {
+  if (
+    hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_old') ||
+    hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_pre_location')
+  ) {
     rebuildCollectionResponseValues(db)
   }
 
@@ -543,7 +592,9 @@ function runMigrations(db: AppDatabase): void {
     .get() as unknown as { sql: string } | undefined
   const supportsListType = tableSqlRow?.sql?.includes("'list'") ?? false
   const hasListOptionsColumn = tableColNames.has('list_options')
-  const hasStaleTableColumnsFieldFk = hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_old')
+  const hasStaleTableColumnsFieldFk =
+    hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_old') ||
+    hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_pre_location')
 
   if (!supportsListType || !hasListOptionsColumn || hasStaleTableColumnsFieldFk) {
     rebuildCollectionTableColumns(db, hasListOptionsColumn)
@@ -987,6 +1038,44 @@ function runMigrations(db: AppDatabase): void {
       console.log('[db] Migration: repaired user_locations FK (was referencing dropped users_old)')
     } catch (repairErr) {
       console.warn('[db] Could not repair user_locations FK:', (repairErr as Error).message)
+    }
+  }
+
+  // ── General repair: fix ALL tables whose FK still points to dropped users_old ─
+  // The V2 users migration renamed `users` → `users_old` then dropped it.
+  // Turso's ALTER TABLE RENAME rewrites FK references in all dependent tables.
+  // Only user_locations was explicitly repaired above; this block catches the rest
+  // (collections, collection_versions, notifications, notification_deliveries,
+  //  notification_preferences, notification_email_ccs, user_preferences, etc.)
+  const tablesWithBrokenUsersFk = db
+    .prepare(`SELECT name, sql FROM sqlite_master WHERE type='table' AND sql LIKE '%users_old%' ORDER BY name`)
+    .all() as unknown as Array<{ name: string; sql: string }>
+
+  for (const { name, sql } of tablesWithBrokenUsersFk) {
+    try {
+      const rows = db.prepare(`SELECT * FROM "${name}"`).all() as unknown as Record<string, unknown>[]
+      const colInfo = db.prepare(`PRAGMA table_info("${name}")`).all() as unknown as Array<{ name: string }>
+      const cols = colInfo.map(c => c.name)
+      const fixedSql = sql.replace(/users_old/g, 'users')
+
+      db.exec('PRAGMA foreign_keys = OFF')
+      try {
+        db.exec(`DROP TABLE "${name}"`)
+        db.exec(fixedSql)
+        if (rows.length > 0) {
+          const colNames = cols.map(c => `"${c}"`).join(', ')
+          const placeholders = cols.map(() => '?').join(', ')
+          const stmt = db.prepare(`INSERT INTO "${name}" (${colNames}) VALUES (${placeholders})`)
+          for (const row of rows) {
+            stmt.run(...cols.map(c => (row[c] !== undefined ? row[c] : null)))
+          }
+        }
+        console.log(`[db] Migration: repaired ${name} FK (users_old → users)`)
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON')
+      }
+    } catch (repairErr) {
+      console.warn(`[db] Could not repair ${name} FK:`, (repairErr as Error).message)
     }
   }
 

@@ -83,7 +83,7 @@ const TREND_DAYS = 21
 router.get('/trend', authenticateToken, (req: Request, res: Response): void => {
   const context = loadRequestUserContext(req)
   const role = context?.role
-  if (role !== 'administrator' && role !== 'team_manager') {
+  if (role !== 'administrator' && role !== 'team_manager' && role !== 'reviewer') {
     res.status(403).json({ error: 'Forbidden' })
     return
   }
@@ -143,7 +143,7 @@ router.get('/trend', authenticateToken, (req: Request, res: Response): void => {
 router.get('/', authenticateToken, (req: Request, res: Response): void => {
   const context = loadRequestUserContext(req)
   const role = context?.role
-  if (role !== 'administrator' && role !== 'team_manager') {
+  if (role !== 'administrator' && role !== 'team_manager' && role !== 'reviewer') {
     res.status(403).json({ error: 'Forbidden' })
     return
   }

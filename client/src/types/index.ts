@@ -45,6 +45,7 @@ export type FieldType =
   | 'rating'
   | 'comment'
   | 'matrix_likert_scale'
+  | 'location'
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionStatus = 'draft' | 'published'

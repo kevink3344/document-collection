@@ -24,7 +24,7 @@ import {
   updateCollection,
 } from '../api/collections'
 import { listCategories } from '../api/categories'
-import type { Category, Collection, CollectionField, Location } from '../types'
+import type { Category, Collection, CollectionField } from '../types'
 import type {
   ColType,
   CollectionStatus,
@@ -36,7 +36,6 @@ import type {
 import TableWizardModal from '../components/collections/TableWizardModal'
 import MatrixLikertConfigModal from '../components/collections/MatrixLikertConfigModal'
 import RichTextEditor from '../components/common/RichTextEditor'
-import { LocationTypeahead } from '../components/common/LocationTypeahead'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { htmlToPlainText } from '../utils/richText'
 import { useToast } from '../contexts/ToastContext'
@@ -130,6 +129,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   rating: 'Rating (1–5)',
   comment: 'Comment (Read-only)',
   matrix_likert_scale: 'Matrix Likert Scale',
+  location: 'Location',
 }
 
 function normalizeFieldType(type: string): FieldType {
@@ -146,6 +146,7 @@ function normalizeFieldType(type: string): FieldType {
     'rating',
     'comment',
     'matrix_likert_scale',
+    'location',
   ])
   return valid.has(type as FieldType) ? (type as FieldType) : 'short_text'
 }
@@ -191,7 +192,7 @@ export default function CollectionBuilderPage() {
   const [instructionsDocUrl, setInstructionsDocUrl] = useState('')
   const [allowSubmissionEdits, setAllowSubmissionEdits] = useState(false)
   const [submissionEditWindowHours, setSubmissionEditWindowHours] = useState('24')
-  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
+
 
   // Fields
   const [fields, setFields] = useState<BuilderField[]>([blankField()])
@@ -251,19 +252,7 @@ export default function CollectionBuilderPage() {
     setAnonymous(col.anonymous)
     setAllowSubmissionEdits(col.allowSubmissionEdits)
     setSubmissionEditWindowHours(String(col.submissionEditWindowHours ?? 24))
-    // If the collection has a location, resolve its name from the server
-    if (col.locationId != null) {
-      import('../api/locations').then(({ searchLocations }) =>
-        searchLocations('').then(locs => {
-          const match = locs.find(l => l.id === col.locationId)
-          setSelectedLocation(match ?? { id: col.locationId!, name: `Location ${col.locationId}`, organizationId: 0, createdAt: '' })
-        }).catch(() => {
-          setSelectedLocation({ id: col.locationId!, name: `Location ${col.locationId}`, organizationId: 0, createdAt: '' })
-        })
-      ).catch(() => setSelectedLocation(null))
-    } else {
-      setSelectedLocation(null)
-    }
+
     setStatus(asTemplate ? 'draft' : (col.status ?? 'draft'))
     setInstructions(col.instructions ?? '')
     setInstructionsDocUrl(col.instructionsDocUrl ?? '')
@@ -605,7 +594,6 @@ export default function CollectionBuilderPage() {
       anonymous,
       allowSubmissionEdits,
       submissionEditWindowHours: allowSubmissionEdits ? normalizedHours : undefined,
-      locationId: selectedLocation?.id ?? null,
       fields: fields
         .filter(f => f.label.trim() !== '')
         .map((f, i) => ({
@@ -1215,19 +1203,7 @@ export default function CollectionBuilderPage() {
                 )}
               </div>
 
-              <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4">
-                <label className={`${LABEL} mb-1`}>Restrict to Location</label>
-                <p className="mb-2 text-xs text-[#64748B]">
-                  Reviewers assigned to this location can view responses. Leave blank for no restriction.
-                </p>
-                <div className="max-w-xs">
-                  <LocationTypeahead
-                    value={selectedLocation}
-                    onChange={setSelectedLocation}
-                    placeholder="Search locations…"
-                  />
-                </div>
-              </div>
+
             </div>
           )}
 

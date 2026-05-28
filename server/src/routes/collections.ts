@@ -36,6 +36,7 @@ function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string
 type FieldType =
   | 'short_text' | 'date' | 'long_text' | 'single_choice' | 'multiple_choice'
   | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating' | 'comment' | 'matrix_likert_scale'
+  | 'location'
 
 type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 
@@ -725,6 +726,8 @@ function buildSeededFieldValue(
     case 'matrix_likert_scale':
       return buildSeededMatrixValue(field, random)
     case 'comment':
+      return null
+    case 'location':
       return null
     default:
       return null
@@ -1903,31 +1906,67 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
     return
   }
 
-  // Determine whether to apply location filtering
-  // Reviewers: only see responses matching one of their assigned locations
-  // Higher roles: see everything
+  // Determine whether to apply location filtering.
+  // Reviewers: only see responses where the 'location' field value matches one of their assigned locations.
+  // Higher roles: see everything.
   let responses: DbResponse[]
 
-  if (!canViewAllResponses(context) && (collection as DbCollection & { location_id?: number | null }).location_id) {
-    // Reviewer: filter to responses in their assigned locations
-    const userLocations = db
-      .prepare('SELECT location_id FROM user_locations WHERE user_id = ?')
-      .all(context.id) as unknown as Array<{ location_id: number }>
-    const locationIds = userLocations.map(ul => ul.location_id)
-
-    if (locationIds.length === 0) {
-      res.json([])
-      return
-    }
-
-    const ph = locationIds.map(() => '?').join(',')
-    responses = db
+  if (!canViewAllResponses(context)) {
+    // Find the location field in this collection (if any)
+    const locationField = db
       .prepare(
-        `SELECT * FROM collection_responses
-         WHERE collection_id = ? AND location_id IN (${ph})
-         ORDER BY submitted_at DESC`
+        `SELECT id FROM collection_fields WHERE collection_id = ? AND type = 'location' LIMIT 1`
       )
-      .all(id, ...locationIds) as unknown as DbResponse[]
+      .get(id) as unknown as { id: number } | undefined
+
+    if (locationField) {
+      // Get the reviewer's assigned location names
+      const assignedLocations = db
+        .prepare(
+          `SELECT l.name FROM user_locations ul
+           JOIN locations l ON l.id = ul.location_id
+           WHERE ul.user_id = ?`
+        )
+        .all(context.id) as unknown as Array<{ name: string }>
+      const locationNames = assignedLocations.map(l => l.name)
+
+      if (locationNames.length === 0) {
+        res.json([])
+        return
+      }
+
+      // Find response IDs where the location field value is in the reviewer's locations
+      const ph = locationNames.map(() => '?').join(',')
+      const matchingResponseIds = db
+        .prepare(
+          `SELECT DISTINCT rv.response_id
+           FROM collection_response_values rv
+           WHERE rv.field_id = ? AND rv.value IN (${ph})`
+        )
+        .all(locationField.id, ...locationNames) as unknown as Array<{ response_id: number }>
+      const ids = matchingResponseIds.map(r => r.response_id)
+
+      if (ids.length === 0) {
+        res.json([])
+        return
+      }
+
+      const idPh = ids.map(() => '?').join(',')
+      responses = db
+        .prepare(
+          `SELECT * FROM collection_responses
+           WHERE collection_id = ? AND id IN (${idPh})
+           ORDER BY submitted_at DESC`
+        )
+        .all(id, ...ids) as unknown as DbResponse[]
+    } else {
+      // No location field in this collection — reviewer sees all responses
+      responses = db
+        .prepare(
+          'SELECT * FROM collection_responses WHERE collection_id = ? ORDER BY submitted_at DESC'
+        )
+        .all(id) as unknown as DbResponse[]
+    }
   } else {
     responses = db
       .prepare(
@@ -1962,7 +2001,6 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
       respondentName: r.respondent_name,
       respondentEmail: r.respondent_email,
       submittedAt: r.submitted_at,
-      locationId: (r as DbResponse & { location_id?: number | null }).location_id ?? null,
       values: (valsByResponse.get(r.id) ?? []).map(v => ({
         fieldId: v.field_id,
         value: v.value,

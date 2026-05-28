@@ -7,7 +7,7 @@ import SubmissionTrendChart from '../components/dashboard/SubmissionTrendChart'
 export default function DashboardPage() {
   const { user } = useAuth()
   const dashboardTitle = user?.organizationName ? `${user.organizationName} Dashboard` : 'Dashboard'
-  const isPrivileged = user?.role === 'administrator' || user?.role === 'team_manager'
+  const isPrivileged = user?.role === 'administrator' || user?.role === 'team_manager' || user?.role === 'reviewer'
   const [loading, setLoading] = useState(true)
   const [kpiStats, setKpiStats] = useState<DashboardStats | null>(null)
   const [trendData, setTrendData] = useState<TrendData | null>(null)

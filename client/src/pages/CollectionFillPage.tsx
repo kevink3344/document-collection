@@ -4,6 +4,7 @@ import type { CSSProperties } from 'react'
 import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft } from 'lucide-react'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
+import { getPublicLocations } from '../api/locations'
 import { getPublicSetting } from '../api/settings'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { sanitizeRichText } from '../utils/richText'
@@ -1924,6 +1925,48 @@ export default function CollectionFillPage() {
   )
 }
 
+// ── Location field input ──────────────────────────────────────
+
+function LocationFieldInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string
+  onChange: (v: string) => void
+  disabled: boolean
+}) {
+  const [locations, setLocations] = useState<{ id: number; name: string }[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    getPublicLocations()
+      .then(locs => setLocations(locs))
+      .catch(() => setLocations([]))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) {
+    return <p className="text-sm text-[#94A3B8]">Loading locations…</p>
+  }
+
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      disabled={disabled}
+      className={INPUT}
+    >
+      <option value="">Select a location…</option>
+      {locations.map(l => (
+        <option key={l.id} value={l.name}>
+          {l.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 // ── Field renderer ────────────────────────────────────────────
 
 function FieldRenderer({
@@ -2233,6 +2276,10 @@ function FieldRenderer({
 
       {field.type === 'matrix_likert_scale' && (
         <MatrixLikertScaleInput field={field} value={value} onChange={onChange} disabled={disabled} />
+      )}
+
+      {field.type === 'location' && (
+        <LocationFieldInput value={value} onChange={onChange} disabled={disabled} />
       )}
     </div>
   )

@@ -12,37 +12,53 @@ interface DbLocation {
   created_at: string
 }
 
-// ── GET /api/locations — list / typeahead search ──────────────
-router.get('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
-  if (!context) {
-    res.status(401).json({ error: 'Authentication required' })
-    return
-  }
-
+// ── GET /api/locations — list / typeahead search (public) ────
+router.get('/', (req: Request, res: Response) => {
   const db = getDb()
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
 
+  // If authenticated, scope to the caller's organization; otherwise return all.
+  const context = loadRequestUserContext(req)
+  const orgId = context?.organizationId ?? null
+
   let rows: DbLocation[]
-  if (q) {
-    rows = db
-      .prepare(
-        `SELECT id, name, organization_id, created_at
-         FROM locations
-         WHERE organization_id = ? AND lower(name) LIKE lower(?)
-         ORDER BY lower(name)
-         LIMIT 20`
-      )
-      .all(context.organizationId, `%${q}%`) as unknown as DbLocation[]
+  if (orgId !== null) {
+    rows = q
+      ? db
+          .prepare(
+            `SELECT id, name, organization_id, created_at
+             FROM locations
+             WHERE organization_id = ? AND lower(name) LIKE lower(?)
+             ORDER BY lower(name)
+             LIMIT 20`
+          )
+          .all(orgId, `%${q}%`) as unknown as DbLocation[]
+      : db
+          .prepare(
+            `SELECT id, name, organization_id, created_at
+             FROM locations
+             WHERE organization_id = ?
+             ORDER BY lower(name)`
+          )
+          .all(orgId) as unknown as DbLocation[]
   } else {
-    rows = db
-      .prepare(
-        `SELECT id, name, organization_id, created_at
-         FROM locations
-         WHERE organization_id = ?
-         ORDER BY lower(name)`
-      )
-      .all(context.organizationId) as unknown as DbLocation[]
+    rows = q
+      ? db
+          .prepare(
+            `SELECT id, name, organization_id, created_at
+             FROM locations
+             WHERE lower(name) LIKE lower(?)
+             ORDER BY lower(name)
+             LIMIT 20`
+          )
+          .all(`%${q}%`) as unknown as DbLocation[]
+      : db
+          .prepare(
+            `SELECT id, name, organization_id, created_at
+             FROM locations
+             ORDER BY lower(name)`
+          )
+          .all() as unknown as DbLocation[]
   }
 
   res.json(
