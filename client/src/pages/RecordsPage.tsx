@@ -363,7 +363,16 @@ function renderResponseValue(field: CollectionField | undefined, value: string |
     try {
       const items = JSON.parse(raw) as string[]
       if (Array.isArray(items) && items.length > 0) {
-        return <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{items.join(', ')}</p>
+        return (
+          <ul className="space-y-0.5">
+            {items.map((item, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
+                <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#64748B] shrink-0" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        )
       }
     } catch {
       // Fall through to raw rendering.
