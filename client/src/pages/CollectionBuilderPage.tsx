@@ -48,6 +48,7 @@ interface BuilderField {
   fieldKey: string
   type: FieldType
   label: string
+  subtitle: string
   page: number
   required: boolean
   options: string[]
@@ -79,6 +80,7 @@ function blankField(page = 1): BuilderField {
     fieldKey: uid(),
     type: 'short_text',
     label: '',
+    subtitle: '',
     page,
     required: false,
     options: [],
@@ -99,6 +101,7 @@ function mapCollectionToBuilderFields(collection: Collection): BuilderField[] {
     fieldKey: f.fieldKey ?? uid(),
     type: normalizeFieldType(f.type),
     label: f.label,
+    subtitle: f.subtitle ?? '',
     page: f.page ?? 1,
     required: f.required,
     options: f.options ?? [],
@@ -600,6 +603,7 @@ export default function CollectionBuilderPage() {
           fieldKey: f.fieldKey,
           type: normalizeFieldType(f.type),
           label: f.label.trim(),
+          subtitle: f.subtitle.trim() || undefined,
           page: Math.max(1, Math.floor(f.page || 1)),
           required: f.required,
           options: f.options.filter(o => o.trim() !== ''),
@@ -1523,6 +1527,15 @@ function FieldCard({
             value={field.label}
             onChange={e => onUpdate({ label: e.target.value })}
             className={`${FIELD_INPUT} w-full`}
+          />
+        )}
+        {field.type !== 'comment' && (
+          <input
+            type="text"
+            placeholder="Subtitle (optional)"
+            value={field.subtitle}
+            onChange={e => onUpdate({ subtitle: e.target.value })}
+            className={`${FIELD_INPUT} w-full text-[#64748B] dark:text-[#94A3B8]`}
           />
         )}
         <div className="flex items-center gap-4 flex-wrap">

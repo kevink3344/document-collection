@@ -69,6 +69,7 @@ export interface CollectionField {
   fieldKey?: string
   type: FieldType
   label: string
+  subtitle?: string
   page: number
   required: boolean
   options: string[] | null

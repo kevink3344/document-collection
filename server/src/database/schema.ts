@@ -106,6 +106,7 @@ export function createSchema(db: AppDatabase): void {
                       'location'
                     )),
       label         TEXT    NOT NULL,
+      subtitle      TEXT,
       page_number   INTEGER NOT NULL DEFAULT 1,
       required      INTEGER NOT NULL DEFAULT 0,
       options       TEXT,

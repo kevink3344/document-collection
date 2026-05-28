@@ -78,6 +78,7 @@ interface DbField {
   field_key: string | null
   type: FieldType
   label: string
+  subtitle: string | null
   page_number: number
   required: number
   options: string | null
@@ -138,6 +139,7 @@ interface FieldInput {
   fieldKey?: string
   type: FieldType
   label: string
+  subtitle?: string
   page?: number
   required?: boolean
   options?: string[]
@@ -363,6 +365,7 @@ function toApiCollection(
       fieldKey: f.field_key ?? `field-${f.id}`,
       type: f.type,
       label: f.label,
+      subtitle: f.subtitle ?? null,
       page: Number(f.page_number) || 1,
       required: f.required === 1,
       options: f.options ? (JSON.parse(f.options) as string[]) : null,
@@ -434,8 +437,8 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
@@ -443,6 +446,7 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
         field.fieldKey?.trim() || crypto.randomUUID(),
         field.type,
         field.label,
+        field.subtitle?.trim() || null,
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
@@ -477,8 +481,8 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, field_key, type, label, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
@@ -486,6 +490,7 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
         field.fieldKey?.trim() || crypto.randomUUID(),
         field.type,
         field.label,
+        field.subtitle?.trim() || null,
         Math.max(1, Math.floor(field.page ?? 1)),
         field.required ? 1 : 0,
         field.options?.length ? JSON.stringify(field.options) : null,
@@ -743,6 +748,7 @@ function normaliseIncomingFields(fields: FieldInput[]): string {
       fieldKey: String(f.fieldKey ?? '').trim(),
       type: f.type,
       label: (f.label ?? '').trim(),
+      subtitle: (f.subtitle ?? '').trim(),
       page: Math.max(1, Math.floor(f.page ?? 1)),
       required: !!f.required,
       options: (f.options ?? []).map(o => o.trim()).filter(Boolean),
@@ -781,6 +787,7 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
       fieldKey: f.field_key ?? `field-${f.id}`,
       type: f.type,
       label: f.label,
+      subtitle: f.subtitle ?? '',
       page: f.page_number,
       required: f.required === 1,
       options: (() => {

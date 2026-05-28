@@ -483,6 +483,11 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: added collection_fields.staff_only')
   }
 
+  if (!fieldColNames.has('subtitle')) {
+    db.exec(`ALTER TABLE collection_fields ADD COLUMN subtitle TEXT`)
+    console.log('[db] Migration: added collection_fields.subtitle')
+  }
+
   // Rebuild collection_fields if the CHECK constraint doesn't include newer field types.
   const fieldsSqlRow = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)

@@ -2015,10 +2015,24 @@ function FieldRenderer({
 
   return (
     <div className="space-y-1">
-      <label className={LABEL}>
-        {field.label}
-        {field.required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
+      {field.type !== 'confirmation' && (
+        <label className={LABEL}>
+          {field.label}
+          {field.required && <span className="text-red-500 ml-0.5">*</span>}
+        </label>
+      )}
+      {field.subtitle && field.type !== 'confirmation' && (
+        <p className="text-sm text-[#64748B] dark:text-[#94A3B8] -mt-0.5">{field.subtitle}</p>
+      )}
+      {field.type === 'confirmation' && (
+        <p className={LABEL}>
+          {field.label}
+          {field.required && <span className="text-red-500 ml-0.5">*</span>}
+        </p>
+      )}
+      {field.subtitle && field.type === 'confirmation' && (
+        <p className="text-sm text-[#64748B] dark:text-[#94A3B8] -mt-0.5">{field.subtitle}</p>
+      )}
 
       {field.type === 'short_text' && (
         <input
@@ -2210,18 +2224,16 @@ function FieldRenderer({
       )}
 
       {field.type === 'confirmation' && (
-        <label className="flex items-start gap-2 cursor-pointer">
+        <label className="flex items-center gap-2 cursor-pointer w-fit">
           <input
             type="checkbox"
             checked={value === 'true'}
             onChange={e => onChange(e.target.checked ? 'true' : '')}
-            className="accent-[#2563EB] w-4 h-4 mt-0.5"
+            className="accent-[#2563EB] w-4 h-4"
             required={required}
             disabled={disabled}
           />
-          <span className="text-sm text-[#475569] dark:text-[#94A3B8]">
-            {field.label}
-          </span>
+          <span className="text-sm text-[#475569] dark:text-[#94A3B8]">{field.label}</span>
         </label>
       )}
 
