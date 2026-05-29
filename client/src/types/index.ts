@@ -161,6 +161,18 @@ export interface TicketResponse {
   values: { fieldId: number; value: string | null }[]
 }
 
+export interface CollectionTicketRow {
+  id: number
+  collectionResponseId: number
+  finalized: boolean
+  finalizedAt: string | null
+  finalizedByName: string | null
+  submitterName: string | null
+  submitterEmail: string | null
+  submittedAt: string | null
+  values: { fieldId: number; value: string | null }[]
+}
+
 export interface Category {
   id: number
   name: string

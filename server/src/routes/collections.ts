@@ -2534,4 +2534,83 @@ router.post('/:id/responses/:responseId/ticket/finalize', authenticateToken, (re
   }
 })
 
+// GET /:id/tickets — list all ticket responses for a collection
+router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): void => {
+  const context = loadRequestUserContext(req)
+  const collectionId = parseInt(req.params.id, 10)
+  if (!context || isNaN(collectionId)) { res.status(400).json({ error: 'Invalid request' }); return }
+  if (!canViewResponses(context)) { res.status(403).json({ error: 'Staff access required' }); return }
+
+  try {
+    const db = getDb()
+    const collection = fetchAccessibleCollectionById(collectionId, context)
+    if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
+
+    type TicketListRow = {
+      id: number
+      collection_response_id: number
+      filled_by: number | null
+      filled_at: string | null
+      finalized: number
+      finalized_at: string | null
+      finalized_by_name: string | null
+      submitter_name: string | null
+      submitter_email: string | null
+      submitted_at: string | null
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        tr.id,
+        tr.collection_response_id,
+        tr.filled_by,
+        tr.filled_at,
+        tr.finalized,
+        tr.finalized_at,
+        fu.name          AS finalized_by_name,
+        cr.respondent_name  AS submitter_name,
+        cr.respondent_email AS submitter_email,
+        cr.submitted_at
+      FROM ticket_responses tr
+      LEFT JOIN users fu ON fu.id = tr.finalized_by
+      LEFT JOIN collection_responses cr ON cr.id = tr.collection_response_id
+      WHERE tr.collection_id = ?
+      ORDER BY tr.id DESC
+    `).all(collectionId) as TicketListRow[]
+
+    const ticketIds = rows.map(r => r.id)
+
+    type ValRow = { ticket_response_id: number; ticket_field_id: number; value: string | null }
+    let valRows: ValRow[] = []
+    if (ticketIds.length > 0) {
+      const placeholders = ticketIds.map(() => '?').join(',')
+      valRows = db.prepare(
+        `SELECT ticket_response_id, ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id IN (${placeholders})`
+      ).all(...ticketIds) as ValRow[]
+    }
+
+    const valuesByTicket = new Map<number, Array<{ fieldId: number; value: string | null }>>()
+    for (const v of valRows) {
+      const arr = valuesByTicket.get(v.ticket_response_id) ?? []
+      arr.push({ fieldId: v.ticket_field_id, value: v.value })
+      valuesByTicket.set(v.ticket_response_id, arr)
+    }
+
+    res.json(rows.map(r => ({
+      id: r.id,
+      collectionResponseId: r.collection_response_id,
+      finalized: r.finalized === 1,
+      finalizedAt: r.finalized_at,
+      finalizedByName: r.finalized_by_name,
+      submitterName: r.submitter_name,
+      submitterEmail: r.submitter_email,
+      submittedAt: r.submitted_at,
+      values: valuesByTicket.get(r.id) ?? [],
+    })))
+  } catch (err) {
+    console.error('[collections] list tickets:', err)
+    res.status(500).json({ error: 'Failed to list tickets' })
+  }
+})
+
 export default router

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Calendar, ClipboardList, Clipboard, LayoutGrid, Lock, LockOpen, Mail, MessageSquare, Save, Table2, Tag, Trash2, User, Download } from 'lucide-react'
 import { getCollection, getComments, addComment, deleteComment, getResponses, listCollections, upsertStaffFields } from '../api/collections'
-import { getTicketFields, getTicket, saveTicket, finalizeTicket } from '../api/tickets'
+import { getTicketFields, getTicket, saveTicket, finalizeTicket, getCollectionTickets } from '../api/tickets'
 import { getCategoryColorClasses } from '../utils/categoryColors'
-import type { Collection, CollectionField, CollectionResponse, SubmissionComment, TicketField, TicketResponse } from '../types'
+import type { Collection, CollectionField, CollectionResponse, SubmissionComment, TicketField, TicketResponse, CollectionTicketRow } from '../types'
 import { useAuth } from '../contexts/AuthContext'
 
-type RecordsView = 'summary' | 'individual'
+type RecordsView = 'summary' | 'individual' | 'tickets'
 
 interface SummaryDatum {
   label: string
@@ -915,6 +915,10 @@ export default function RecordsPage() {
   const [ticketSaveState, setTicketSaveState] = useState<Record<number, 'idle' | 'saving' | 'saved' | 'error'>>({})
   const [ticketFinalizing, setTicketFinalizing] = useState<Record<number, boolean>>({})
   const [showFinalizeConfirm, setShowFinalizeConfirm] = useState<number | null>(null)
+  // All-tickets view
+  const [allTickets, setAllTickets] = useState<CollectionTicketRow[]>([])
+  const [ticketsLoading, setTicketsLoading] = useState(false)
+  const [ticketStatusFilter, setTicketStatusFilter] = useState<'all' | 'open' | 'closed'>('all')
   const commentPollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({})
   useEffect(() => {
     listCollections()
@@ -952,7 +956,20 @@ export default function RecordsPage() {
     getTicketFields(selectedCollectionId)
       .then(fields => setTicketFieldsForCollection(fields))
       .catch(() => setTicketFieldsForCollection([]))
+
+    // Reset tickets view when switching collections
+    setAllTickets([])
+    setTicketStatusFilter('all')
   }, [selectedCollectionId])
+
+  useEffect(() => {
+    if (view !== 'tickets' || !selectedCollectionId) return
+    setTicketsLoading(true)
+    getCollectionTickets(selectedCollectionId)
+      .then(rows => setAllTickets(rows))
+      .catch(() => setAllTickets([]))
+      .finally(() => setTicketsLoading(false))
+  }, [view, selectedCollectionId])
 
   const staffFields = useMemo(
     () => (selectedCollection?.fields ?? []).filter(f => f.staffOnly),
@@ -1437,6 +1454,21 @@ export default function RecordsPage() {
                 >
                   Individual
                 </button>
+                {ticketFieldsForCollection.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setView('tickets')}
+                    className={[
+                      'px-4 py-2 text-sm font-medium transition-colors border-l border-[#CBD5E1] dark:border-[#334155] flex items-center gap-1.5',
+                      view === 'tickets'
+                        ? 'bg-[#2563EB] text-white'
+                        : 'bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                    ].join(' ')}
+                  >
+                    <Clipboard size={13} />
+                    Tickets
+                  </button>
+                )}
               </div>
               {view === 'individual' && (
                 <div className="inline-flex rounded overflow-hidden border border-[#CBD5E1] dark:border-[#334155] w-fit">
@@ -2056,6 +2088,138 @@ export default function RecordsPage() {
             </section>
             )
           })}
+        </div>
+      )}
+
+      {/* ── Tickets view ─────────────────────────────────────────────────── */}
+      {view === 'tickets' && selectedCollection && (
+        <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+          {/* Filter bar */}
+          <div className="px-5 py-3 border-b border-[#E2E8F0] dark:border-[#334155] flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium text-[#475569] dark:text-[#94A3B8]">Status:</span>
+            {(['all', 'open', 'closed'] as const).map(f => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setTicketStatusFilter(f)}
+                className={[
+                  'px-3 py-1 rounded-[2px] text-xs font-medium transition-colors',
+                  ticketStatusFilter === f
+                    ? 'bg-[#2563EB] text-white'
+                    : 'bg-[#F1F5F9] dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] hover:bg-[#E2E8F0] dark:hover:bg-[#1E293B]',
+                ].join(' ')}
+              >
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+            <span className="ml-auto text-xs text-[#94A3B8]">
+              {allTickets.filter(t => ticketStatusFilter === 'all' || (ticketStatusFilter === 'closed' ? t.finalized : !t.finalized)).length} ticket{allTickets.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          {ticketsLoading && (
+            <div className="flex items-center justify-center h-32 text-[#64748B] text-sm">
+              Loading tickets…
+            </div>
+          )}
+
+          {!ticketsLoading && allTickets.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-32 gap-2 text-[#94A3B8]">
+              <Clipboard size={28} className="opacity-40" />
+              <p className="text-sm">No tickets have been filled in yet.</p>
+            </div>
+          )}
+
+          {!ticketsLoading && allTickets.length > 0 && (() => {
+            const filtered = allTickets.filter(t =>
+              ticketStatusFilter === 'all' ||
+              (ticketStatusFilter === 'closed' ? t.finalized : !t.finalized)
+            )
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A]">
+                      <th className="text-left px-4 py-2.5 font-medium text-[#64748B] text-xs uppercase tracking-wide whitespace-nowrap">Submission</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-[#64748B] text-xs uppercase tracking-wide whitespace-nowrap">Submitted</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-[#64748B] text-xs uppercase tracking-wide whitespace-nowrap">Status</th>
+                      {ticketFieldsForCollection.map(f => (
+                        <th key={f.id} className="text-left px-4 py-2.5 font-medium text-[#64748B] text-xs uppercase tracking-wide whitespace-nowrap max-w-[180px]">
+                          {f.label}
+                        </th>
+                      ))}
+                      <th className="text-left px-4 py-2.5 font-medium text-[#64748B] text-xs uppercase tracking-wide whitespace-nowrap">Closed by</th>
+                      <th className="px-4 py-2.5" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((ticket, i) => {
+                      const submitter = ticket.submitterName ?? ticket.submitterEmail ?? `#${ticket.collectionResponseId}`
+                      const submittedLabel = ticket.submittedAt
+                        ? new Date(ticket.submittedAt.includes('T') ? ticket.submittedAt : ticket.submittedAt.replace(' ', 'T') + 'Z')
+                            .toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                        : '—'
+                      return (
+                        <tr
+                          key={ticket.id}
+                          className={[
+                            'border-b border-[#E2E8F0] dark:border-[#334155] last:border-0',
+                            i % 2 === 1 ? 'bg-[#F8FAFC] dark:bg-[#0F172A]/50' : '',
+                          ].join(' ')}
+                        >
+                          <td className="px-4 py-3 text-[#1E293B] dark:text-[#F1F5F9] font-medium whitespace-nowrap">{submitter}</td>
+                          <td className="px-4 py-3 text-[#64748B] whitespace-nowrap">{submittedLabel}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {ticket.finalized ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[2px] text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                                <Lock size={10} />
+                                Closed
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[2px] text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                                Open
+                              </span>
+                            )}
+                          </td>
+                          {ticketFieldsForCollection.map(f => {
+                            const val = f.id !== undefined
+                              ? (ticket.values.find(v => v.fieldId === f.id)?.value ?? '')
+                              : ''
+                            return (
+                              <td key={f.id} className="px-4 py-3 text-[#475569] dark:text-[#94A3B8] max-w-[180px] truncate">
+                                {val || <span className="text-[#CBD5E1] italic">—</span>}
+                              </td>
+                            )
+                          })}
+                          <td className="px-4 py-3 text-[#64748B] whitespace-nowrap text-xs">
+                            {ticket.finalized && ticket.finalizedByName ? ticket.finalizedByName : '—'}
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setView('individual')
+                                setIndividualLayout('card')
+                                setTimeout(() => {
+                                  setSubmissionTab(prev => ({ ...prev, [ticket.collectionResponseId]: 'ticket' }))
+                                }, 50)
+                              }}
+                              className="text-xs text-[#2563EB] hover:underline"
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                {filtered.length === 0 && (
+                  <p className="text-sm text-[#94A3B8] text-center py-8">No tickets match this filter.</p>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
