@@ -2327,6 +2327,13 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
 
     const body = req.body as { fields?: FieldInput[] }
     const fields = Array.isArray(body.fields) ? body.fields : []
+    const existingFields = db
+      .prepare('SELECT id, field_key FROM ticket_fields WHERE collection_id = ?')
+      .all(id) as Array<{ id: number; field_key: string | null }>
+    const oldFieldIds = existingFields.map(field => field.id)
+    const existingFieldKeyById = new Map(
+      existingFields.map(field => [field.id, field.field_key?.trim() || `tf-${field.id}`])
+    )
 
     // Disable FK checks so we can replace ticket_fields even when
     // ticket_response_values already reference them
@@ -2335,13 +2342,16 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
     // Delete existing ticket fields (cascade removes ticket_table_columns)
     db.prepare('DELETE FROM ticket_fields WHERE collection_id = ?').run(id)
 
+    const newFieldIdByKey = new Map<string, number>()
+
     fields.forEach((field, idx) => {
+      const normalizedFieldKey = field.fieldKey?.trim() || crypto.randomUUID()
       const r = db.prepare(
         `INSERT INTO ticket_fields (collection_id, field_key, type, label, subtitle, page_number, required, options, display_style, sort_order)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
-        field.fieldKey?.trim() || crypto.randomUUID(),
+        normalizedFieldKey,
         field.type,
         field.label,
         field.subtitle?.trim() || null,
@@ -2351,6 +2361,9 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
         resolveFieldDisplayStyle(field.type, field.displayStyle),
         field.sortOrder ?? idx,
       )
+      if (!newFieldIdByKey.has(normalizedFieldKey)) {
+        newFieldIdByKey.set(normalizedFieldKey, Number(r.lastInsertRowid))
+      }
       if (field.type === 'custom_table' && field.tableColumns?.length) {
         const fieldId = r.lastInsertRowid as number
         field.tableColumns.forEach((col, ci) => {
@@ -2364,6 +2377,29 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
         })
       }
     })
+
+    if (oldFieldIds.length > 0) {
+      const obsoleteFieldIds: number[] = []
+      const remapValueField = db.prepare(
+        'UPDATE ticket_response_values SET ticket_field_id = ? WHERE ticket_field_id = ?'
+      )
+
+      oldFieldIds.forEach(oldFieldId => {
+        const fieldKey = existingFieldKeyById.get(oldFieldId)
+        const replacementFieldId = fieldKey ? newFieldIdByKey.get(fieldKey) : undefined
+        if (replacementFieldId) {
+          remapValueField.run(replacementFieldId, oldFieldId)
+        } else {
+          obsoleteFieldIds.push(oldFieldId)
+        }
+      })
+
+      if (obsoleteFieldIds.length > 0) {
+        db.prepare(
+          `DELETE FROM ticket_response_values WHERE ticket_field_id IN (${obsoleteFieldIds.map(() => '?').join(',')})`
+        ).run(...obsoleteFieldIds)
+      }
+    }
 
     try { db.exec('PRAGMA foreign_keys = ON') } catch { /* Turso */ }
     res.json({ ok: true })
