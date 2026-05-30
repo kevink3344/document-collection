@@ -111,7 +111,7 @@ export function createSchema(db: AppDatabase): void {
       field_key     TEXT,
       type          TEXT    NOT NULL CHECK(type IN (
                       'short_text','date','long_text','single_choice','multiple_choice',
-                      'attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale',
+                      'document','attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale',
                       'location'
                     )),
       label         TEXT    NOT NULL,

@@ -110,7 +110,7 @@ function reorderCollectionsWithinCategory(
 interface CollectionCardProps {
   collection: Collection
   deleting: number | null
-  onCopyShareLink: (slug: string) => void
+  onViewForm: (slug: string) => void
   onEdit: (id: number) => void
   onDelete: (collection: Collection) => void
   onTestForm: (slug: string) => void
@@ -119,7 +119,7 @@ interface CollectionCardProps {
 function SortableCollectionCard({
   collection,
   deleting,
-  onCopyShareLink,
+  onViewForm,
   onEdit,
   onDelete,
   onTestForm,
@@ -229,13 +229,13 @@ function SortableCollectionCard({
 
         <div className="mt-auto pt-2 border-t border-[#F1F5F9] dark:border-[#334155] flex items-center gap-2">
           <button
-            onClick={() => onCopyShareLink(collection.slug)}
-            title={collection.status === 'published' ? 'Copy share link' : 'Publish to enable share link'}
+            onClick={() => onViewForm(collection.slug)}
+            title={collection.status === 'published' ? 'View Form' : 'Publish to enable form access'}
             disabled={collection.status !== 'published'}
             className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors disabled:opacity-40"
           >
             <Copy size={13} />
-            Copy Link
+            View Form
           </button>
           <button
             onClick={() => onTestForm(collection.slug)}
@@ -442,14 +442,8 @@ export default function CollectionsPage() {
     }
   }
 
-  async function copyShareLink(slug: string) {
-    const url = `${window.location.origin}/fill/${slug}`
-    try {
-      await navigator.clipboard.writeText(url)
-      showToast('Share link copied to clipboard', 'success')
-    } catch {
-      showToast(`Copy failed. Share URL: ${url}`, 'info')
-    }
+  function viewForm(slug: string) {
+    window.open(`/fill/${slug}`, '_blank', 'noopener')
   }
 
   function handleUseTemplate(collectionId: number) {
@@ -672,7 +666,7 @@ export default function CollectionsPage() {
                 key={collection.id}
                 collection={collection}
                 deleting={deleting}
-                onCopyShareLink={copyShareLink}
+                onViewForm={viewForm}
                 onEdit={(id) => navigate(`/collections/${id}/edit`)}
                 onDelete={handleDelete}
                 onTestForm={(slug) => {

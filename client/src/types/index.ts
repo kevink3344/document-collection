@@ -38,6 +38,7 @@ export type FieldType =
   | 'long_text'
   | 'single_choice'
   | 'multiple_choice'
+  | 'document'
   | 'attachment'
   | 'signature'
   | 'confirmation'

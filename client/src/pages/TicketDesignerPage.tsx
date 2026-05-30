@@ -57,6 +57,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   long_text: 'Long Text',
   single_choice: 'Single Choice',
   multiple_choice: 'Multiple Choice',
+  document: 'Document',
   attachment: 'Attachment',
   signature: 'Signature',
   confirmation: 'Confirmation',
@@ -90,6 +91,7 @@ function normalizeFieldType(type: string): FieldType {
     'long_text',
     'single_choice',
     'multiple_choice',
+    'document',
     'attachment',
     'signature',
     'confirmation',
@@ -205,7 +207,9 @@ function FieldCard({
           }}
           className={`${FIELD_INPUT} flex-1`}
         >
-          {(Object.entries(FIELD_TYPE_LABELS) as [FieldType, string][]).map(([value, label]) => (
+          {(Object.entries(FIELD_TYPE_LABELS) as [FieldType, string][])
+            .filter(([value]) => value !== 'document')
+            .map(([value, label]) => (
             <option key={value} value={value}>{label}</option>
           ))}
         </select>

@@ -35,6 +35,7 @@ function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string
 
 type FieldType =
   | 'short_text' | 'date' | 'long_text' | 'single_choice' | 'multiple_choice'
+  | 'document'
   | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating' | 'comment' | 'matrix_likert_scale'
   | 'location'
 
@@ -723,6 +724,8 @@ function buildSeededFieldValue(
       const count = Math.min(shuffled.length, 1 + Math.floor(random() * Math.min(3, shuffled.length)))
       return JSON.stringify(shuffled.slice(0, count))
     }
+    case 'document':
+      return null
     case 'attachment':
       return `https://example.com/seeded/${field.id ?? submissionIndex + 1}-${submissionIndex + 1}.pdf`
     case 'signature':

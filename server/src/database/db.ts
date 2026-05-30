@@ -841,6 +841,75 @@ function runMigrations(db: AppDatabase): void {
     }
   }
 
+  const fieldsSqlRowForDocument = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
+    .get() as unknown as { sql: string } | undefined
+  const supportsDocumentType = fieldsSqlRowForDocument?.sql?.includes("'document'") ?? false
+
+  if (!supportsDocumentType) {
+    const collectionFieldCols = db
+      .prepare(`PRAGMA table_info(collection_fields)`)
+      .all() as Array<{ name: string }>
+    const collectionFieldColNames = new Set(collectionFieldCols.map(column => column.name))
+    const subtitleExpr = collectionFieldColNames.has('subtitle') ? 'subtitle' : 'NULL'
+    const displayStyleExpr = collectionFieldColNames.has('display_style') ? "COALESCE(display_style, 'radio')" : "'radio'"
+    const branchRulesExpr = collectionFieldColNames.has('branch_rules') ? 'branch_rules' : 'NULL'
+    const staffOnlyExpr = collectionFieldColNames.has('staff_only') ? 'staff_only' : '0'
+
+    db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      db.transaction(() => {
+        db.prepare('ALTER TABLE collection_fields RENAME TO collection_fields_pre_document').run()
+        db.prepare(`
+          CREATE TABLE collection_fields (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+            version_id    INTEGER REFERENCES collection_versions(id) ON DELETE CASCADE,
+            field_key     TEXT,
+            type          TEXT    NOT NULL CHECK(type IN (
+                            'short_text','date','long_text','single_choice','multiple_choice',
+                            'document','attachment','signature','confirmation','custom_table','rating','comment','matrix_likert_scale',
+                            'location'
+                          )),
+            label         TEXT    NOT NULL,
+            subtitle      TEXT,
+            page_number   INTEGER NOT NULL DEFAULT 1,
+            required      INTEGER NOT NULL DEFAULT 0,
+            options       TEXT,
+            display_style TEXT    NOT NULL DEFAULT 'radio',
+            branch_rules  TEXT,
+            sort_order    INTEGER NOT NULL DEFAULT 0,
+            staff_only    INTEGER NOT NULL DEFAULT 0
+          )
+        `).run()
+        db.prepare(`
+          INSERT INTO collection_fields
+            (id, collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
+          SELECT
+            id,
+            collection_id,
+            version_id,
+            COALESCE(NULLIF(trim(field_key), ''), 'field-' || id),
+            type,
+            label,
+            ${subtitleExpr},
+            page_number,
+            required,
+            options,
+            ${displayStyleExpr},
+            ${branchRulesExpr},
+            sort_order,
+            ${staffOnlyExpr}
+          FROM collection_fields_pre_document
+        `).run()
+        db.prepare('DROP TABLE collection_fields_pre_document').run()
+      })()
+      console.log('[db] Migration: rebuilt collection_fields to support document type')
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON')
+    }
+  }
+
   const existingResponseCols = db
     .prepare(`PRAGMA table_info(collection_responses)`)
     .all() as unknown as { name: string }[]

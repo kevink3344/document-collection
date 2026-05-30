@@ -40,6 +40,7 @@ import TableWizardModal from '../components/collections/TableWizardModal'
 import MatrixLikertConfigModal from '../components/collections/MatrixLikertConfigModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
+import { getDocumentEmbedUrl, parseDocumentFieldConfig, serialiseDocumentFieldConfig, type DocumentFieldKind } from '../utils/documentField'
 import { htmlToPlainText } from '../utils/richText'
 import { useToast } from '../contexts/ToastContext'
 import type { FieldBranchRule } from '../types'
@@ -128,6 +129,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   long_text: 'Long Text',
   single_choice: 'Single Choice',
   multiple_choice: 'Multiple Choice',
+  document: 'Document',
   attachment: 'Attachment',
   signature: 'Signature',
   confirmation: 'Confirmation (Checkbox)',
@@ -145,6 +147,7 @@ function normalizeFieldType(type: string): FieldType {
     'long_text',
     'single_choice',
     'multiple_choice',
+    'document',
     'attachment',
     'signature',
     'confirmation',
@@ -1750,8 +1753,21 @@ function FieldCard({
   const showOptions =
     field.type === 'single_choice' || field.type === 'multiple_choice'
   const showTable = field.type === 'custom_table'
+  const isDocumentField = field.type === 'document'
   const regularOptions = field.options.filter(opt => opt !== OTHER_OPTION_MARKER)
   const hasOtherOption = field.options.includes(OTHER_OPTION_MARKER)
+  const documentConfig = parseDocumentFieldConfig(field.options)
+  const documentPreviewUrl = getDocumentEmbedUrl(documentConfig)
+
+  function updateDocumentConfig(patch: Partial<{ kind: DocumentFieldKind; url: string }>) {
+    onUpdate({
+      options: serialiseDocumentFieldConfig({
+        kind: patch.kind ?? documentConfig.kind,
+        url: patch.url ?? documentConfig.url,
+      }),
+      required: false,
+    })
+  }
 
   return (
     <div className={[
@@ -1775,6 +1791,7 @@ function FieldCard({
               tableColumns: [],
               displayStyle: resolveDisplayStyle(t),
               branchRules: [],
+              required: t === 'document' ? false : field.required,
             })
           }}
           className={`${FIELD_INPUT} flex-1`}
@@ -1839,7 +1856,7 @@ function FieldCard({
           />
         )}
         <div className="flex items-center gap-4 flex-wrap">
-          {field.type !== 'comment' && field.type !== 'matrix_likert_scale' && (
+          {field.type !== 'comment' && field.type !== 'matrix_likert_scale' && field.type !== 'document' && (
           <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer">
             <input
               type="checkbox"
@@ -1937,6 +1954,67 @@ function FieldCard({
             >
               Numbers
             </button>
+          </div>
+        )}
+
+        {isDocumentField && (
+          <div className="space-y-3 rounded border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0B1220] p-3">
+            <div className="flex items-center gap-1 text-xs text-[#64748B]">
+              <span className="shrink-0">Document type:</span>
+              <button
+                type="button"
+                onClick={() => updateDocumentConfig({ kind: 'google_doc' })}
+                className={[
+                  'px-2 py-0.5 rounded border text-xs transition-colors',
+                  documentConfig.kind === 'google_doc'
+                    ? 'bg-[#2563EB] border-[#2563EB] text-white'
+                    : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                ].join(' ')}
+              >
+                Google Doc
+              </button>
+              <button
+                type="button"
+                onClick={() => updateDocumentConfig({ kind: 'pdf' })}
+                className={[
+                  'px-2 py-0.5 rounded border text-xs transition-colors',
+                  documentConfig.kind === 'pdf'
+                    ? 'bg-[#2563EB] border-[#2563EB] text-white'
+                    : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                ].join(' ')}
+              >
+                PDF Doc
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#64748B] mb-1">Public document link</label>
+              <input
+                type="url"
+                placeholder={documentConfig.kind === 'google_doc' ? 'https://docs.google.com/…' : 'https://…/file.pdf'}
+                value={documentConfig.url}
+                onChange={e => updateDocumentConfig({ url: e.target.value })}
+                className={`${FIELD_INPUT} w-full`}
+              />
+              <p className="mt-1 text-[11px] text-[#94A3B8]">
+                This link must be publicly viewable. Respondents will see an inline preview and can open the document in a new tab.
+              </p>
+            </div>
+
+            {documentPreviewUrl ? (
+              <div className="overflow-hidden rounded border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A]">
+                <iframe
+                  src={documentPreviewUrl}
+                  title="Document field preview"
+                  className="h-[500px] w-full"
+                  loading="lazy"
+                />
+              </div>
+            ) : documentConfig.url ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Enter a valid public document URL to preview this field.
+              </p>
+            ) : null}
           </div>
         )}
       </div>

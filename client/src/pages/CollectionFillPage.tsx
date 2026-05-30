@@ -7,6 +7,7 @@ import { updateMySubmission } from '../api/mySubmissions'
 import { getPublicLocations } from '../api/locations'
 import { getPublicSetting } from '../api/settings'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
+import { getDocumentEmbedUrl, parseDocumentFieldConfig } from '../utils/documentField'
 import { sanitizeRichText } from '../utils/richText'
 import { useAuth } from '../contexts/AuthContext'
 import RichTextEditor from '../components/common/RichTextEditor'
@@ -134,6 +135,10 @@ function computeVisibleFields(fields: CollectionField[], values: Record<number, 
   }
 
   return ordered.filter((_, idx) => visibleIndexes.has(idx))
+}
+
+function fieldStoresResponse(field: CollectionField): boolean {
+  return field.type !== 'comment' && field.type !== 'document'
 }
 
 // ── Signature canvas ──────────────────────────────────────────
@@ -1085,6 +1090,9 @@ export default function CollectionFillPage() {
   function isRequiredFieldFilled(field: CollectionField, value: string): boolean {
     if (!field.required) return true
     switch (field.type) {
+      case 'document':
+      case 'comment':
+        return true
       case 'single_choice': {
         if (!value.trim()) return false
         if (hasOtherOption(field) && isOtherResponse(value)) {
@@ -1228,6 +1236,10 @@ export default function CollectionFillPage() {
       if (editResponseId) {
         await updateMySubmission(editResponseId, {
           values: Object.entries(values)
+            .filter(([fieldId]) => {
+              const field = collection.fields.find(item => item.id === parseInt(fieldId, 10))
+              return field ? fieldStoresResponse(field) : false
+            })
             .map(([fieldId, value]) => ({ fieldId: parseInt(fieldId, 10), value })),
         })
       } else {
@@ -1236,6 +1248,10 @@ export default function CollectionFillPage() {
           respondentEmail: respEmail.trim() || undefined,
           copyEmail: sendCopy && copyEmail.trim() ? copyEmail.trim() : undefined,
           values: Object.entries(values)
+            .filter(([fieldId]) => {
+              const field = collection.fields.find(item => item.id === parseInt(fieldId, 10))
+              return field ? fieldStoresResponse(field) : false
+            })
             .filter(([, v]) => v !== '')
             .map(([fieldId, value]) => ({ fieldId: parseInt(fieldId, 10), value })),
         })
@@ -1399,7 +1415,7 @@ export default function CollectionFillPage() {
 
   const reviewFieldsByPage = pageNumbers.map(pageNumber => ({
     pageNumber,
-    fields: visibleFields.filter(field => normalizePage(field.page) === pageNumber && field.type !== 'comment'),
+    fields: visibleFields.filter(field => normalizePage(field.page) === pageNumber && field.type !== 'comment' && field.type !== 'document'),
   })).filter(group => group.fields.length > 0)
 
   if (submitted) {
@@ -2002,6 +2018,8 @@ function FieldRenderer({
   })()
   const multipleChoiceOtherEncoded = multipleChoiceSelected.find(item => isOtherResponse(item))
   const multipleChoiceOtherText = multipleChoiceOtherEncoded ? decodeOtherResponse(multipleChoiceOtherEncoded) : ''
+  const documentConfig = parseDocumentFieldConfig(field.options)
+  const documentPreviewUrl = getDocumentEmbedUrl(documentConfig)
 
   if (field.type === 'comment') {
     return (
@@ -2200,6 +2218,36 @@ function FieldRenderer({
               placeholder="Please specify"
               disabled={disabled}
             />
+          )}
+        </div>
+      )}
+
+      {field.type === 'document' && (
+        <div className="space-y-3">
+          {documentPreviewUrl ? (
+            <div className="overflow-hidden rounded border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A]">
+              <iframe
+                src={documentPreviewUrl}
+                title={field.label || 'Document preview'}
+                className="h-[500px] w-full"
+                loading="lazy"
+              />
+            </div>
+          ) : (
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
+              Document preview is unavailable for this field.
+            </div>
+          )}
+
+          {documentConfig.url && (
+            <a
+              href={documentConfig.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center text-sm text-[#2563EB] underline hover:text-blue-700 break-all"
+            >
+              Open document in new tab
+            </a>
           )}
         </div>
       )}
