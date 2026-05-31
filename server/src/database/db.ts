@@ -931,7 +931,8 @@ function runMigrations(db: AppDatabase): void {
 
   if (
     hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_old') ||
-    hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_pre_location')
+    hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_pre_location') ||
+    hasForeignKeyTarget(db, 'collection_response_values', 'collection_fields_pre_document')
   ) {
     rebuildCollectionResponseValues(db)
   }

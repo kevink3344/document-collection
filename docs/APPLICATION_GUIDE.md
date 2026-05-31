@@ -25,7 +25,7 @@ A full-stack document and survey collection platform built with React + TypeScri
 ## 1. Authentication & Users
 
 ### Login
-- Users select their **organization**, then their **account**, and enter their password.
+- Users select their **account** and enter their password.
 - The login page displays **live global stats** (organizations, collections, submissions) beneath the form.
 - A configurable **subtitle badge** and **login message** can be set in Settings.
 
@@ -45,6 +45,11 @@ A full-stack document and survey collection platform built with React + TypeScri
 
 ### `/me` Refresh Endpoint
 - A dedicated `/me` endpoint refreshes the logged-in user's profile (name, org, role) without requiring a full re-login.
+
+### Multi-Organization Switching
+- Users can belong to **multiple organizations** while keeping a single login.
+- The **active organization description** is always shown in the title bar.
+- A **location icon** beside the org name opens the organization picker so users can switch their active organization without leaving the page.
 
 ---
 
@@ -69,8 +74,9 @@ A full-stack document and survey collection platform built with React + TypeScri
 - **Organization management**: Administrators can create, edit, and manage organizations.
 - **Org-scoped data**: Collections, categories, users, and locations are all scoped to the owning organization.
 - **Org description and name** are displayed in the profile menu.
+- Users with access to more than one organization can switch the active org from the **title bar organization picker**.
 - When a new organization is created with no categories, a default **"General"** category is automatically seeded.
-- **Separated login**: Organization and user selection are distinct steps on the login screen.
+- **Single login, multi-org access**: Users sign in once, then switch among their allowed organizations from the header.
 
 ---
 

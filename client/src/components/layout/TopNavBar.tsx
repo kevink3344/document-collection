@@ -138,6 +138,8 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
         {/* Right: Icon actions */}
         <div className="flex items-center gap-0.5">
 
+        {user && <OrganizationTabs />}
+
         {/* Notifications */}
         {user && <div className="relative" ref={notificationsRef}>
           <button
@@ -307,7 +309,6 @@ export default function TopNavBar({ onAppIconClick }: TopNavBarProps) {
         </div>
         </div>
       </div>
-      <OrganizationTabs />
     </header>
   )
 }
