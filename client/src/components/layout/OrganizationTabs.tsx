@@ -37,7 +37,7 @@ export default function OrganizationTabs() {
                   .finally(() => setPendingOrganizationId(null))
               }}
               className={[
-                'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors whitespace-nowrap',
+                'px-3 py-1.5 text-xs font-medium rounded-[2px] border transition-colors whitespace-nowrap',
                 isActive
                   ? 'border-[#2563EB] bg-[#EFF6FF] text-[#1D4ED8] dark:border-[#60A5FA] dark:bg-[#172554] dark:text-[#BFDBFE]'
                   : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#111827]',

@@ -283,9 +283,7 @@ export default function CollectionsPage() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const { user } = useAuth()
-  const organizationDisplayName = user?.organizationDescription
-    ? `${user.organizationDescription} (${user.organizationName})`
-    : user?.organizationName
+  const organizationDisplayName = user?.organizationDescription?.trim() || user?.organizationName
   const collectionsTitle = organizationDisplayName ? `${organizationDisplayName} Collections` : 'Collections'
   const [collections, setCollections] = useState<Collection[]>([])
   const [loading, setLoading] = useState(true)
