@@ -66,6 +66,32 @@ function ticketKey(responseId: number, templateId: number): string {
   return `${responseId}:${templateId}`
 }
 
+function getTicketButtonClasses({
+  isActive,
+  hasResponse,
+  isClosed,
+}: {
+  isActive: boolean
+  hasResponse: boolean
+  isClosed: boolean
+}): string {
+  if (isClosed) {
+    return isActive
+      ? 'border-[#16A34A] bg-[#DCFCE7] text-[#166534] dark:border-[#4ADE80] dark:bg-[#14532D] dark:text-[#BBF7D0]'
+      : 'border-[#86EFAC] bg-[#F0FDF4] text-[#166534] hover:bg-[#DCFCE7] dark:border-[#166534] dark:bg-[#052E16] dark:text-[#86EFAC] dark:hover:bg-[#14532D]'
+  }
+
+  if (hasResponse) {
+    return isActive
+      ? 'border-[#2563EB] bg-[#DBEAFE] text-[#1D4ED8] dark:border-[#60A5FA] dark:bg-[#1E3A8A] dark:text-[#BFDBFE]'
+      : 'border-[#93C5FD] bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] dark:border-[#1D4ED8] dark:bg-[#172554] dark:text-[#93C5FD] dark:hover:bg-[#1E3A8A]'
+  }
+
+  return isActive
+    ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+    : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]'
+}
+
 function formatSubmittedAt(value: string): string {
   const normalized = value.includes('T') ? value : value.replace(' ', 'T') + 'Z'
   const date = new Date(normalized)
@@ -1102,21 +1128,56 @@ export default function RecordsPage() {
 
     setLoadingResponses(true)
     setError(null)
+    setSelectedCollection(null)
+    setResponses([])
+    setCollectionTicketTemplates([])
+    let cancelled = false
 
     Promise.all([
       getCollection(selectedCollectionId),
       getResponses(selectedCollectionId),
     ])
-      .then(([collection, responseItems]) => {
+      .then(async ([collection, responseItems]) => {
+        if (cancelled) return
+
+        const responseTicketEntries = responseItems.length > 0
+          ? await Promise.all(
+              responseItems.map(async response => {
+                try {
+                  const items = await getResponseTickets(selectedCollectionId, response.id)
+                  return [response.id, items] as const
+                } catch (err) {
+                  console.error('[RecordsPage] loadResponseTickets:', err)
+                  return [response.id, [] as ResponseTicketSummary[]] as const
+                }
+              })
+            )
+          : []
+
+        if (cancelled) return
+
         setSelectedCollection(collection)
         setResponses(responseItems)
+        setResponseTicketsByResponse(Object.fromEntries(responseTicketEntries))
       })
-      .catch(err => setError((err as Error).message))
-      .finally(() => setLoadingResponses(false))
+      .catch(err => {
+        if (cancelled) return
+        setError((err as Error).message)
+      })
+      .finally(() => {
+        if (cancelled) return
+        setLoadingResponses(false)
+      })
 
     getCollectionTicketTemplates(selectedCollectionId)
-      .then(setCollectionTicketTemplates)
-      .catch(() => setCollectionTicketTemplates([]))
+      .then(items => {
+        if (cancelled) return
+        setCollectionTicketTemplates(items)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setCollectionTicketTemplates([])
+      })
 
     // Reset tickets view when switching collections
     setAllTickets([])
@@ -1131,6 +1192,10 @@ export default function RecordsPage() {
     setTicketFinalizing({})
     setTicketHistoryByKey({})
     setTicketHistoryError({})
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedCollectionId])
 
   useEffect(() => {
@@ -2008,6 +2073,8 @@ export default function RecordsPage() {
                       ? (responseTickets ?? []).find(item => item.templateId === template.id)
                       : undefined
                     const isActive = ticketDrawer?.responseId === response.id && ticketDrawer?.templateId === template.id
+                    const hasResponse = Boolean(summary?.response)
+                    const isClosed = Boolean(summary?.response?.finalized)
 
                     return (
                       <button
@@ -2016,9 +2083,7 @@ export default function RecordsPage() {
                         onClick={() => openTicketDrawer(response.id, template.id)}
                         className={[
                           'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[2px] text-xs font-medium border transition-colors',
-                          isActive
-                            ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
-                            : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                          getTicketButtonClasses({ isActive, hasResponse, isClosed }),
                         ].join(' ')}
                       >
                         <Clipboard size={12} />
