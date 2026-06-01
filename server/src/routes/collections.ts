@@ -66,6 +66,7 @@ interface DbCollection {
   category: string | null
   organization_id: number
   organization_name?: string | null
+  organization_description?: string | null
   created_by: number
   date_due: string | null
   cover_photo_url: string | null
@@ -397,6 +398,7 @@ function toApiCollection(
     category: c.category,
     organizationId: c.organization_id,
     organizationName: c.organization_name ?? null,
+    organizationDescription: c.organization_description ?? null,
     createdBy: c.created_by,
     createdByName: c.creator_name ?? null,
     dateDue: c.date_due,
@@ -880,6 +882,7 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
 
 const COL_SELECT = `
   SELECT c.*, u.name AS creator_name, o.name AS organization_name,
+    o.description AS organization_description,
          cv.version_number AS active_version_number,
          cv.status AS active_version_status
   FROM collections c

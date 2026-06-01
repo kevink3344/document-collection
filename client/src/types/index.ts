@@ -106,6 +106,7 @@ export interface Collection {
   category: string | null
   organizationId: number
   organizationName: string | null
+  organizationDescription?: string | null
   createdBy: number
   createdByName: string | null
   dateDue: string | null

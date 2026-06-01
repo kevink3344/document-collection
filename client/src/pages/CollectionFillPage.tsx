@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import type { CSSProperties } from 'react'
-import { Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft, Paperclip, Trash2, Upload } from 'lucide-react'
+import { Building2, Calendar, Tag, User, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft, Paperclip, Trash2, Upload } from 'lucide-react'
 import { deletePendingAttachment, uploadAttachment } from '../api/attachments'
 import { getPublicCollection, submitResponse } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
@@ -867,11 +867,6 @@ export default function CollectionFillPage() {
   const [respName, setRespName] = useState('')
   const [respEmail, setRespEmail] = useState('')
 
-  // Copy-of-answers
-  const [sendCopy, setSendCopy] = useState(false)
-  const [copyEmail, setCopyEmail] = useState('')
-  const [copyAnswersDisclaimer, setCopyAnswersDisclaimer] = useState('')
-
   // Field values: fieldId → string (JSON for complex types)
   const [values, setValues] = useState<Record<number, string>>({})
 
@@ -944,12 +939,6 @@ export default function CollectionFillPage() {
     getPublicSetting('qr_code_enabled')
       .then(value => setShowQrCode(value === 'true'))
       .catch(() => setShowQrCode(false))
-  }, [])
-
-  useEffect(() => {
-    getPublicSetting('copy_answers_disclaimer')
-      .then(val => setCopyAnswersDisclaimer(val))
-      .catch(() => setCopyAnswersDisclaimer('For privacy your email will not be saved by the system. It will only be used for this purpose.'))
   }, [])
 
   useEffect(() => {
@@ -1270,7 +1259,6 @@ export default function CollectionFillPage() {
         await submitResponse(slug, {
           respondentName: effectiveRespondentName || undefined,
           respondentEmail: effectiveRespondentEmail || undefined,
-          copyEmail: sendCopy && copyEmail.trim() ? copyEmail.trim() : undefined,
           values: Object.entries(values)
             .filter(([fieldId]) => {
               const field = collection.fields.find(item => item.id === parseInt(fieldId, 10))
@@ -1328,8 +1316,6 @@ export default function CollectionFillPage() {
     setRespEmail('')
     setCurrentPageIdx(0)
     setIsReviewing(false)
-    setSendCopy(false)
-    setCopyEmail('')
     setFormStartedAt(Date.now())
     setActiveTab(collection?.instructions?.trim() || collection?.instructionsDocUrl ? 'instructions' : 'questions')
     setSubmitted(false)
@@ -1621,10 +1607,10 @@ export default function CollectionFillPage() {
                 {collection.title}
               </h1>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/80">
-                {collection.createdByName && (
+                {(collection.organizationDescription || collection.organizationName) && (
                   <span className="flex items-center gap-1">
-                    <User size={11} />
-                    Created by {collection.createdByName}
+                    <Building2 size={11} />
+                    {collection.organizationDescription || collection.organizationName}
                   </span>
                 )}
                 {collection.category && (
@@ -1666,10 +1652,10 @@ export default function CollectionFillPage() {
                 {collection.title}
               </h1>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#64748B]">
-                {collection.createdByName && (
+                {(collection.organizationDescription || collection.organizationName) && (
                   <span className="flex items-center gap-1">
-                    <User size={11} />
-                    Created by {collection.createdByName}
+                    <Building2 size={11} />
+                    {collection.organizationDescription || collection.organizationName}
                   </span>
                 )}
                 {collection.category && (
@@ -1778,13 +1764,6 @@ export default function CollectionFillPage() {
                         <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Email Address</p>
                         <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{effectiveRespondentEmail || 'No response'}</p>
                       </div>
-                    </div>
-                  )}
-
-                  {sendCopy && copyEmail.trim() && !editResponseId && (
-                    <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Copy of answers will be sent to</p>
-                      <p className="text-sm text-[#1E293B] dark:text-[#F1F5F9]">{copyEmail.trim()}</p>
                     </div>
                   )}
 
@@ -1923,35 +1902,6 @@ export default function CollectionFillPage() {
                     <p className="text-sm text-red-500">{submitError}</p>
                   )}
 
-                  {isLastPage && !editResponseId && (
-                    <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4 space-y-3">
-                      <label className="flex items-start gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sendCopy}
-                          onChange={e => setSendCopy(e.target.checked)}
-                          className="mt-0.5 h-4 w-4 accent-[#2563EB] shrink-0"
-                        />
-                        <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">
-                          Send me a copy of my answers
-                        </span>
-                      </label>
-                      {sendCopy && (
-                        <div className="pl-7 space-y-2">
-                          <input
-                            type="email"
-                            value={copyEmail}
-                            onChange={e => setCopyEmail(e.target.value)}
-                            placeholder="Email Address"
-                            className={INPUT}
-                          />
-                          {copyAnswersDisclaimer && (
-                            <p className="text-xs text-[#64748B]">{copyAnswersDisclaimer}</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
