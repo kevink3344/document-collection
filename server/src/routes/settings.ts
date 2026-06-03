@@ -16,6 +16,7 @@ const ALLOWED_KEYS = new Set([
   'image_logo_padding_bottom',
   'image_logo_padding_left',
   'copy_answers_disclaimer',
+  'ai_summary_enabled',
 ])
 
 interface DbSetting {

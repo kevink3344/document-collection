@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { getPendingApprovals } from '../../api/approvals'
+import { getPublicSetting } from '../../api/settings'
 import type { LucideIcon } from 'lucide-react'
 import type { UserRole } from '../../types'
 
@@ -57,6 +58,13 @@ export default function SideNav({
 }: SideNavProps) {
   const { user } = useAuth()
   const [hasPendingApprovals, setHasPendingApprovals] = useState(false)
+  const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true)
+
+  useEffect(() => {
+    getPublicSetting('ai_summary_enabled')
+      .then(val => setAiSummaryEnabled(val !== 'false'))
+      .catch(() => setAiSummaryEnabled(true))
+  }, [])
 
   useEffect(() => {
     if (!user || user.role === 'user') return
@@ -70,7 +78,9 @@ export default function SideNav({
       ? USER_NAV_ITEMS
       : user?.role === 'reviewer'
         ? REVIEWER_NAV_ITEMS
-        : NAV_ITEMS.filter(item => !item.roles || (user ? item.roles.includes(user.role) : false))
+        : NAV_ITEMS
+            .filter(item => !item.roles || (user ? item.roles.includes(user.role) : false))
+            .filter(item => item.to !== '/ai-summary' || aiSummaryEnabled)
 
   const visibleNavItems: NavItem[] = hasPendingApprovals
     ? [...baseNavItems, { icon: CheckSquare, label: 'Approvals', to: '/approvals' }]

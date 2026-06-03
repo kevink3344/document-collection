@@ -632,4 +632,8 @@ export function seedData(db: AppDatabase): void {
     'copy_answers_disclaimer',
     'For privacy your email will not be saved by the system. It will only be used for this purpose.'
   )
+
+  db.prepare(
+    `INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`
+  ).run('ai_summary_enabled', 'true')
 }

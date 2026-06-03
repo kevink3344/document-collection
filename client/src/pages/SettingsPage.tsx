@@ -407,6 +407,10 @@ export default function SettingsPage() {
   const [qrCodeSaving, setQrCodeSaving] = useState(false)
   const [qrCodeError, setQrCodeError] = useState<string | null>(null)
   const [qrCodeSaved, setQrCodeSaved] = useState(false)
+  const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true)
+  const [aiSummarySaving, setAiSummarySaving] = useState(false)
+  const [aiSummaryError, setAiSummaryError] = useState<string | null>(null)
+  const [aiSummarySaved, setAiSummarySaved] = useState(false)
   const [confirmationEmailsEnabled, setConfirmationEmailsEnabled] = useState(false)
   const [confirmationEmailsSaving, setConfirmationEmailsSaving] = useState(false)
   const [confirmationEmailsError, setConfirmationEmailsError] = useState<string | null>(null)
@@ -450,6 +454,9 @@ export default function SettingsPage() {
     getPublicSetting('qr_code_enabled')
       .then(val => setQrCodeEnabled(val === 'true'))
       .catch(() => setQrCodeEnabled(false))
+    getPublicSetting('ai_summary_enabled')
+      .then(val => setAiSummaryEnabled(val !== 'false'))
+      .catch(() => setAiSummaryEnabled(true))
     getPublicSetting('submission_confirmation_emails')
       .then(val => setConfirmationEmailsEnabled(val === 'true'))
       .catch(() => setConfirmationEmailsEnabled(false))
@@ -910,6 +917,22 @@ export default function SettingsPage() {
       setQrCodeError((err as Error).message)
     } finally {
       setQrCodeSaving(false)
+    }
+  }
+
+  async function handleAiSummaryToggle(nextValue: boolean) {
+    setAiSummaryEnabled(nextValue)
+    setAiSummarySaving(true)
+    setAiSummaryError(null)
+    setAiSummarySaved(false)
+    try {
+      await updateSetting('ai_summary_enabled', nextValue ? 'true' : 'false')
+      setAiSummarySaved(true)
+    } catch (err) {
+      setAiSummaryEnabled(!nextValue)
+      setAiSummaryError((err as Error).message)
+    } finally {
+      setAiSummarySaving(false)
     }
   }
 
@@ -1908,6 +1931,29 @@ export default function SettingsPage() {
               {loginMessageSaved && (
                 <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
               )}
+            </div>
+
+            <div className="border-t border-[#E2E8F0] dark:border-[#334155] pt-5">
+              <label className="flex items-center justify-between gap-4 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Show AI Summary link in navigation</p>
+                  <p className="text-xs text-[#64748B] mt-1">When enabled, administrators see the AI Summary page in the sidebar.</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={aiSummaryEnabled}
+                  onChange={e => { void handleAiSummaryToggle(e.target.checked) }}
+                  disabled={aiSummarySaving}
+                  className="h-4 w-4 accent-[#2563EB]"
+                />
+              </label>
+              {aiSummaryError && (
+                <p className="text-sm text-red-500 mt-2">{aiSummaryError}</p>
+              )}
+              <div className="flex items-center gap-3 mt-2">
+                {aiSummarySaving && <span className="text-sm text-[#64748B]">Saving…</span>}
+                {aiSummarySaved && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
+              </div>
             </div>
           </div>
         )}
