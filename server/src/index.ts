@@ -4,7 +4,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
-import { setupDatabase } from './database/db'
+import { setupDatabase, resetDbIfStreamError } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
@@ -109,6 +109,16 @@ app.use('/api', healthRouter)
 // Health check for platform probes (non-API path)
 app.get('/health', (_req: express.Request, res: express.Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+// ── Global error handler: resets Turso connection on stream expiry ──────────
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  resetDbIfStreamError(err)
+  const status = typeof (err as { status?: unknown }).status === 'number'
+    ? (err as { status: number }).status
+    : 500
+  const message = err instanceof Error ? err.message : 'Internal server error'
+  res.status(status).json({ error: message })
 })
 
 // ── Static client (when available) ─────────────────────────

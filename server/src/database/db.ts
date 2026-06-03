@@ -5,6 +5,30 @@ import { createSchema, seedData } from './schema'
 import type { AppDatabase } from './types'
 
 let db: AppDatabase | null = null
+let dbConnectedMode: 'turso' | 'sqlite' | null = null
+let dbLastVerifiedAt = 0
+
+// Turso Hrana streams expire after ~5 min of idle; reconnect proactively.
+const TURSO_VERIFY_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
+
+function isStreamExpiredError(err: unknown): boolean {
+  const message = (err as { message?: string })?.message ?? ''
+  return message.includes('stream not found') || message.includes('Hrana(Api')
+}
+
+/**
+ * Call this when a database error bubbles up to the Express error handler.
+ * Resets the cached connection so the next request gets a fresh one.
+ */
+export function resetDbIfStreamError(err: unknown): void {
+  if (isStreamExpiredError(err)) {
+    console.warn('[db] Turso stream expired – resetting connection for next request')
+    try { db?.close() } catch { /* ignore */ }
+    db = null
+    dbConnectedMode = null
+    dbLastVerifiedAt = 0
+  }
+}
 
 type DbTarget =
   | { mode: 'turso'; url: string; authToken: string }
@@ -508,6 +532,23 @@ function applyPragmas(database: AppDatabase): void {
 }
 
 export function getDb(): AppDatabase {
+  // ── Turso health check: re-verify the stream every TURSO_VERIFY_INTERVAL_MS ──
+  if (db && dbConnectedMode === 'turso') {
+    const now = Date.now()
+    if (now - dbLastVerifiedAt > TURSO_VERIFY_INTERVAL_MS) {
+      try {
+        db.prepare('SELECT 1').get()
+        dbLastVerifiedAt = now
+      } catch (err) {
+        console.warn('[db] Turso stream expired during health check, reconnecting:', (err as Error).message)
+        try { db.close() } catch { /* ignore */ }
+        db = null
+        dbConnectedMode = null
+        dbLastVerifiedAt = 0
+      }
+    }
+  }
+
   if (!db) {
     const target = resolveDbTarget()
 
@@ -516,9 +557,12 @@ export function getDb(): AppDatabase {
         console.log(`[db] Using Turso database: ${target.url}`)
         db = new Database(target.url, { authToken: target.authToken } as Database.Options)
         db.prepare('SELECT 1').get()
+        dbConnectedMode = 'turso'
+        dbLastVerifiedAt = Date.now()
         return db
       } catch (err) {
         console.warn('[db] Turso connection failed, falling back to local SQLite:', (err as Error).message)
+        db = null
       }
     }
 
@@ -533,6 +577,7 @@ export function getDb(): AppDatabase {
         db = new Database(dbPath)
         applyPragmas(db)
         db.prepare('SELECT name FROM sqlite_master LIMIT 1').all()
+        dbConnectedMode = 'sqlite'
         return db
       } catch (err) {
         console.warn('[db] Existing local database is corrupted, cleaning up and starting fresh:', (err as Error).message)
@@ -543,12 +588,13 @@ export function getDb(): AppDatabase {
     try {
       db = new Database(dbPath)
       applyPragmas(db)
+      dbConnectedMode = 'sqlite'
     } catch (err) {
       console.error('[db] FATAL: Could not create local SQLite database:', (err as Error).message)
       throw err
     }
   }
-  return db
+  return db!
 }
 
 export function setupDatabase(): void {
