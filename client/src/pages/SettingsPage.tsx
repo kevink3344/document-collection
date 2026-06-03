@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, LayoutList, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -54,6 +54,7 @@ type PanelId =
   | 'categories'
   | 'notifications'
   | 'login-page'
+  | 'navigation'
   | 'users'
   | 'locations'
   | 'gallery'
@@ -67,7 +68,7 @@ type PanelLayout = Record<TabId, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'users', 'locations', 'gallery'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'locations', 'gallery'],
   other: ['qr-code', 'logo-padding', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -75,6 +76,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   categories: 'Categories',
   notifications: 'Notifications',
   'login-page': 'Login Page',
+  navigation: 'Navigation',
   users: 'User Accounts',
   locations: 'Locations',
   gallery: 'Cover Photo Gallery',
@@ -313,6 +315,7 @@ export default function SettingsPage() {
   const [apiExpanded, setApiExpanded] = useState(false)
   const [notificationsExpanded, setNotificationsExpanded] = useState(false)
   const [loginPageExpanded, setLoginPageExpanded] = useState(false)
+  const [navigationExpanded, setNavigationExpanded] = useState(false)
   const [organizationsExpanded, setOrganizationsExpanded] = useState(false)
   const [locationsExpanded, setLocationsExpanded] = useState(false)
   const [galleryExpanded, setGalleryExpanded] = useState(false)
@@ -1933,28 +1936,59 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="border-t border-[#E2E8F0] dark:border-[#334155] pt-5">
-              <label className="flex items-center justify-between gap-4 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-3">
-                <div>
-                  <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Show AI Summary link in navigation</p>
-                  <p className="text-xs text-[#64748B] mt-1">When enabled, administrators see the AI Summary page in the sidebar.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={aiSummaryEnabled}
-                  onChange={e => { void handleAiSummaryToggle(e.target.checked) }}
-                  disabled={aiSummarySaving}
-                  className="h-4 w-4 accent-[#2563EB]"
-                />
-              </label>
-              {aiSummaryError && (
-                <p className="text-sm text-red-500 mt-2">{aiSummaryError}</p>
-              )}
-              <div className="flex items-center gap-3 mt-2">
+          </div>
+        )}
+      </section>
+      )
+      case 'navigation': return (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setNavigationExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F0FDF4] text-[#16A34A] dark:bg-green-900/30 dark:text-green-300">
+              <LayoutList size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Navigation</h2>
+              <p className="text-sm text-[#64748B] mt-1">Control which links appear in the sidebar navigation.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {navigationExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {navigationExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+            <label className="flex items-center justify-between gap-4 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Show AI Summary link</p>
+                <p className="text-xs text-[#64748B] mt-1">When enabled, the AI Summary page appears in the sidebar for administrators.</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={aiSummaryEnabled}
+                onChange={e => { void handleAiSummaryToggle(e.target.checked) }}
+                disabled={aiSummarySaving}
+                className="h-4 w-4 accent-[#2563EB]"
+              />
+            </label>
+            {aiSummaryError && (
+              <p className="text-sm text-red-500">{aiSummaryError}</p>
+            )}
+            {(aiSummarySaving || aiSummarySaved) && (
+              <div className="flex items-center gap-3">
                 {aiSummarySaving && <span className="text-sm text-[#64748B]">Saving…</span>}
                 {aiSummarySaved && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
               </div>
-            </div>
+            )}
           </div>
         )}
       </section>
