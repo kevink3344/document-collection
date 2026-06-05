@@ -1420,15 +1420,15 @@ export default function CollectionBuilderPage() {
                   {anonymous ? 'No name or email required from respondents.' : 'Respondents must provide their name and email.'}
                 </p>
               </div>
-              <div className="sm:col-span-2 rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4 space-y-4">
+              <div className="sm:col-span-2 rounded-lg border border-[#1E3A5F] bg-[#1E3A5F] p-4 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Approval Workflow</h3>
-                    <p className="mt-1 text-xs text-[#64748B]">
+                    <h3 className="text-sm font-semibold text-white">Approval Workflow</h3>
+                    <p className="mt-1 text-xs text-blue-200">
                       Define sequential stages, assign approvers by user or role, and add optional routing rules with reminder/escalation windows.
                     </p>
                   </div>
-                  <label className="inline-flex items-center gap-2 text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">
+                  <label className="inline-flex items-center gap-2 text-sm font-medium text-white">
                     <input
                       type="checkbox"
                       checked={workflowEnabled}
@@ -1605,7 +1605,7 @@ export default function CollectionBuilderPage() {
                     <button
                       type="button"
                       onClick={addWorkflowStage}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded border border-[#CBD5E1] dark:border-[#334155] text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9] hover:bg-white dark:hover:bg-[#111827]"
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded border border-blue-300 text-sm font-medium text-white hover:bg-[#1a3354]"
                     >
                       <Plus size={14} />
                       Add stage
