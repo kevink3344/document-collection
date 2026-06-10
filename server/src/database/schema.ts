@@ -188,6 +188,10 @@ export function createSchema(db: AppDatabase): void {
     db.exec(`ALTER TABLE collections ADD COLUMN workflow_definition TEXT`)
   }
 
+  if (!tableHasColumn(db, 'collection_fields', 'location_filter_enabled')) {
+    db.exec(`ALTER TABLE collection_fields ADD COLUMN location_filter_enabled INTEGER NOT NULL DEFAULT 0`)
+  }
+
   if (!tableHasColumn(db, 'collections', 'source_template_collection_id')) {
     db.exec(`ALTER TABLE collections ADD COLUMN source_template_collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL`)
   }

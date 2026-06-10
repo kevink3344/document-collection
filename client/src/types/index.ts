@@ -172,6 +172,7 @@ export interface CollectionField {
   sortOrder: number
   tableColumns: TableColumn[] | null
   staffOnly?: boolean
+  locationFilterEnabled?: boolean
 }
 
 export interface Collection {

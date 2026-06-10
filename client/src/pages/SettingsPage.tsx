@@ -3308,11 +3308,11 @@ export default function SettingsPage() {
                   )}
                 </div>
 
-                {editingUserMemberships.some(membership => membership.role === 'reviewer') && (
+                {editingUserRole !== 'super_admin' && (
                   <div className="rounded-lg border border-teal-100 dark:border-teal-900/30 bg-teal-50 dark:bg-teal-900/10 p-4 space-y-3">
                     <div>
                       <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Assigned Locations</h3>
-                      <p className="mt-1 text-xs text-[#64748B] dark:text-[#94A3B8]">Reviewer memberships can be limited to specific locations.</p>
+                      <p className="mt-1 text-xs text-[#64748B] dark:text-[#94A3B8]">Limit which submissions this user can see based on location.</p>
                     </div>
                     {editingUserLocationsLoading ? (
                       <p className="text-xs text-[#94A3B8] italic">Loading…</p>

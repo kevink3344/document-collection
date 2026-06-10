@@ -71,6 +71,7 @@ interface BuilderField {
   branchRules: FieldBranchRule[]
   tableColumns: TableColumn[]
   staffOnly: boolean
+  locationFilterEnabled: boolean
 }
 
 function resolveDisplayStyle(type: FieldType, displayStyle?: string | null): FieldDisplayStyle {
@@ -103,6 +104,7 @@ function blankField(page = 1): BuilderField {
     branchRules: [],
     tableColumns: [],
     staffOnly: false,
+    locationFilterEnabled: false,
   }
 }
 
@@ -131,6 +133,7 @@ function mapCollectionToBuilderFields(collection: Collection): BuilderField[] {
           : null,
     })),
     staffOnly: f.staffOnly ?? false,
+    locationFilterEnabled: f.locationFilterEnabled ?? false,
   }))
 }
 
@@ -781,6 +784,7 @@ export default function CollectionBuilderPage() {
           })),
           sortOrder: i,
           staffOnly: f.staffOnly,
+          locationFilterEnabled: f.locationFilterEnabled,
         })),
     }
   }
@@ -2679,6 +2683,24 @@ function FieldCard({
               </span>
             )}
           </button>
+        </div>
+      )}
+
+      {/* Location filter option */}
+      {field.type === 'location' && (
+        <div className="pl-7">
+          <label className="flex items-start gap-2 cursor-pointer select-none rounded border border-teal-200 dark:border-teal-900/40 bg-teal-50 dark:bg-teal-900/10 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={field.locationFilterEnabled}
+              onChange={e => onUpdate({ locationFilterEnabled: e.target.checked })}
+              className="accent-teal-600 w-3.5 h-3.5 mt-0.5 shrink-0"
+            />
+            <span className="text-xs text-teal-800 dark:text-teal-300">
+              <span className="font-medium">Limit views based on the logged in person&apos;s Location</span>
+              <span className="block mt-0.5 text-teal-600 dark:text-teal-400">When enabled, users will only see submissions where this field matches their assigned location.</span>
+            </span>
+          </label>
         </div>
       )}
     </div>

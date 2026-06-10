@@ -111,6 +111,7 @@ interface DbField {
   branch_rules: string | null
   sort_order: number
   staff_only: number
+  location_filter_enabled: number
 }
 
 interface DbTableColumn {
@@ -194,6 +195,7 @@ interface FieldInput {
   tableColumns?: TableColumnInput[]
   sortOrder?: number
   staffOnly?: boolean
+  locationFilterEnabled?: boolean
 }
 
 function buildAttachmentDownloadUrl(attachmentId: number): string {
@@ -263,7 +265,7 @@ function getVisibleResponseCountMap(
     .prepare(
       `SELECT MIN(id) AS id, collection_id
        FROM collection_fields
-       WHERE collection_id IN (${ph}) AND type = 'location'
+       WHERE collection_id IN (${ph}) AND type = 'location' AND location_filter_enabled = 1
        GROUP BY collection_id`
     )
     .all(...collectionIds) as unknown as Array<{ id: number; collection_id: number }>
@@ -632,6 +634,7 @@ function toApiCollection(
       branchRules: parseBranchRules(f.branch_rules),
       sortOrder: f.sort_order,
       staffOnly: f.staff_only === 1,
+      locationFilterEnabled: f.location_filter_enabled === 1,
       tableColumns:
         f.type === 'custom_table'
           ? (colsByField.get(f.id) ?? []).map(col => ({
@@ -696,8 +699,8 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only, location_filter_enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
@@ -712,7 +715,8 @@ function insertFields(collectionId: number, fields: FieldInput[]): void {
         resolveFieldDisplayStyle(field.type, field.displayStyle),
         serialiseBranchRules(field.branchRules),
         field.sortOrder ?? idx,
-        field.staffOnly ? 1 : 0
+        field.staffOnly ? 1 : 0,
+        field.locationFilterEnabled ? 1 : 0
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
       const fieldId = r.lastInsertRowid as number
@@ -740,8 +744,8 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
     const r = db
       .prepare(
         `INSERT INTO collection_fields
-           (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only, location_filter_enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         collectionId,
@@ -756,7 +760,8 @@ function insertFieldsForVersion(collectionId: number, versionId: number, fields:
         resolveFieldDisplayStyle(field.type, field.displayStyle),
         serialiseBranchRules(field.branchRules),
         field.sortOrder ?? idx,
-        field.staffOnly ? 1 : 0
+        field.staffOnly ? 1 : 0,
+        field.locationFilterEnabled ? 1 : 0
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
       const fieldId = r.lastInsertRowid as number
@@ -1081,6 +1086,7 @@ function normaliseDbFields(fields: DbField[], colsByField: Map<number, DbTableCo
       })),
       sortOrder: f.sort_order ?? i,
       staffOnly: f.staff_only === 1,
+      locationFilterEnabled: f.location_filter_enabled === 1,
     }))
   )
 }
@@ -2667,10 +2673,10 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
   let responses: DbResponse[]
 
   if (!canViewAllResponses(context)) {
-    // Find the location field in this collection (if any)
+    // Find the location field in this collection (if any) that has filtering enabled
     const locationField = db
       .prepare(
-        `SELECT id FROM collection_fields WHERE collection_id = ? AND type = 'location' LIMIT 1`
+        `SELECT id FROM collection_fields WHERE collection_id = ? AND type = 'location' AND location_filter_enabled = 1 LIMIT 1`
       )
       .get(id) as unknown as { id: number } | undefined
 
