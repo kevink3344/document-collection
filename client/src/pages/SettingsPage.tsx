@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, LayoutList, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, X } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, LayoutList, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Users, UserCheck, X } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -38,9 +38,10 @@ import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../ap
 import { getPublicSetting, updateSetting } from '../api/settings'
 import { listUsers, createUser, deleteUser, updateUser, sendInvite, type AppUser } from '../api/users'
 import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation } from '../api/locations'
+import { listGroups, createGroup, updateGroup, deleteGroup, listGroupMembers, addGroupMember, removeGroupMember } from '../api/groups'
 import { LocationTypeahead } from '../components/common/LocationTypeahead'
 import { useAuth } from '../contexts/AuthContext'
-import type { Category, Collection, GalleryAsset, Location, MembershipRole, Organization } from '../types'
+import type { Category, Collection, GalleryAsset, Group, GroupMember, Location, MembershipRole, Organization } from '../types'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 
 const INPUT =
@@ -56,6 +57,7 @@ type PanelId =
   | 'login-page'
   | 'navigation'
   | 'users'
+  | 'groups'
   | 'locations'
   | 'gallery'
   | 'qr-code'
@@ -68,7 +70,7 @@ type PanelLayout = Record<TabId, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'locations', 'gallery'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'groups', 'locations', 'gallery'],
   other: ['qr-code', 'logo-padding', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -78,6 +80,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   'login-page': 'Login Page',
   navigation: 'Navigation',
   users: 'User Accounts',
+  groups: 'Groups',
   locations: 'Locations',
   gallery: 'Cover Photo Gallery',
   'qr-code': 'QR Code',
@@ -320,6 +323,7 @@ export default function SettingsPage() {
   const [locationsExpanded, setLocationsExpanded] = useState(false)
   const [galleryExpanded, setGalleryExpanded] = useState(false)
   const [usersExpanded, setUsersExpanded] = useState(false)
+  const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [seedExpanded, setSeedExpanded] = useState(false)
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [organizationsLoading, setOrganizationsLoading] = useState(false)
@@ -346,6 +350,25 @@ export default function SettingsPage() {
   const [locationEditSaving, setLocationEditSaving] = useState(false)
   const [editingLocationId, setEditingLocationId] = useState<number | null>(null)
   const [editingLocationName, setEditingLocationName] = useState('')
+  // Groups state
+  const [groupsList, setGroupsList] = useState<Group[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupsError, setGroupsError] = useState<string | null>(null)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [newGroupDescription, setNewGroupDescription] = useState('')
+  const [groupCreateSaving, setGroupCreateSaving] = useState(false)
+  const [groupCreateError, setGroupCreateError] = useState<string | null>(null)
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
+  const [editingGroupName, setEditingGroupName] = useState('')
+  const [editingGroupDescription, setEditingGroupDescription] = useState('')
+  const [groupEditSaving, setGroupEditSaving] = useState(false)
+  const [groupEditError, setGroupEditError] = useState<string | null>(null)
+  const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null)
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
+  const [groupMembersLoading, setGroupMembersLoading] = useState(false)
+  const [allUsersForGroups, setAllUsersForGroups] = useState<import('../api/users').AppUser[]>([])
+  const [groupMemberAddUserId, setGroupMemberAddUserId] = useState<number | ''>('')
+  const [groupMemberAddSaving, setGroupMemberAddSaving] = useState(false)
   const [galleryAssets, setGalleryAssets] = useState<GalleryAsset[]>([])
   const [galleryLoading, setGalleryLoading] = useState(false)
   const [galleryError, setGalleryError] = useState<string | null>(null)
@@ -2280,6 +2303,249 @@ export default function SettingsPage() {
         </div>
       )}
       </>
+      )
+      case 'groups': return (user?.role !== 'super_admin' && user?.role !== 'administrator' && user?.role !== 'team_manager') ? null : (
+        <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !groupsExpanded
+              setGroupsExpanded(next)
+              if (next && groupsList.length === 0) {
+                setGroupsLoading(true)
+                listGroups()
+                  .then(data => { setGroupsList(data); setGroupsError(null) })
+                  .catch(err => setGroupsError((err as Error).message))
+                  .finally(() => setGroupsLoading(false))
+              }
+            }}
+            className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                <UserCheck size={18} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Groups</p>
+                <p className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-0.5">Create user groups for sharing collections</p>
+              </div>
+            </div>
+            {groupsExpanded ? <ChevronDown size={16} className="text-[#64748B] shrink-0" /> : <ChevronRight size={16} className="text-[#64748B] shrink-0" />}
+          </button>
+          {groupsExpanded && (
+            <div className="border-t border-[#E2E8F0] dark:border-[#334155] px-5 py-4 space-y-4">
+              {groupsError && <p className="text-red-600 text-sm">{groupsError}</p>}
+              {groupsLoading && <p className="text-sm text-[#64748B]">Loading…</p>}
+
+              {/* Create new group */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">New Group</p>
+                <input
+                  className={INPUT}
+                  placeholder="Group name"
+                  value={newGroupName}
+                  onChange={e => setNewGroupName(e.target.value)}
+                />
+                <input
+                  className={INPUT}
+                  placeholder="Description (optional)"
+                  value={newGroupDescription}
+                  onChange={e => setNewGroupDescription(e.target.value)}
+                />
+                {groupCreateError && <p className="text-red-600 text-xs">{groupCreateError}</p>}
+                <button
+                  type="button"
+                  disabled={groupCreateSaving || !newGroupName.trim()}
+                  onClick={() => {
+                    if (!newGroupName.trim()) return
+                    setGroupCreateSaving(true)
+                    setGroupCreateError(null)
+                    createGroup({ name: newGroupName.trim(), description: newGroupDescription.trim() || undefined })
+                      .then(g => {
+                        setGroupsList(prev => [...prev, g].sort((a, b) => a.name.localeCompare(b.name)))
+                        setNewGroupName('')
+                        setNewGroupDescription('')
+                      })
+                      .catch(err => setGroupCreateError((err as Error).message))
+                      .finally(() => setGroupCreateSaving(false))
+                  }}
+                  className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                >
+                  <Plus size={14} />
+                  {groupCreateSaving ? 'Creating…' : 'Create Group'}
+                </button>
+              </div>
+
+              {/* Group list */}
+              <div className="space-y-2">
+                {groupsList.map(group => (
+                  <div key={group.id} className="border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-[#F8FAFC] dark:bg-[#0F172A]">
+                      <button
+                        type="button"
+                        className="flex-1 text-left"
+                        onClick={() => {
+                          if (expandedGroupId === group.id) {
+                            setExpandedGroupId(null)
+                          } else {
+                            setExpandedGroupId(group.id)
+                            setGroupMembersLoading(true)
+                            Promise.all([
+                              listGroupMembers(group.id),
+                              import('../api/users').then(m => m.listUsers()),
+                            ])
+                              .then(([members, users]) => {
+                                setGroupMembers(members)
+                                setAllUsersForGroups(users)
+                                setGroupMemberAddUserId('')
+                              })
+                              .catch(() => {})
+                              .finally(() => setGroupMembersLoading(false))
+                          }
+                        }}
+                      >
+                        {editingGroupId === group.id ? (
+                          <div className="space-y-1" onClick={e => e.stopPropagation()}>
+                            <input
+                              className={INPUT}
+                              value={editingGroupName}
+                              onChange={e => setEditingGroupName(e.target.value)}
+                            />
+                            <input
+                              className={INPUT}
+                              placeholder="Description (optional)"
+                              value={editingGroupDescription}
+                              onChange={e => setEditingGroupDescription(e.target.value)}
+                            />
+                            {groupEditError && <p className="text-red-600 text-xs">{groupEditError}</p>}
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={groupEditSaving || !editingGroupName.trim()}
+                                onClick={() => {
+                                  if (!editingGroupName.trim()) return
+                                  setGroupEditSaving(true)
+                                  setGroupEditError(null)
+                                  updateGroup(group.id, { name: editingGroupName.trim(), description: editingGroupDescription.trim() || undefined })
+                                    .then(updated => {
+                                      setGroupsList(prev => prev.map(g => g.id === updated.id ? updated : g).sort((a, b) => a.name.localeCompare(b.name)))
+                                      setEditingGroupId(null)
+                                    })
+                                    .catch(err => setGroupEditError((err as Error).message))
+                                    .finally(() => setGroupEditSaving(false))
+                                }}
+                                className="inline-flex items-center gap-1 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white text-xs font-medium px-3 py-1.5 rounded"
+                              >
+                                <Save size={12} />{groupEditSaving ? 'Saving…' : 'Save'}
+                              </button>
+                              <button type="button" onClick={() => setEditingGroupId(null)} className="text-xs px-3 py-1.5 rounded border border-[#E2E8F0] dark:border-[#334155] text-[#64748B]">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">{group.name}</span>
+                            {group.description && <span className="ml-2 text-xs text-[#64748B]">{group.description}</span>}
+                            <span className="ml-2 text-xs text-[#94A3B8]">({group.memberCount ?? 0} members)</span>
+                          </div>
+                        )}
+                      </button>
+                      {editingGroupId !== group.id && (
+                        <>
+                          <button
+                            type="button"
+                            title="Edit"
+                            onClick={e => { e.stopPropagation(); setEditingGroupId(group.id); setEditingGroupName(group.name); setEditingGroupDescription(group.description ?? ''); setGroupEditError(null) }}
+                            className="p-1.5 rounded hover:bg-[#E2E8F0] dark:hover:bg-[#334155] text-[#64748B]"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete"
+                            onClick={e => {
+                              e.stopPropagation()
+                              if (!window.confirm(`Delete group "${group.name}"?`)) return
+                              deleteGroup(group.id)
+                                .then(() => {
+                                  setGroupsList(prev => prev.filter(g => g.id !== group.id))
+                                  if (expandedGroupId === group.id) setExpandedGroupId(null)
+                                })
+                                .catch(err => setGroupsError((err as Error).message))
+                            }}
+                            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {expandedGroupId === group.id && (
+                      <div className="px-3 py-2 space-y-2 border-t border-[#E2E8F0] dark:border-[#334155]">
+                        {groupMembersLoading ? (
+                          <p className="text-xs text-[#64748B]">Loading members…</p>
+                        ) : (
+                          <>
+                            <div className="space-y-1">
+                              {groupMembers.length === 0 && <p className="text-xs text-[#94A3B8]">No members yet.</p>}
+                              {groupMembers.map(m => (
+                                <div key={m.userId} className="flex items-center justify-between">
+                                  <span className="text-xs text-[#1E293B] dark:text-[#F1F5F9]">{m.name} <span className="text-[#94A3B8]">({m.email})</span></span>
+                                  <button
+                                    type="button"
+                                    title="Remove"
+                                    onClick={() => {
+                                      removeGroupMember(group.id, m.userId)
+                                        .then(() => setGroupMembers(prev => prev.filter(x => x.userId !== m.userId)))
+                                        .catch(() => {})
+                                    }}
+                                    className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex gap-2">
+                              <select
+                                className={INPUT + ' flex-1'}
+                                value={groupMemberAddUserId}
+                                onChange={e => setGroupMemberAddUserId(e.target.value === '' ? '' : Number(e.target.value))}
+                              >
+                                <option value="">— Add a user —</option>
+                                {allUsersForGroups
+                                  .filter(u => !groupMembers.some(m => m.userId === u.id))
+                                  .map(u => (
+                                    <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                                  ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={groupMemberAddSaving || groupMemberAddUserId === ''}
+                                onClick={() => {
+                                  if (groupMemberAddUserId === '') return
+                                  setGroupMemberAddSaving(true)
+                                  addGroupMember(group.id, Number(groupMemberAddUserId))
+                                    .then(() => listGroupMembers(group.id))
+                                    .then(members => { setGroupMembers(members); setGroupMemberAddUserId('') })
+                                    .catch(() => {})
+                                    .finally(() => setGroupMemberAddSaving(false))
+                                }}
+                                className="inline-flex items-center gap-1 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white text-xs font-medium px-3 py-1.5 rounded"
+                              >
+                                <Plus size={12} />{groupMemberAddSaving ? 'Adding…' : 'Add'}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
       )
       case 'locations': return (user?.role !== 'super_admin' && user?.role !== 'administrator') ? null : (
         <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">

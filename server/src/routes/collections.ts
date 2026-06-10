@@ -553,9 +553,34 @@ function fetchAccessibleCollectionById(
       .prepare(`${COL_SELECT} WHERE c.id = ?`)
       .get(id) as unknown as DbCollection | undefined
   }
-  return db
+  // Check org membership first (fastest path)
+  const byOrg = db
     .prepare(`${COL_SELECT} WHERE c.id = ? AND c.organization_id = ?`)
     .get(id, context.organizationId) as unknown as DbCollection | undefined
+  if (byOrg) return byOrg
+
+  // Check if directly shared with this user
+  const directShare = db
+    .prepare(`SELECT 1 FROM collection_shares WHERE collection_id = ? AND share_type = 'user' AND share_target_id = ?`)
+    .get(id, context.id) as unknown as { 1: number } | undefined
+  if (directShare) {
+    return db.prepare(`${COL_SELECT} WHERE c.id = ?`).get(id) as unknown as DbCollection | undefined
+  }
+
+  // Check if shared with any group the user belongs to
+  const groupShare = db
+    .prepare(`
+      SELECT 1 FROM collection_shares cs
+      JOIN group_members gm ON gm.group_id = cs.share_target_id
+      WHERE cs.collection_id = ? AND cs.share_type = 'group' AND gm.user_id = ?
+      LIMIT 1
+    `)
+    .get(id, context.id) as unknown as { 1: number } | undefined
+  if (groupShare) {
+    return db.prepare(`${COL_SELECT} WHERE c.id = ?`).get(id) as unknown as DbCollection | undefined
+  }
+
+  return undefined
 }
 
 // ── Serialisers ───────────────────────────────────────────────
@@ -1870,9 +1895,32 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
   }
 
   const db = getDb()
-  const cols = db
-    .prepare(`${COL_SELECT} WHERE c.organization_id = ? ORDER BY c.created_at DESC`)
-    .all(context.organizationId) as unknown as DbCollection[]
+
+  // For super_admin (no org), show all collections
+  let cols: DbCollection[]
+  if (isAdministrator(context)) {
+    cols = db
+      .prepare(`${COL_SELECT} ORDER BY c.created_at DESC`)
+      .all() as unknown as DbCollection[]
+  } else {
+    // Collections in the user's org + collections shared directly or via group
+    cols = db
+      .prepare(`
+        ${COL_SELECT}
+        WHERE c.organization_id = ?
+           OR EXISTS (
+             SELECT 1 FROM collection_shares cs
+             WHERE cs.collection_id = c.id AND cs.share_type = 'user' AND cs.share_target_id = ?
+           )
+           OR EXISTS (
+             SELECT 1 FROM collection_shares cs
+             JOIN group_members gm ON gm.group_id = cs.share_target_id
+             WHERE cs.collection_id = c.id AND cs.share_type = 'group' AND gm.user_id = ?
+           )
+        ORDER BY c.created_at DESC
+      `)
+      .all(context.organizationId, context.id, context.id) as unknown as DbCollection[]
+  }
 
   if (cols.length === 0) {
     res.json([])
@@ -4192,6 +4240,70 @@ router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): voi
     console.error('[collections] list tickets:', err)
     res.status(500).json({ error: 'Failed to list tickets' })
   }
+})
+
+// ── Collection Share Routes ────────────────────────────────────────────────
+
+// GET /api/collections/:id/shares
+router.get('/:id/shares', authenticateToken, (req: Request, res: Response) => {
+  const context = loadRequestUserContext(req)
+  if (!context) return void res.status(401).json({ error: 'Authentication required' })
+
+  const id = Number(req.params.id)
+  const db = getDb()
+  const collection = fetchAccessibleCollectionById(id, context)
+  if (!collection) return void res.status(404).json({ error: 'Collection not found' })
+
+  const userShares = db.prepare(`
+    SELECT u.id, u.name, u.email
+    FROM collection_shares cs
+    JOIN users u ON u.id = cs.share_target_id
+    WHERE cs.collection_id = ? AND cs.share_type = 'user'
+    ORDER BY lower(u.name)
+  `).all(id) as Array<{ id: number; name: string; email: string }>
+
+  const groupShares = db.prepare(`
+    SELECT g.id, g.name
+    FROM collection_shares cs
+    JOIN groups g ON g.id = cs.share_target_id
+    WHERE cs.collection_id = ? AND cs.share_type = 'group'
+    ORDER BY lower(g.name)
+  `).all(id) as Array<{ id: number; name: string }>
+
+  res.json({ users: userShares, groups: groupShares })
+})
+
+// PUT /api/collections/:id/shares  body: { userIds: number[], groupIds: number[] }
+router.put('/:id/shares', authenticateToken, (req: Request, res: Response) => {
+  const context = loadRequestUserContext(req)
+  if (!context) return void res.status(401).json({ error: 'Authentication required' })
+
+  const canManage = context.role === 'super_admin' || context.role === 'administrator' || context.role === 'team_manager'
+  if (!canManage) return void res.status(403).json({ error: 'Insufficient permissions' })
+
+  const id = Number(req.params.id)
+  const { userIds = [], groupIds = [] } = req.body as { userIds?: number[]; groupIds?: number[] }
+
+  const db = getDb()
+  const collection = fetchAccessibleCollectionById(id, context)
+  if (!collection) return void res.status(404).json({ error: 'Collection not found' })
+
+  // Replace all shares atomically
+  db.prepare(`DELETE FROM collection_shares WHERE collection_id = ?`).run(id)
+
+  const insertShare = db.prepare(`
+    INSERT OR IGNORE INTO collection_shares (collection_id, share_type, share_target_id, granted_by)
+    VALUES (?, ?, ?, ?)
+  `)
+
+  for (const uid of userIds) {
+    insertShare.run(id, 'user', uid, context.id)
+  }
+  for (const gid of groupIds) {
+    insertShare.run(id, 'group', gid, context.id)
+  }
+
+  res.json({ success: true })
 })
 
 export default router

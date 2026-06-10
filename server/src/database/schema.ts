@@ -553,6 +553,51 @@ export function createSchema(db: AppDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_approval_workflow_approver_instances_stage
       ON approval_workflow_approver_instances(stage_instance_id, status);
   `)
+
+  // ── Groups & Collection Shares ─────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS groups (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      name            TEXT    NOT NULL,
+      description     TEXT,
+      created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(organization_id, name)
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS group_members (
+      group_id   INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (group_id, user_id)
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collection_shares (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      collection_id  INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      share_type     TEXT    NOT NULL CHECK(share_type IN ('user', 'group')),
+      share_target_id INTEGER NOT NULL,
+      granted_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(collection_id, share_type, share_target_id)
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_collection_shares_collection
+      ON collection_shares(collection_id);
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_group_members_user
+      ON group_members(user_id);
+  `)
 }
 
 export function seedData(db: AppDatabase): void {

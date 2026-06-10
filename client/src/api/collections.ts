@@ -4,6 +4,7 @@ import type {
   Collection,
   CollectionField,
   CollectionResponse,
+  CollectionShare,
   CollectionStatus,
   CollectionVersion,
   SubmissionComment,
@@ -234,6 +235,23 @@ export async function deleteComment(collectionId: number, responseId: number, co
   const res = await fetch(`/api/collections/${collectionId}/responses/${responseId}/comments/${commentId}`, {
     method: 'DELETE',
     headers: authHeaders(),
+  })
+  return handleResponse<void>(res)
+}
+
+export async function getCollectionShares(collectionId: number): Promise<CollectionShare> {
+  const res = await fetch(`/api/collections/${collectionId}/shares`, { headers: authHeaders() })
+  return handleResponse<CollectionShare>(res)
+}
+
+export async function saveCollectionShares(
+  collectionId: number,
+  payload: { userIds: number[]; groupIds: number[] }
+): Promise<void> {
+  const res = await fetch(`/api/collections/${collectionId}/shares`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
   })
   return handleResponse<void>(res)
 }

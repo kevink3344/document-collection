@@ -22,6 +22,7 @@ import locationsRouter from './routes/locations'
 import galleryAssetsRouter from './routes/gallery-assets'
 import ticketTemplatesRouter from './routes/ticket-templates'
 import approvalsRouter from './routes/approvals'
+import groupsRouter from './routes/groups'
 import { dispatchPendingEmailNotifications, generateDueDateNotifications } from './services/notifications'
 import { processWorkflowEscalations } from './services/approvalWorkflows'
 
@@ -104,6 +105,7 @@ app.use('/api/locations', locationsRouter)
 app.use('/api/gallery-assets', galleryAssetsRouter)
 app.use('/api/ticket-templates', ticketTemplatesRouter)
 app.use('/api/approvals', approvalsRouter)
+app.use('/api/groups', groupsRouter)
 app.use('/api', healthRouter)
 
 // Health check for platform probes (non-API path)

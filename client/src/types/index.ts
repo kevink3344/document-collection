@@ -381,3 +381,30 @@ export interface Location {
   organizationId: number
   createdAt: string
 }
+
+// ── Groups ────────────────────────────────────────────────────
+
+export interface Group {
+  id: number
+  organizationId: number
+  name: string
+  description: string | null
+  createdBy: number | null
+  createdAt: string
+  updatedAt: string
+  memberCount?: number
+}
+
+export interface GroupMember {
+  userId: number
+  name: string
+  email: string
+  role: UserRole
+  addedAt: string
+}
+
+export interface CollectionShare {
+  users: Array<{ id: number; name: string; email: string }>
+  groups: Array<{ id: number; name: string }>
+}
+

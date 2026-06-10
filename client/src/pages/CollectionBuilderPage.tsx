@@ -22,17 +22,20 @@ import {
   createCollection,
   createCollectionVersion,
   getCollection,
+  getCollectionShares,
   getCollectionVersion,
   listCollectionVersions,
   publishCollectionVersion,
+  saveCollectionShares,
   updateCollection,
 } from '../api/collections'
 import { listGalleryAssets } from '../api/galleryAssets'
+import { listGroups } from '../api/groups'
 import { getCollectionTicketTemplatesAll, saveCollectionTicketTemplates, setCollectionTicketTemplateActive } from '../api/tickets'
 import { listTicketTemplates } from '../api/ticketTemplates'
 import { listCategories } from '../api/categories'
 import { listUsers, type AppUser } from '../api/users'
-import type { Category, Collection, CollectionField, CollectionTicketTemplate, GalleryAsset, TicketTemplate } from '../types'
+import type { Category, Collection, CollectionField, CollectionShare, CollectionTicketTemplate, GalleryAsset, Group, TicketTemplate } from '../types'
 import type {
   ApprovalWorkflowCondition,
   ApprovalWorkflowDefinition,
@@ -248,6 +251,15 @@ export default function CollectionBuilderPage() {
   const [workflowStages, setWorkflowStages] = useState<ApprovalWorkflowStageDefinition[]>([blankWorkflowStage(0)])
   const [workflowUsers, setWorkflowUsers] = useState<AppUser[]>([])
 
+  // Share state
+  const [shareUsers, setShareUsers] = useState<CollectionShare['users']>([])
+  const [shareGroups, setShareGroups] = useState<CollectionShare['groups']>([])
+  const [availableUsersForShare, setAvailableUsersForShare] = useState<AppUser[]>([])
+  const [availableGroupsForShare, setAvailableGroupsForShare] = useState<Group[]>([])
+  const [shareSaving, setShareSaving] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [shareLoaded, setShareLoaded] = useState(false)
+
 
   // Fields
   const [fields, setFields] = useState<BuilderField[]>([blankField()])
@@ -443,6 +455,23 @@ export default function CollectionBuilderPage() {
   useEffect(() => {
     setDetailsOverflowOpen(false)
   }, [detailsTab])
+
+  useEffect(() => {
+    if (!id || detailsTab !== 'share' || shareLoaded) return
+    setShareLoaded(true)
+    Promise.all([
+      getCollectionShares(parseInt(id, 10)),
+      listUsers(),
+      listGroups(),
+    ])
+      .then(([shares, users, groups]) => {
+        setShareUsers(shares.users)
+        setShareGroups(shares.groups)
+        setAvailableUsersForShare(users)
+        setAvailableGroupsForShare(groups)
+      })
+      .catch(() => {})
+  }, [id, detailsTab, shareLoaded])
 
   useEffect(() => {
     if (!id || detailsTab !== 'versions') return
@@ -1808,6 +1837,108 @@ export default function CollectionBuilderPage() {
                 )}
               </div>
 
+              {/* User & Group Access Sharing */}
+              {id && (
+                <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] p-4 space-y-4">
+                  <p className="text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Access — Users & Groups</p>
+                  <p className="text-xs text-[#64748B]">Grant additional users or groups access to this collection, even if they're outside your organization.</p>
+
+                  {/* Users */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-[#1E293B] dark:text-[#F1F5F9]">Users</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {shareUsers.map(u => (
+                        <span key={u.id} className="inline-flex items-center gap-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 text-xs px-2 py-0.5 rounded-full">
+                          {u.name}
+                          <button
+                            type="button"
+                            onClick={() => setShareUsers(prev => prev.filter(x => x.id !== u.id))}
+                            className="hover:text-red-500 ml-0.5"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ))}
+                      {shareUsers.length === 0 && <span className="text-xs text-[#94A3B8]">No users added</span>}
+                    </div>
+                    <select
+                      className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] text-xs px-2 py-1.5 rounded focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                      value=""
+                      onChange={e => {
+                        if (!e.target.value) return
+                        const uid = Number(e.target.value)
+                        const u = availableUsersForShare.find(x => x.id === uid)
+                        if (u && !shareUsers.some(x => x.id === uid)) {
+                          setShareUsers(prev => [...prev, { id: u.id, name: u.name, email: u.email }])
+                        }
+                      }}
+                    >
+                      <option value="">— Add user —</option>
+                      {availableUsersForShare
+                        .filter(u => !shareUsers.some(x => x.id === u.id))
+                        .map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+                    </select>
+                  </div>
+
+                  {/* Groups */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-[#1E293B] dark:text-[#F1F5F9]">Groups</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {shareGroups.map(g => (
+                        <span key={g.id} className="inline-flex items-center gap-1 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200 text-xs px-2 py-0.5 rounded-full">
+                          {g.name}
+                          <button
+                            type="button"
+                            onClick={() => setShareGroups(prev => prev.filter(x => x.id !== g.id))}
+                            className="hover:text-red-500 ml-0.5"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ))}
+                      {shareGroups.length === 0 && <span className="text-xs text-[#94A3B8]">No groups added</span>}
+                    </div>
+                    <select
+                      className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] text-xs px-2 py-1.5 rounded focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                      value=""
+                      onChange={e => {
+                        if (!e.target.value) return
+                        const gid = Number(e.target.value)
+                        const g = availableGroupsForShare.find(x => x.id === gid)
+                        if (g && !shareGroups.some(x => x.id === gid)) {
+                          setShareGroups(prev => [...prev, { id: g.id, name: g.name }])
+                        }
+                      }}
+                    >
+                      <option value="">— Add group —</option>
+                      {availableGroupsForShare
+                        .filter(g => !shareGroups.some(x => x.id === g.id))
+                        .map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+
+                  {shareError && <p className="text-red-600 text-xs">{shareError}</p>}
+                  <button
+                    type="button"
+                    disabled={shareSaving}
+                    onClick={() => {
+                      if (!id) return
+                      setShareSaving(true)
+                      setShareError(null)
+                      saveCollectionShares(parseInt(id, 10), {
+                        userIds: shareUsers.map(u => u.id),
+                        groupIds: shareGroups.map(g => g.id),
+                      })
+                        .catch(err => setShareError((err as Error).message))
+                        .finally(() => setShareSaving(false))
+                    }}
+                    className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    <Save size={14} />
+                    {shareSaving ? 'Saving…' : 'Save Access'}
+                  </button>
+                </div>
+              )}
 
             </div>
           )}

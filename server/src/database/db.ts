@@ -1810,4 +1810,50 @@ function runMigrations(db: AppDatabase): void {
     }
   }
 
+  // ── Groups, Group Members, Collection Shares ────────────────────────────────
+  if (!tableExists(db, 'groups')) {
+    db.exec(`
+      CREATE TABLE groups (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name            TEXT    NOT NULL,
+        description     TEXT,
+        created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(organization_id, name)
+      )
+    `)
+    console.log('[db] Migration: created groups table')
+  }
+
+  if (!tableExists(db, 'group_members')) {
+    db.exec(`
+      CREATE TABLE group_members (
+        group_id   INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (group_id, user_id)
+      )
+    `)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id)`)
+    console.log('[db] Migration: created group_members table')
+  }
+
+  if (!tableExists(db, 'collection_shares')) {
+    db.exec(`
+      CREATE TABLE collection_shares (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        collection_id   INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        share_type      TEXT    NOT NULL CHECK(share_type IN ('user', 'group')),
+        share_target_id INTEGER NOT NULL,
+        granted_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(collection_id, share_type, share_target_id)
+      )
+    `)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_collection_shares_collection ON collection_shares(collection_id)`)
+    console.log('[db] Migration: created collection_shares table')
+  }
+
 }
