@@ -2326,7 +2326,7 @@ export default function SettingsPage() {
                 <UserCheck size={18} />
               </div>
               <div>
-                <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Groups</p>
+                <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Groups</h2>
                 <p className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-0.5">Create user groups for sharing collections</p>
               </div>
             </div>
