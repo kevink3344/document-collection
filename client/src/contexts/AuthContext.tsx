@@ -12,13 +12,29 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+function isValidUser(value: unknown): value is User {
+  if (!value || typeof value !== 'object') return false
+
+  const candidate = value as Partial<User>
+  return (
+    typeof candidate.id === 'number' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.email === 'string' &&
+    typeof candidate.role === 'string' &&
+    Array.isArray(candidate.organizations)
+  )
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
     // Restore user profile from localStorage cache (non-sensitive display data only)
     try {
       const raw = localStorage.getItem('dcp-user')
-      return raw ? (JSON.parse(raw) as User) : null
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as unknown
+      return isValidUser(parsed) ? parsed : null
     } catch {
+      localStorage.removeItem('dcp-user')
       return null
     }
   })
@@ -27,6 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const token: string | null = null
 
   const signIn = (u: User, _token: string) => {
+    if (!isValidUser(u)) {
+      setUser(null)
+      localStorage.removeItem('dcp-user')
+      return
+    }
+
     setUser(u)
     localStorage.setItem('dcp-user', JSON.stringify(u))
   }
@@ -67,7 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Validate session with server on startup and refresh the user profile
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
-      .then(res => (res.ok ? (res.json() as Promise<User>) : null))
+      .then(async res => {
+        if (!res.ok) return null
+        const data = await res.json().catch(() => null)
+        return isValidUser(data) ? data : null
+      })
       .then(freshUser => {
         if (freshUser) {
           setUser(freshUser)
@@ -78,7 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem('dcp-user')
         }
       })
-      .catch(() => { /* silently ignore — stale data is fine */ })
+      .catch(() => {
+        setUser(null)
+        localStorage.removeItem('dcp-user')
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
