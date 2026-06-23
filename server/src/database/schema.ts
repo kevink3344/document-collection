@@ -603,6 +603,46 @@ export function createSchema(db: AppDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_group_members_user
       ON group_members(user_id);
   `)
+
+  // ── Sign-Up Sheet ──────────────────────────────────────────────────────────
+  if (!tableHasColumn(db, 'collections', 'collection_type')) {
+    db.exec(`ALTER TABLE collections ADD COLUMN collection_type TEXT NOT NULL DEFAULT 'standard'`)
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS signup_slots (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      collection_id   INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      slot_date       TEXT    NOT NULL,
+      start_time      TEXT    NOT NULL,
+      end_time        TEXT    NOT NULL,
+      label           TEXT    NOT NULL DEFAULT 'Available Slot',
+      max_capacity    INTEGER NOT NULL DEFAULT 1,
+      sort_order      INTEGER NOT NULL DEFAULT 0,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS signup_registrations (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      slot_id          INTEGER NOT NULL REFERENCES signup_slots(id) ON DELETE CASCADE,
+      respondent_name  TEXT    NOT NULL,
+      respondent_email TEXT    NOT NULL,
+      note             TEXT,
+      created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_signup_slots_collection
+      ON signup_slots(collection_id, sort_order, id);
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_signup_registrations_slot
+      ON signup_registrations(slot_id);
+  `)
 }
 
 export function seedData(db: AppDatabase): void {

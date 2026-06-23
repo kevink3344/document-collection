@@ -27,6 +27,7 @@ export interface CollectionPayload {
   anonymous: boolean
   allowSubmissionEdits: boolean
   submissionEditWindowHours?: number
+  collectionType?: 'standard' | 'signup_sheet'
 
   fields: Omit<CollectionField, 'id'>[]
 }

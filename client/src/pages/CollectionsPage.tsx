@@ -17,6 +17,7 @@ import {
   ClipboardList,
   GripVertical,
   Table,
+  CalendarCheck,
 } from 'lucide-react'
 import { listCollections, deleteCollection } from '../api/collections'
 import { getPreference, updatePreference } from '../api/preferences'
@@ -195,7 +196,10 @@ function SortableCollectionCard({
 
           <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] leading-tight flex items-center gap-1.5">
             {collection.title}
-            {!collection.anonymous && (
+            {collection.collectionType === 'signup_sheet' && (
+              <CalendarCheck size={12} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Sign-up sheet" />
+            )}
+            {!collection.anonymous && collection.collectionType !== 'signup_sheet' && (
               <User size={12} className="shrink-0 text-[#2563EB] dark:text-white" aria-label="Authentication required" />
             )}
             {collection.hasCustomTable && (
@@ -230,32 +234,46 @@ function SortableCollectionCard({
         </div>
 
         <div className="mt-auto pt-2 border-t border-[#F1F5F9] dark:border-[#334155] flex items-center gap-2">
-          <button
-            onClick={() => onViewForm(collection.slug)}
-            title={collection.status === 'published' ? 'View Form' : 'Publish to enable form access'}
-            disabled={collection.status !== 'published'}
-            className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors disabled:opacity-40"
-          >
-            <Copy size={13} />
-            View Form
-          </button>
-          <button
-            onClick={() => onTestForm(collection.slug)}
-            title="Test Form"
-            className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
-          >
-            <Eye size={13} />
-            Test Form
-          </button>
+          {collection.collectionType === 'signup_sheet' ? (
+            <button
+              onClick={() => onViewForm(collection.slug)}
+              title={collection.status === 'published' ? 'View Sign-Up Sheet' : 'Publish to enable public access'}
+              disabled={collection.status !== 'published'}
+              className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors disabled:opacity-40"
+            >
+              <Copy size={13} />
+              View Sheet
+            </button>
+          ) : (
+            <button
+              onClick={() => onViewForm(collection.slug)}
+              title={collection.status === 'published' ? 'View Form' : 'Publish to enable form access'}
+              disabled={collection.status !== 'published'}
+              className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors disabled:opacity-40"
+            >
+              <Copy size={13} />
+              View Form
+            </button>
+          )}
+          {collection.collectionType !== 'signup_sheet' && (
+            <button
+              onClick={() => onTestForm(collection.slug)}
+              title="Test Form"
+              className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+            >
+              <Eye size={13} />
+              Test Form
+            </button>
+          )}
           {canManage && (
             <>
               <button
                 onClick={() => onEdit(collection.id)}
-                title="Edit Form"
+                title="Edit"
                 className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-[#2563EB] transition-colors"
               >
                 <Edit2 size={13} />
-                Edit Form
+                Edit
               </button>
               <button
                 onClick={() => onDelete(collection)}
@@ -453,7 +471,12 @@ export default function CollectionsPage() {
   }
 
   function viewForm(slug: string) {
-    window.open(`/fill/${slug}`, '_blank', 'noopener')
+    const col = collections.find(c => c.slug === slug)
+    if (col?.collectionType === 'signup_sheet') {
+      window.open(`/signup/${slug}`, '_blank', 'noopener')
+    } else {
+      window.open(`/fill/${slug}`, '_blank', 'noopener')
+    }
   }
 
   function handleUseTemplate(collectionId: number) {
@@ -732,7 +755,14 @@ export default function CollectionsPage() {
                 deleting={deleting}
                 canManage={canManageCollections}
                 onViewForm={viewForm}
-                onEdit={(id) => navigate(`/collections/${id}/edit`)}
+                onEdit={(id) => {
+                  const col = collections.find(c => c.id === id)
+                  if (col?.collectionType === 'signup_sheet') {
+                    navigate(`/collections/${id}/signup-builder`)
+                  } else {
+                    navigate(`/collections/${id}/edit`)
+                  }
+                }}
                 onDelete={handleDelete}
                 onTestForm={(slug) => {
                   window.open(`/fill/${slug}?preview=true`, '_blank', 'noopener')

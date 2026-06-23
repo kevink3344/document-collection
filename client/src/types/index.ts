@@ -65,6 +65,7 @@ export type FieldType =
   | 'location'
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
+export type CollectionType = 'standard' | 'signup_sheet'
 export type CollectionStatus = 'draft' | 'published'
 export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers'
 export type ApprovalAssignmentType = 'user' | 'role'
@@ -202,6 +203,7 @@ export interface Collection {
   anonymous: boolean
   allowSubmissionEdits: boolean
   submissionEditWindowHours: number | null
+  collectionType: CollectionType
   createdAt: string
   updatedAt: string
   fields: CollectionField[]
@@ -407,5 +409,42 @@ export interface GroupMember {
 export interface CollectionShare {
   users: Array<{ id: number; name: string; email: string }>
   groups: Array<{ id: number; name: string }>
+}
+
+// ── Sign-Up Sheets ────────────────────────────────────────────
+
+export interface SignupSlot {
+  id: number
+  collectionId: number
+  slotDate: string
+  startTime: string
+  endTime: string
+  label: string
+  maxCapacity: number
+  sortOrder: number
+  filledCount: number
+  createdAt: string
+}
+
+export interface SignupRegistration {
+  id: number
+  slotId: number
+  respondentName: string
+  respondentEmail: string
+  note: string | null
+  createdAt: string
+}
+
+export interface SignupSheetSummary {
+  id: number
+  slug: string
+  title: string
+  description: string | null
+  status: CollectionStatus
+  collectionType: CollectionType
+  organizationName: string | null
+  instructions: string | null
+  logoUrl: string | null
+  coverPhotoUrl: string | null
 }
 

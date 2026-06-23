@@ -91,6 +91,7 @@ interface DbCollection {
   anonymous: number
   allow_submission_edits: number
   submission_edit_window_hours: number | null
+  collection_type: 'standard' | 'signup_sheet'
   created_at: string
   updated_at: string
   creator_name?: string
@@ -393,6 +394,7 @@ interface CollectionBody {
   workflowDefinition?: ApprovalWorkflowDefinition | null
   sourceTemplateCollectionId?: number | null
   locationId?: number | null
+  collectionType?: 'standard' | 'signup_sheet'
   fields?: FieldInput[]
 }
 
@@ -620,6 +622,7 @@ function toApiCollection(
     anonymous: c.anonymous === 1,
     allowSubmissionEdits: c.allow_submission_edits === 1,
     submissionEditWindowHours: c.submission_edit_window_hours,
+    collectionType: c.collection_type ?? 'standard',
     createdAt: c.created_at,
     updatedAt: c.updated_at,
     fields: fields.map(f => ({
@@ -2097,8 +2100,8 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
         `INSERT INTO collections
            (slug, title, status, description, category, created_by, date_due, cover_photo_url,
             cover_photo_asset_id, logo_url, instructions, instructions_doc_url, workflow_definition, source_template_collection_id, organization_id, anonymous, allow_submission_edits,
-            submission_edit_window_hours, active_version_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+            submission_edit_window_hours, collection_type, active_version_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
       )
       .run(
         slug,
@@ -2118,7 +2121,8 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
         organization.id,
         body.anonymous ? 1 : 0,
         editSettings.allowSubmissionEdits ? 1 : 0,
-        editSettings.submissionEditWindowHours
+        editSettings.submissionEditWindowHours,
+        body.collectionType === 'signup_sheet' ? 'signup_sheet' : 'standard'
       )
 
     const id = r.lastInsertRowid as number
@@ -2331,7 +2335,7 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       `UPDATE collections
          SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
           cover_photo_asset_id = ?, logo_url = ?, instructions = ?, instructions_doc_url = ?, workflow_definition = ?, organization_id = ?, anonymous = ?, allow_submission_edits = ?,
-           submission_edit_window_hours = ?, active_version_id = ?,
+           submission_edit_window_hours = ?, collection_type = ?, active_version_id = ?,
            updated_at = datetime('now')
        WHERE id = ?`
     ).run(
@@ -2350,6 +2354,7 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
       body.anonymous ? 1 : 0,
       editSettings.allowSubmissionEdits ? 1 : 0,
       editSettings.submissionEditWindowHours,
+      body.collectionType === 'signup_sheet' ? 'signup_sheet' : 'standard',
       targetVersionId,
       id
     )

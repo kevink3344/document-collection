@@ -19,6 +19,8 @@ import AboutPage from './pages/AboutPage'
 import MySubmissionsPage from './pages/MySubmissionsPage'
 import MySubmissionDetailPage from './pages/MySubmissionDetailPage'
 import ApprovalsPage from './pages/ApprovalsPage'
+import SignupSheetBuilderPage from './pages/SignupSheetBuilderPage'
+import SignupSheetFillPage from './pages/SignupSheetFillPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -49,6 +51,7 @@ export default function App() {
         element={!user ? <LoginPage /> : <Navigate to={defaultAuthenticatedRoute} replace />}
       />
       <Route path="/fill/:slug" element={<CollectionFillPage />} />
+      <Route path="/signup/:slug" element={<SignupSheetFillPage />} />
 
       {/* Protected shell */}
       <Route element={<RequireAuth />}>
@@ -72,7 +75,9 @@ export default function App() {
           <Route element={<RequireRole allowed={['super_admin', 'administrator', 'team_manager']} fallback="/dashboard" />}>
             <Route path="/collections/new" element={<CollectionTypePage />} />
             <Route path="/collections/new/builder" element={<CollectionBuilderPage />} />
+            <Route path="/collections/new/signup-builder" element={<SignupSheetBuilderPage />} />
             <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
+            <Route path="/collections/:id/signup-builder" element={<SignupSheetBuilderPage />} />
             <Route path="/collections/:id/branching" element={<CollectionBranchingPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="ticket-designer" element={<TicketDesignerPage />} />
