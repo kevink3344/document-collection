@@ -35,11 +35,11 @@ export default function CollectionTypePage() {
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3 items-start">
+      <div className="grid gap-6 md:grid-cols-3">
         <button
           type="button"
           onClick={handleStartFromScratch}
-          className="text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
+          className="h-full flex flex-col text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
         >
           <div className="flex items-center gap-3 text-[#2563EB]">
             <FolderPlus size={18} />
@@ -54,7 +54,7 @@ export default function CollectionTypePage() {
         <button
           type="button"
           onClick={handleUseTemplate}
-          className="text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
+          className="h-full flex flex-col text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
         >
           <div className="flex items-center gap-3 text-[#2563EB]">
             <ClipboardList size={18} />
@@ -72,7 +72,7 @@ export default function CollectionTypePage() {
         <button
           type="button"
           onClick={handleSignupSheet}
-          className="text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
+          className="h-full flex flex-col text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
         >
           <div className="flex items-center gap-3 text-[#2563EB]">
             <CalendarCheck size={18} />
