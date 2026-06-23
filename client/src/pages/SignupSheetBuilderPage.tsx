@@ -7,7 +7,6 @@ import {
   Plus,
   Save,
   Trash2,
-  X,
 } from 'lucide-react'
 import { createCollection, getCollection, updateCollection } from '../api/collections'
 import { listSlots, createSlot, updateSlot, deleteSlot } from '../api/signupSlots'
