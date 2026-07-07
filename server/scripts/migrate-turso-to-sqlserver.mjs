@@ -143,7 +143,7 @@ function getSqlServerCreateTableStatement(tableName) {
           [instructions] NVARCHAR(MAX) NULL,
           [instructions_doc_url] NVARCHAR(MAX) NULL,
           [workflow_definition] NVARCHAR(MAX) NULL,
-          [source_template_collection_id] INT NULL CONSTRAINT [FK_collections_source_template] FOREIGN KEY REFERENCES [dbo].[collections]([id]) ON DELETE SET NULL,
+          [source_template_collection_id] INT NULL,
           [organization_id] INT NOT NULL CONSTRAINT [FK_collections_organization] FOREIGN KEY REFERENCES [dbo].[organizations]([id]),
           [active_version_id] INT NULL,
           [anonymous] INT NOT NULL CONSTRAINT [DF_collections_anonymous] DEFAULT 0,
@@ -445,6 +445,14 @@ async function main() {
     const createSql = getSqlServerCreateTableStatement(tableName)
     console.log(`[migrate:turso-to-sqlserver] Creating ${tableName}`)
     await pool.request().query(createSql)
+
+    if (tableName === 'collections') {
+      await pool.request().query(`
+        ALTER TABLE [dbo].[collections]
+        ADD CONSTRAINT [FK_collections_source_template]
+        FOREIGN KEY ([source_template_collection_id]) REFERENCES [dbo].[collections]([id]) ON DELETE SET NULL
+      `)
+    }
   }
 
   for (const table of orderedLocalTables) {
