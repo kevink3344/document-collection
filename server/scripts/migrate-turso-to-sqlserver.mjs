@@ -62,6 +62,10 @@ function qIdent(name) {
   return `"${String(name).replaceAll('"', '""')}"`
 }
 
+function quoteSqlServerIdentifier(identifier) {
+  return `[${String(identifier).replaceAll(']', ']]')}]`
+}
+
 function shouldIncludeTable(tableName, explicitTables) {
   if (explicitTables.length) {
     return explicitTables.includes(tableName)
@@ -105,7 +109,13 @@ async function topologicalSort(tables, sourceDb) {
 
 function translateCreateTableSql(sqlStatement) {
   let ddl = sqlStatement.trim()
+  const tableNameMatch = ddl.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"`)?([A-Za-z_][A-Za-z0-9_]*)(?:"`)?/i)
+  const tableName = tableNameMatch?.[1]
+
   ddl = ddl.replace(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, 'CREATE TABLE ')
+  if (tableName) {
+    ddl = ddl.replace(/^CREATE\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)/i, `CREATE TABLE ${quoteSqlServerIdentifier(tableName)}`)
+  }
   ddl = ddl.replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, 'INT IDENTITY(1,1) PRIMARY KEY')
   ddl = ddl.replace(/\bINTEGER\s+PRIMARY\s+KEY\b/gi, 'INT PRIMARY KEY')
   ddl = ddl.replace(/\bINTEGER\b/gi, 'INT')
@@ -116,6 +126,7 @@ function translateCreateTableSql(sqlStatement) {
   ddl = ddl.replace(/\bNUMERIC\b/gi, 'DECIMAL(18,2)')
   ddl = ddl.replace(/\(datetime\('now'\)\)/gi, '(GETDATE())')
   ddl = ddl.replace(/\bCURRENT_TIMESTAMP\b/gi, 'GETDATE()')
+  ddl = ddl.replace(/(^|,)\s*([A-Za-z_][A-Za-z0-9_]*)(?=\s+(?:INT|INTEGER|NVARCHAR|FLOAT|VARBINARY|BIT|DECIMAL|TEXT|REAL|BLOB|BOOLEAN|NUMERIC|VARCHAR|DATETIME|DATE|TIME)(?:\s|$))/gi, (_match, prefix, name) => `${prefix}${quoteSqlServerIdentifier(name)}`)
   ddl = ddl.replace(/;\s*$/i, '')
   return ddl
 }
@@ -236,7 +247,7 @@ async function main() {
     }
 
     try {
-      const insertSql = `INSERT INTO [dbo].[${table.name}] (${columns.map((column) => `[${column}]`).join(', ')}) VALUES (${columns.map((_, index) => `@p${index}`).join(', ')})`
+      const insertSql = `INSERT INTO [dbo].[${table.name}] (${columns.map((column) => quoteSqlServerIdentifier(column)).join(', ')}) VALUES (${columns.map((_, index) => `@p${index}`).join(', ')})`
       for (const row of rows) {
         const request = pool.request()
         columns.forEach((column, index) => {
