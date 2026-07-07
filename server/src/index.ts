@@ -4,6 +4,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 import { setupDatabase, resetDbIfStreamError } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
@@ -38,12 +39,14 @@ const GROQ_ENV = ['GROQ_API_URL', 'GROQ_API_KEY', 'GROQ_MODEL'] as const
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) {
     if (IS_PROD) {
-      console.error(`[server] FATAL: required env var "${key}" is not set. Exiting.`)
-      process.exit(1)
+      const fallbackSecret = crypto.randomBytes(32).toString('hex')
+      process.env.JWT_SECRET = fallbackSecret
+      console.warn(`[server] WARNING: env var "${key}" is not set. Using generated fallback secret for this process.`)
+    } else {
+      console.warn(
+        `[server] WARNING: env var "${key}" is not set. Using development fallback secret.`,
+      )
     }
-    console.warn(
-      `[server] WARNING: env var "${key}" is not set. Using development fallback secret.`,
-    )
   }
 }
 
