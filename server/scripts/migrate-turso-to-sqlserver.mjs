@@ -109,7 +109,7 @@ async function topologicalSort(tables, sourceDb) {
 
 function translateCreateTableSql(sqlStatement) {
   let ddl = sqlStatement.trim()
-  const tableNameMatch = ddl.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"`)?([A-Za-z_][A-Za-z0-9_]*)(?:"`)?/i)
+  const tableNameMatch = ddl.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"|`))?([A-Za-z_][A-Za-z0-9_]*)(?:(?:"|`))?/i)
   const tableName = tableNameMatch?.[1]
 
   ddl = ddl.replace(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, 'CREATE TABLE ')
@@ -126,7 +126,7 @@ function translateCreateTableSql(sqlStatement) {
   ddl = ddl.replace(/\bNUMERIC\b/gi, 'DECIMAL(18,2)')
   ddl = ddl.replace(/\(datetime\('now'\)\)/gi, '(GETDATE())')
   ddl = ddl.replace(/\bCURRENT_TIMESTAMP\b/gi, 'GETDATE()')
-  ddl = ddl.replace(/(^|,)\s*([A-Za-z_][A-Za-z0-9_]*)(?=\s+(?:INT|INTEGER|NVARCHAR|FLOAT|VARBINARY|BIT|DECIMAL|TEXT|REAL|BLOB|BOOLEAN|NUMERIC|VARCHAR|DATETIME|DATE|TIME)(?:\s|$))/gi, (_match, prefix, name) => `${prefix}${quoteSqlServerIdentifier(name)}`)
+  ddl = ddl.replace(/(^|[,(])\s*([A-Za-z_][A-Za-z0-9_]*)(?=\s+(?:INT|INTEGER|NVARCHAR|FLOAT|VARBINARY|BIT|DECIMAL|TEXT|REAL|BLOB|BOOLEAN|NUMERIC|VARCHAR|DATETIME|DATE|TIME|DEFAULT|NOT\s+NULL|PRIMARY|REFERENCES|CHECK|UNIQUE|CONSTRAINT)(?:\s|,|$))/gim, (_match, prefix, name) => `${prefix}${quoteSqlServerIdentifier(name)}`)
   ddl = ddl.replace(/;\s*$/i, '')
   return ddl
 }
