@@ -116,6 +116,8 @@ function translateCreateTableSql(sqlStatement) {
   if (tableName) {
     ddl = ddl.replace(/^CREATE\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)/i, `CREATE TABLE ${quoteSqlServerIdentifier(tableName)}`)
   }
+  // Strip SQLite-specific collation modifiers — SQL Server uses database-level collation
+  ddl = ddl.replace(/\s+COLLATE\s+(?:NOCASE|BINARY|RTRIM)\b/gi, '')
   ddl = ddl.replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, 'INT IDENTITY(1,1) PRIMARY KEY')
   ddl = ddl.replace(/\bINTEGER\s+PRIMARY\s+KEY\b/gi, 'INT PRIMARY KEY')
   ddl = ddl.replace(/\bINTEGER\b/gi, 'INT')
@@ -127,7 +129,6 @@ function translateCreateTableSql(sqlStatement) {
   ddl = ddl.replace(/\(datetime\('now'\)\)/gi, '(GETDATE())')
   ddl = ddl.replace(/\bCURRENT_TIMESTAMP\b/gi, 'GETDATE()')
   ddl = ddl.replace(/(^|[,(])\s*([A-Za-z_][A-Za-z0-9_]*)(?=\s+(?:INT|INTEGER|NVARCHAR(?:\([^)]*\))?|FLOAT|VARBINARY(?:\([^)]*\))?|BIT|DECIMAL(?:\([^)]*\))?|TEXT|REAL|BLOB|BOOLEAN|NUMERIC|VARCHAR(?:\([^)]*\))?|DATETIME|DATE|TIME|DEFAULT|NOT\s+NULL|PRIMARY|REFERENCES|CHECK|UNIQUE|CONSTRAINT)(?:\s|,|$))/gim, (_match, prefix, name) => `${prefix}${quoteSqlServerIdentifier(name)}`)
-  ddl = ddl.replace(/(^|[,(])\s*([A-Za-z_][A-Za-z0-9_]*)(?=\s+(?:PRIMARY|REFERENCES|CHECK|UNIQUE|CONSTRAINT)\b)/gim, (_match, prefix, name) => `${prefix}${quoteSqlServerIdentifier(name)}`)
   ddl = ddl.replace(/;\s*$/i, '')
   return ddl
 }
