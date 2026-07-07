@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDb, setConfiguredDatabaseMode } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 
 const router = Router()
@@ -18,6 +18,7 @@ const ALLOWED_KEYS = new Set([
   'copy_answers_disclaimer',
   'ai_summary_enabled',
   'about_message',
+  'database_mode',
 ])
 
 interface DbSetting {
@@ -132,6 +133,15 @@ router.put('/:key', authenticateToken, (req: Request, res: Response) => {
   if (!value) {
     res.status(400).json({ error: 'value is required' })
     return
+  }
+
+  if (key === 'database_mode') {
+    const normalized = value.toLowerCase()
+    if (normalized !== 'turso' && normalized !== 'sqlserver' && normalized !== 'sqlite') {
+      res.status(400).json({ error: 'database_mode must be one of: turso, sqlserver, sqlite' })
+      return
+    }
+    setConfiguredDatabaseMode(normalized as 'turso' | 'sqlserver' | 'sqlite')
   }
 
   const db = getDb()

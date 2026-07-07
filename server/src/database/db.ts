@@ -37,7 +37,63 @@ export function resetDbIfStreamError(err: unknown): void {
 
 type DbTarget =
   | { mode: 'turso'; url: string; authToken: string }
+  | { mode: 'sqlserver'; server: string; database: string; user: string; password: string }
   | { mode: 'sqlite'; dbPath: string }
+
+const DATABASE_MODE_FILE = path.resolve(process.cwd(), '.db-mode')
+
+function normalizeDatabaseMode(value: string | undefined): 'turso' | 'sqlserver' | 'sqlite' | null {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'turso' || normalized === 'sqlserver' || normalized === 'sqlite') {
+    return normalized
+  }
+  return null
+}
+
+function readPersistedDatabaseMode(): 'turso' | 'sqlserver' | 'sqlite' | null {
+  try {
+    if (!fs.existsSync(DATABASE_MODE_FILE)) return null
+    const raw = fs.readFileSync(DATABASE_MODE_FILE, 'utf8').trim()
+    if (!raw) return null
+    if (raw.startsWith('{')) {
+      const parsed = JSON.parse(raw) as { mode?: unknown }
+      return normalizeDatabaseMode(typeof parsed.mode === 'string' ? parsed.mode : undefined)
+    }
+    return normalizeDatabaseMode(raw)
+  } catch {
+    return null
+  }
+}
+
+function isPlaceholderValue(value: string | undefined): boolean {
+  if (!value) return true
+  const normalized = value.trim().toLowerCase()
+  return normalized === ''
+    || normalized.includes('<your-')
+    || normalized.includes('your-')
+    || normalized.includes('changeme')
+    || normalized.includes('replace-me')
+    || normalized.includes('placeholder')
+}
+
+function looksLikeValidTursoConnection(url: string | undefined, authToken: string | undefined): boolean {
+  if (!url || !authToken) return false
+  if (isPlaceholderValue(url) || isPlaceholderValue(authToken)) return false
+  try {
+    new URL(url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function getConfiguredDatabaseMode(): 'turso' | 'sqlserver' | 'sqlite' {
+  return normalizeDatabaseMode(process.env.DB_MODE) ?? normalizeDatabaseMode(process.env.DATABASE_MODE) ?? readPersistedDatabaseMode() ?? 'turso'
+}
+
+export function setConfiguredDatabaseMode(mode: 'turso' | 'sqlserver' | 'sqlite'): void {
+  fs.writeFileSync(DATABASE_MODE_FILE, JSON.stringify({ mode }), 'utf8')
+}
 
 function hasForeignKeyTarget(database: AppDatabase, tableName: string, targetTable: string): boolean {
   // Use sqlite_master instead of PRAGMA foreign_key_list so reads are served
@@ -484,15 +540,40 @@ function resolveDbTarget(): DbTarget {
   const databaseAuthToken = process.env.DATABASE_AUTH_TOKEN?.trim()
   const tursoUrl = process.env.TURSO_DATABASE_URL?.trim()
   const tursoToken = process.env.TURSO_AUTH_TOKEN?.trim()
+  const configuredMode = getConfiguredDatabaseMode()
 
-  if (databaseUrl?.startsWith('libsql://')) {
-    if (!databaseAuthToken && !tursoToken) {
-      throw new Error('DATABASE_URL points to Turso/libsql but no DATABASE_AUTH_TOKEN or TURSO_AUTH_TOKEN is set')
+  if (configuredMode === 'sqlserver') {
+    const sqlServer = process.env.AZURE_SQL_SERVER?.trim()
+    const sqlDatabase = process.env.AZURE_SQL_DATABASE?.trim()
+    const sqlUser = process.env.AZURE_SQL_USER?.trim()
+    const sqlPassword = process.env.AZURE_SQL_PASSWORD?.trim()
+    if (sqlServer && sqlDatabase && sqlUser && sqlPassword) {
+      return { mode: 'sqlserver', server: sqlServer, database: sqlDatabase, user: sqlUser, password: sqlPassword }
     }
 
+    console.warn('[db] SQL Server mode requested but the required environment variables are missing; falling back to local SQLite.')
+  }
+
+  if (configuredMode === 'turso') {
+    if (looksLikeValidTursoConnection(databaseUrl, databaseAuthToken ?? tursoToken)) {
+      return {
+        mode: 'turso',
+        url: databaseUrl!,
+        authToken: databaseAuthToken ?? tursoToken!,
+      }
+    }
+
+    if (looksLikeValidTursoConnection(tursoUrl, tursoToken)) {
+      return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
+    }
+
+    console.warn('[db] Turso mode requested but the configured URL/token is missing or invalid; falling back to local SQLite.')
+  }
+
+  if (looksLikeValidTursoConnection(databaseUrl, databaseAuthToken ?? tursoToken)) {
     return {
       mode: 'turso',
-      url: databaseUrl,
+      url: databaseUrl!,
       authToken: databaseAuthToken ?? tursoToken!,
     }
   }
@@ -501,8 +582,8 @@ function resolveDbTarget(): DbTarget {
     return { mode: 'sqlite', dbPath: resolveDbPath() }
   }
 
-  if (tursoUrl && tursoToken) {
-    return { mode: 'turso', url: tursoUrl, authToken: tursoToken }
+  if (looksLikeValidTursoConnection(tursoUrl, tursoToken)) {
+    return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
   }
 
   return { mode: 'sqlite', dbPath: resolveDbPath() }
@@ -634,6 +715,10 @@ export function getDb(): AppDatabase {
   }
 
   if (!db) {
+    if (target.mode === 'sqlserver') {
+      console.warn('[db] SQL Server mode selected; the current deployment uses the migration workflow and will continue with the local SQLite fallback until the SQL Server cutover is completed.')
+    }
+
     if (target.mode === 'turso') {
       // Use embedded replica: libsql syncs from Turso into a local file.
       // This avoids the hrana protocol 502 issues with the native binary.

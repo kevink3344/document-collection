@@ -63,6 +63,7 @@ type PanelId =
   | 'gallery'
   | 'qr-code'
   | 'logo-padding'
+  | 'database-mode'
   | 'api'
   | 'seed'
 
@@ -72,7 +73,7 @@ type PanelLayout = Record<TabId, PanelId[]>
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
   general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'groups', 'locations', 'gallery'],
-  other: ['qr-code', 'logo-padding', 'api', 'seed'],
+  other: ['qr-code', 'logo-padding', 'database-mode', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
   organizations: 'Organizations',
@@ -86,6 +87,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   gallery: 'Cover Photo Gallery',
   'qr-code': 'QR Code',
   'logo-padding': 'Image Logo URL Padding',
+  'database-mode': 'Database Mode',
   api: 'API Documentation',
   seed: 'Seed Data',
 }
@@ -458,6 +460,10 @@ export default function SettingsPage() {
   const [notificationWindowError, setNotificationWindowError] = useState<string | null>(null)
   const [notificationWindowSaved, setNotificationWindowSaved] = useState(false)
   const [qrCodeEnabled, setQrCodeEnabled] = useState(false)
+  const [databaseMode, setDatabaseMode] = useState('turso')
+  const [databaseModeSaving, setDatabaseModeSaving] = useState(false)
+  const [databaseModeError, setDatabaseModeError] = useState<string | null>(null)
+  const [databaseModeSaved, setDatabaseModeSaved] = useState(false)
   const [qrCodeSaving, setQrCodeSaving] = useState(false)
   const [qrCodeError, setQrCodeError] = useState<string | null>(null)
   const [qrCodeSaved, setQrCodeSaved] = useState(false)
@@ -1066,6 +1072,22 @@ export default function SettingsPage() {
       setCopyAnswersDisclaimerError((err as Error).message)
     } finally {
       setCopyAnswersDisclaimerSaving(false)
+    }
+  }
+
+  async function handleDatabaseModeChange(nextValue: 'turso' | 'sqlserver' | 'sqlite') {
+    setDatabaseMode(nextValue)
+    setDatabaseModeSaving(true)
+    setDatabaseModeError(null)
+    setDatabaseModeSaved(false)
+    try {
+      await updateSetting('database_mode', nextValue)
+      setDatabaseModeSaved(true)
+    } catch (err) {
+      setDatabaseMode(nextValue === 'turso' ? 'sqlserver' : 'turso')
+      setDatabaseModeError((err as Error).message)
+    } finally {
+      setDatabaseModeSaving(false)
     }
   }
 
@@ -1696,6 +1718,56 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </section>
+      )
+      case 'database-mode': return (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155]">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Database size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Database Mode</h2>
+              <p className="text-sm text-[#64748B] mt-1">Choose which database backend the app should use after the server restarts.</p>
+            </div>
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] p-4 space-y-3">
+            <label className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Use Turso</p>
+                <p className="text-xs text-[#64748B] mt-1">Use the current Turso-backed configuration.</p>
+              </div>
+              <input
+                type="radio"
+                name="database-mode"
+                checked={databaseMode === 'turso'}
+                onChange={() => { void handleDatabaseModeChange('turso') }}
+                className="h-4 w-4 accent-[#2563EB]"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Use SQL Server</p>
+                <p className="text-xs text-[#64748B] mt-1">Use the Azure SQL Server backend after the migration and restart.</p>
+              </div>
+              <input
+                type="radio"
+                name="database-mode"
+                checked={databaseMode === 'sqlserver'}
+                onChange={() => { void handleDatabaseModeChange('sqlserver') }}
+                className="h-4 w-4 accent-[#2563EB]"
+              />
+            </label>
+          </div>
+          {databaseModeError && <p className="text-sm text-red-500">{databaseModeError}</p>}
+          <div className="flex items-center gap-3">
+            {databaseModeSaving && <span className="text-sm text-[#64748B]">Saving…</span>}
+            {databaseModeSaved && <span className="text-sm text-green-600 dark:text-green-400">Saved. Restart required.</span>}
+          </div>
+        </div>
       </section>
       )
       case 'api': return (
