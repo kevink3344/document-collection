@@ -76,6 +76,23 @@ function convertPlaceholders(rawSql: string, params: unknown[]): { sql: string; 
   return { sql: converted, values: params }
 }
 
+/**
+ * SQL Server (via tedious) returns BIT columns as JS booleans (true/false).
+ * The rest of the codebase was written against SQLite which returns 1/0.
+ * Normalize every boolean in a result row to 1/0 so existing comparisons work.
+ */
+function normalizeRow<T>(row: T): T {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+    out[k] = typeof v === 'boolean' ? (v ? 1 : 0) : v
+  }
+  return out as T
+}
+
+function normalizeRows<T>(rows: T[]): T[] {
+  return rows.map(normalizeRow)
+}
+
 function buildRequest(pool: sql.ConnectionPool | sql.Transaction, convertedSql: string, values: unknown[]): sql.Request {
   const request = pool instanceof sql.Transaction
     ? new sql.Request(pool)
@@ -112,7 +129,7 @@ class MssqlTransactionAdapter implements DbAdapter {
     const { sql: converted, values } = convertPlaceholders(translateSql(rawSql), params)
     const request = buildRequest(this.tx, converted, values)
     const result = await request.query<T>(converted)
-    return result.recordset
+    return normalizeRows(result.recordset)
   }
 
   async queryOne<T = Record<string, unknown>>(rawSql: string, params: unknown[] = []): Promise<T | undefined> {
@@ -154,7 +171,7 @@ export class MssqlAdapter implements DbAdapter {
     const { sql: converted, values } = convertPlaceholders(translateSql(rawSql), params)
     const request = buildRequest(this.pool, converted, values)
     const result = await request.query<T>(converted)
-    return result.recordset
+    return normalizeRows(result.recordset)
   }
 
   async queryOne<T = Record<string, unknown>>(rawSql: string, params: unknown[] = []): Promise<T | undefined> {
