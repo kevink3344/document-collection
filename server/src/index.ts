@@ -97,26 +97,26 @@ async function syncSuperAdmin() {
 }
 void syncSuperAdmin()
 
-function runNotificationSweep() {
+async function runNotificationSweep() {
   try {
-    generateDueDateNotifications()
+    await generateDueDateNotifications()
   } catch (err) {
     console.error('[notifications] generateDueDateNotifications failed:', (err as Error).message)
   }
   try {
-    processWorkflowEscalations()
+    await processWorkflowEscalations()
   } catch (err) {
     console.error('[workflows] processWorkflowEscalations failed:', (err as Error).message)
   }
   try {
-    dispatchPendingEmailNotifications()
+    await dispatchPendingEmailNotifications()
   } catch (err) {
     console.error('[notifications] dispatchPendingEmailNotifications failed:', (err as Error).message)
   }
 }
 
-runNotificationSweep()
-setInterval(runNotificationSweep, NOTIFICATION_SWEEP_INTERVAL_MS)
+void runNotificationSweep()
+setInterval(() => { void runNotificationSweep() }, NOTIFICATION_SWEEP_INTERVAL_MS)
 
 // ── Swagger ──────────────────────────────────────────────────
 setupSwagger(app)

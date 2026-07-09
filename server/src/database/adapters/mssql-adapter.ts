@@ -77,14 +77,23 @@ function convertPlaceholders(rawSql: string, params: unknown[]): { sql: string; 
 }
 
 /**
- * SQL Server (via tedious) returns BIT columns as JS booleans (true/false).
- * The rest of the codebase was written against SQLite which returns 1/0.
- * Normalize every boolean in a result row to 1/0 so existing comparisons work.
+ * SQL Server (via tedious) returns:
+ *  - BIT columns as JS booleans (true/false) — code expects 1/0
+ *  - BIGINT columns as JS strings ("1") — code and JWT expect numbers
+ * Normalize both so existing comparisons and JWT payloads work correctly.
  */
 function normalizeRow<T>(row: T): T {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
-    out[k] = typeof v === 'boolean' ? (v ? 1 : 0) : v
+    if (typeof v === 'boolean') {
+      out[k] = v ? 1 : 0
+    } else if (typeof v === 'string' && /^-?\d+$/.test(v)) {
+      // BIGINT returned as string — convert to number if it fits safely
+      const n = Number(v)
+      out[k] = Number.isSafeInteger(n) ? n : v
+    } else {
+      out[k] = v
+    }
   }
   return out as T
 }
