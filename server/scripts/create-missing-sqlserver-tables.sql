@@ -41,7 +41,7 @@ CREATE TABLE response_attachments (
   id                  BIGINT IDENTITY(1,1) PRIMARY KEY,
   collection_id       BIGINT NOT NULL REFERENCES collections(id) ON DELETE NO ACTION,
   response_id         BIGINT REFERENCES collection_responses(id) ON DELETE NO ACTION,
-  field_id            BIGINT NOT NULL REFERENCES collection_fields(id) ON DELETE NO ACTION,
+  field_id            BIGINT NOT NULL,
   uploaded_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
   temp_upload_token   NVARCHAR(MAX),
   file_name           NVARCHAR(MAX) NOT NULL,
@@ -230,7 +230,13 @@ CREATE TABLE signup_registrations (
 );
 GO
 
--- notification_events
+-- notification_events (drop notification_deliveries first — it has a FK dependency)
+IF OBJECT_ID(N'uq_notification_deliveries_dedupe_key', 'UQ') IS NOT NULL
+  ALTER TABLE notification_deliveries DROP CONSTRAINT uq_notification_deliveries_dedupe_key;
+GO
+IF EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'notification_deliveries') AND type = 'U')
+  DROP TABLE notification_deliveries;
+GO
 IF OBJECT_ID(N'uq_notification_events_dedupe_key', 'UQ') IS NOT NULL
   ALTER TABLE notification_events DROP CONSTRAINT uq_notification_events_dedupe_key;
 GO
