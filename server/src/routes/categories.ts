@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 
 const router = Router()
@@ -70,8 +70,8 @@ function toResponse(row: DbCategory) {
  *       401:
  *         description: Unauthorized
  */
-router.get('/', authenticateToken, (req: Request, res: Response) => {
-  const db = getDb()
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
+  const db = await getDbAsync()
   const global = isGlobalAdmin(req)
   const userOrgId = req.user?.organizationId ?? null
 
@@ -87,15 +87,13 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
 
   let rows: DbCategory[]
   if (orgFilter !== null) {
-    rows = db
-      .prepare(`
+    rows = await db.queryAll<DbCategory>(`
         SELECT c.id, c.name, c.sort_order, c.organization_id, o.name AS organization_name
         FROM categories c
         LEFT JOIN organizations o ON o.id = c.organization_id
         WHERE c.organization_id = ?
         ORDER BY c.sort_order, c.name COLLATE NOCASE
-      `)
-      .all(orgFilter) as unknown as DbCategory[]
+      `, [orgFilter])
   } else {
     rows = []
   }
@@ -137,7 +135,7 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
  *       409:
  *         description: Category already exists in this organization
  */
-router.post('/', authenticateToken, (req: Request, res: Response) => {
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 
   const name = normalizeName((req.body as CategoryBody).name)
@@ -164,26 +162,20 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
     }
   }
 
-  const db = getDb()
-  const duplicate = db
-    .prepare('SELECT id FROM categories WHERE lower(name) = lower(?) AND organization_id = ?')
-    .get(name, targetOrgId) as unknown as { id: number } | undefined
+  const db = await getDbAsync()
+  const duplicate = await db.queryOne<{ id: number }>('SELECT id FROM categories WHERE lower(name) = lower(?) AND organization_id = ?', [name, targetOrgId])
   if (duplicate) {
     res.status(409).json({ error: 'Category already exists in this organization' })
     return
   }
 
-  const nextSortOrder = (db
-    .prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM categories WHERE organization_id = ?')
-    .get(targetOrgId) as unknown as { n: number }).n
+  const nextSortOrderRow = await db.queryOne<{ n: number }>('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM categories WHERE organization_id = ?', [targetOrgId])
+  const nextSortOrder = nextSortOrderRow?.n ?? 0
 
-  const result = db
-    .prepare('INSERT INTO categories (name, sort_order, organization_id) VALUES (?, ?, ?)')
-    .run(name, nextSortOrder, targetOrgId)
+  const result = await db.execute('INSERT INTO categories (name, sort_order, organization_id) VALUES (?, ?, ?)', [name, nextSortOrder, targetOrgId])
 
-  const orgName = (db
-    .prepare('SELECT name FROM organizations WHERE id = ?')
-    .get(targetOrgId) as unknown as { name: string } | undefined)?.name ?? null
+  const orgNameRow = await db.queryOne<{ name: string }>('SELECT name FROM organizations WHERE id = ?', [targetOrgId])
+  const orgName = orgNameRow?.name ?? null
 
   res.status(201).json({
     id: result.lastInsertRowid,
@@ -233,7 +225,7 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
  *       409:
  *         description: Category name already in use
  */
-router.put('/:id', authenticateToken, (req: Request, res: Response) => {
+router.put('/:id', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 
   const id = parseInt(req.params.id, 10)
@@ -248,10 +240,8 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT id, name, sort_order, organization_id FROM categories WHERE id = ?')
-    .get(id) as unknown as DbCategory | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<DbCategory>('SELECT id, name, sort_order, organization_id FROM categories WHERE id = ?', [id])
   if (!existing) {
     res.status(404).json({ error: 'Category not found' })
     return
@@ -263,29 +253,23 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const duplicate = db
-    .prepare('SELECT id FROM categories WHERE lower(name) = lower(?) AND organization_id = ? AND id <> ?')
-    .get(name, existing.organization_id, id) as unknown as { id: number } | undefined
+  const duplicate = await db.queryOne<{ id: number }>('SELECT id FROM categories WHERE lower(name) = lower(?) AND organization_id = ? AND id <> ?', [name, existing.organization_id, id])
   if (duplicate) {
     res.status(409).json({ error: 'Category already exists in this organization' })
     return
   }
 
-  db.exec('BEGIN')
-  try {
-    db.prepare('UPDATE categories SET name = ? WHERE id = ?').run(name, id)
+  await db.transaction(async (tx) => {
+    await tx.execute('UPDATE categories SET name = ? WHERE id = ?', [name, id])
     // Only update collections within the same organization
-    db.prepare('UPDATE collections SET category = ? WHERE category = ? AND organization_id = ?')
-      .run(name, existing.name, existing.organization_id)
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+    await tx.execute('UPDATE collections SET category = ? WHERE category = ? AND organization_id = ?',
+      [name, existing.name, existing.organization_id])
+  })
 
-  const orgName = existing.organization_id
-    ? (db.prepare('SELECT name FROM organizations WHERE id = ?').get(existing.organization_id) as unknown as { name: string } | undefined)?.name ?? null
+  const orgNameRow = existing.organization_id
+    ? await db.queryOne<{ name: string }>('SELECT name FROM organizations WHERE id = ?', [existing.organization_id])
     : null
+  const orgName = orgNameRow?.name ?? null
 
   res.json({ id, name, sortOrder: existing.sort_order, organizationId: existing.organization_id, organizationName: orgName })
 })
@@ -317,7 +301,7 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
  *       409:
  *         description: Category is in use by one or more collections
  */
-router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 
   const id = parseInt(req.params.id, 10)
@@ -326,10 +310,8 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT id, name, organization_id FROM categories WHERE id = ?')
-    .get(id) as unknown as { id: number; name: string; organization_id: number | null } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; name: string; organization_id: number | null }>('SELECT id, name, organization_id FROM categories WHERE id = ?', [id])
   if (!existing) {
     res.status(404).json({ error: 'Category not found' })
     return
@@ -341,15 +323,13 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const usage = db
-    .prepare('SELECT COUNT(*) AS n FROM collections WHERE category = ? AND organization_id = ?')
-    .get(existing.name, existing.organization_id) as unknown as { n: number }
-  if (usage.n > 0) {
+  const usage = await db.queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM collections WHERE category = ? AND organization_id = ?', [existing.name, existing.organization_id])
+  if ((usage?.n ?? 0) > 0) {
     res.status(409).json({ error: 'Category is in use by one or more collections' })
     return
   }
 
-  db.prepare('DELETE FROM categories WHERE id = ?').run(id)
+  await db.execute('DELETE FROM categories WHERE id = ?', [id])
   res.status(204).send()
 })
 

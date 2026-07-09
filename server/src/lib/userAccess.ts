@@ -1,5 +1,5 @@
-import type { AppDatabase } from '../database/types'
-import { getDb } from '../database/db'
+import type { DbAdapter } from '../database/types'
+import { getDbAsync } from '../database/db'
 
 export type UserRole = 'super_admin' | 'administrator' | 'team_manager' | 'reviewer' | 'user'
 export type MembershipRole = Exclude<UserRole, 'super_admin'>
@@ -56,31 +56,29 @@ export interface UserAccessProfile {
   inviteToken: string | null
 }
 
-function loadUserRow(db: AppDatabase, userId: number): DbUserRow | undefined {
-  return db
-    .prepare(
-      `SELECT id, name, email, role, organization, created_at, password_hash, must_change_password, invite_token
-       FROM users
-       WHERE id = ?`
-    )
-    .get(userId) as DbUserRow | undefined
+async function loadUserRow(db: DbAdapter, userId: number): Promise<DbUserRow | undefined> {
+  return db.queryOne<DbUserRow>(
+    `SELECT id, name, email, role, organization, created_at, password_hash, must_change_password, invite_token
+     FROM users
+     WHERE id = ?`,
+    [userId],
+  )
 }
 
-function loadMemberships(db: AppDatabase, userId: number): UserOrganizationMembership[] {
-  const rows = db
-    .prepare(
-      `SELECT uo.organization_id,
-              o.name AS organization_name,
-              o.slug AS organization_slug,
-              o.description AS organization_description,
-              uo.role,
-              uo.is_default
-       FROM user_organizations uo
-       JOIN organizations o ON o.id = uo.organization_id
-       WHERE uo.user_id = ? AND o.is_active = 1
-       ORDER BY uo.is_default DESC, COALESCE(o.description, '') COLLATE NOCASE ASC, o.name COLLATE NOCASE ASC`
-    )
-    .all(userId) as DbMembershipRow[]
+async function loadMemberships(db: DbAdapter, userId: number): Promise<UserOrganizationMembership[]> {
+  const rows = await db.queryAll<DbMembershipRow>(
+    `SELECT uo.organization_id,
+            o.name AS organization_name,
+            o.slug AS organization_slug,
+            o.description AS organization_description,
+            uo.role,
+            uo.is_default
+     FROM user_organizations uo
+     JOIN organizations o ON o.id = uo.organization_id
+     WHERE uo.user_id = ? AND o.is_active = 1
+     ORDER BY uo.is_default DESC, o.name ASC`,
+    [userId],
+  )
 
   return rows.map(row => ({
     organizationId: row.organization_id,
@@ -110,17 +108,18 @@ function resolveActiveMembership(
   return memberships.find(membership => membership.isDefault) ?? memberships[0]
 }
 
-export function loadUserAccessProfile(
+export async function loadUserAccessProfile(
   userId: number,
   requestedOrganizationId?: number | null,
-  db: AppDatabase = getDb(),
-): UserAccessProfile | null {
-  const user = loadUserRow(db, userId)
+  db?: DbAdapter,
+): Promise<UserAccessProfile | null> {
+  const database = db ?? await getDbAsync()
+  const user = await loadUserRow(database, userId)
   if (!user) {
     return null
   }
 
-  const organizations = loadMemberships(db, userId)
+  const organizations = await loadMemberships(database, userId)
   const activeMembership = resolveActiveMembership(organizations, requestedOrganizationId)
   const effectiveRole: UserRole = user.role === 'super_admin'
     ? 'super_admin'

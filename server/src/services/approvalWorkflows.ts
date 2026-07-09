@@ -1,5 +1,5 @@
-import { getDb } from '../database/db'
-import type { AppDatabase } from '../database/types'
+import { getDbAsync } from '../database/db'
+import type { DbAdapter } from '../database/types'
 import { createNotificationEventWithDeliveries } from './notifications'
 
 export type ApprovalAssignmentType = 'user' | 'role'
@@ -269,35 +269,35 @@ function stageConditionsMatch(stage: ApprovalStageDefinition, valueMap: Map<stri
   return stage.conditions.match === 'any' ? results.some(Boolean) : results.every(Boolean)
 }
 
-function resolveUserIdsForAssignee(db: AppDatabase, organizationId: number | null, assignee: ApprovalAssigneeDefinition): number[] {
+function resolveUserIdsForAssignee(db: DbAdapter, organizationId: number | null, assignee: ApprovalAssigneeDefinition): Promise<number[]> {
   if (assignee.type === 'user') {
     const userId = Number(assignee.value)
-    return Number.isInteger(userId) && userId > 0 ? [userId] : []
+    return Promise.resolve(Number.isInteger(userId) && userId > 0 ? [userId] : [])
   }
 
   const role = assignee.value.trim()
-  if (!role) return []
+  if (!role) return Promise.resolve([])
 
-  const direct = db
-    .prepare(
-      `SELECT DISTINCT id
+  return (async () => {
+    const direct = await db.queryAll<{ id: number }>(
+        `SELECT DISTINCT id
        FROM users
        WHERE role = ?
-         AND (? IS NULL OR organization_id = ?)`
-    )
-    .all(role, organizationId, organizationId) as Array<{ id: number }>
+         AND (? IS NULL OR organization_id = ?)`,
+        [role, organizationId, organizationId]
+      )
 
-  const membership = db
-    .prepare(
-      `SELECT DISTINCT u.id
+    const membership = await db.queryAll<{ id: number }>(
+        `SELECT DISTINCT u.id
        FROM users u
        JOIN user_organizations uo ON uo.user_id = u.id
        WHERE uo.role = ?
-         AND (? IS NULL OR uo.organization_id = ?)`
-    )
-    .all(role, organizationId, organizationId) as Array<{ id: number }>
+         AND (? IS NULL OR uo.organization_id = ?)`,
+        [role, organizationId, organizationId]
+      )
 
-  return Array.from(new Set([...direct, ...membership].map((row) => row.id).filter((id) => Number.isInteger(id))))
+    return Array.from(new Set([...direct, ...membership].map((row) => row.id).filter((id) => Number.isInteger(id))))
+  })()
 }
 
 function addHoursIso(date: Date, hours: number | null | undefined): string | null {
@@ -305,8 +305,8 @@ function addHoursIso(date: Date, hours: number | null | undefined): string | nul
   return new Date(date.getTime() + hours * 60 * 60 * 1000).toISOString()
 }
 
-function insertHistory(
-  db: AppDatabase,
+async function insertHistory(
+  db: DbAdapter,
   workflowInstanceId: number,
   eventType: 'workflow_started' | 'stage_started' | 'approved' | 'rejected' | 'reminder_sent' | 'escalated' | 'workflow_completed' | 'workflow_cancelled',
   options?: {
@@ -317,26 +317,27 @@ function insertHistory(
     message?: string | null
     metadata?: Record<string, unknown> | null
   },
-): void {
-  db.prepare(
+): Promise<void> {
+  await db.execute(
     `INSERT INTO approval_workflow_history (
        workflow_instance_id, stage_instance_id, approver_instance_id, event_type,
        actor_user_id, actor_name, message, metadata
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    workflowInstanceId,
-    options?.stageInstanceId ?? null,
-    options?.approverInstanceId ?? null,
-    eventType,
-    options?.actorUserId ?? null,
-    options?.actorName ?? null,
-    options?.message ?? null,
-    options?.metadata ? JSON.stringify(options.metadata) : null,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      workflowInstanceId,
+      options?.stageInstanceId ?? null,
+      options?.approverInstanceId ?? null,
+      eventType,
+      options?.actorUserId ?? null,
+      options?.actorName ?? null,
+      options?.message ?? null,
+      options?.metadata ? JSON.stringify(options.metadata) : null,
+    ]
   )
 }
 
 function notifyApprovers(
-  db: AppDatabase,
+  db: DbAdapter,
   workflowInstanceId: number,
   stage: DbStageInstance,
   collectionId: number,
@@ -371,7 +372,7 @@ function notifyApprovers(
 
   if (recipients.length === 0) return
 
-  createNotificationEventWithDeliveries({
+  void createNotificationEventWithDeliveries({
     organizationId,
     type: 'system',
     title,
@@ -386,26 +387,25 @@ function notifyApprovers(
   }, recipients, db)
 }
 
-function reconcilePendingStageApprovers(
-  db: AppDatabase,
+async function reconcilePendingStageApprovers(
+  db: DbAdapter,
   workflow: DbWorkflowInstance,
   stage: DbStageInstance,
-): void {
+): Promise<void> {
   if (stage.status !== 'pending') {
     return
   }
 
-  const approvers = db.prepare(
+  const approvers = await db.queryAll<DbApproverInstance>(
     `SELECT ai.*, u.name AS user_name, u.email AS user_email
      FROM approval_workflow_approver_instances ai
      LEFT JOIN users u ON u.id = ai.user_id
      WHERE ai.stage_instance_id = ?
-     ORDER BY ai.id ASC`
-  ).all(stage.id) as unknown as DbApproverInstance[]
+     ORDER BY ai.id ASC`,
+    [stage.id]
+  )
 
-  const collection = db
-    .prepare('SELECT organization_id FROM collections WHERE id = ?')
-    .get(workflow.collection_id) as { organization_id: number | null } | undefined
+  const collection = await db.queryOne<{ organization_id: number | null }>('SELECT organization_id FROM collections WHERE id = ?', [workflow.collection_id])
   const organizationId = collection?.organization_id ?? null
 
   for (const approver of approvers) {
@@ -413,7 +413,7 @@ function reconcilePendingStageApprovers(
       continue
     }
 
-    const userIds = resolveUserIdsForAssignee(db, organizationId, {
+    const userIds = await resolveUserIdsForAssignee(db, organizationId, {
       type: approver.assignment_type,
       value: approver.assignment_value,
     })
@@ -422,64 +422,67 @@ function reconcilePendingStageApprovers(
       continue
     }
 
-    const existingRows = db.prepare(
+    const existingRows = await db.queryAll<{ user_id: number | null }>(
       `SELECT user_id
        FROM approval_workflow_approver_instances
        WHERE stage_instance_id = ?
          AND assignment_type = ?
          AND assignment_value = ?
-         AND user_id IS NOT NULL`
-    ).all(stage.id, approver.assignment_type, approver.assignment_value) as Array<{ user_id: number | null }>
+         AND user_id IS NOT NULL`,
+      [stage.id, approver.assignment_type, approver.assignment_value]
+    )
     const existingUserIds = new Set(existingRows.map((row) => row.user_id).filter((userId): userId is number => Number.isInteger(userId)))
 
-    userIds
-      .filter((userId) => !existingUserIds.has(userId))
-      .forEach((userId) => {
-        db.prepare(
-          `INSERT INTO approval_workflow_approver_instances (
+    for (const userId of userIds.filter((id) => !existingUserIds.has(id))) {
+      await db.execute(
+        `INSERT INTO approval_workflow_approver_instances (
              stage_instance_id, assignment_type, assignment_value, user_id, status, notified_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))`
-        ).run(stage.id, approver.assignment_type, approver.assignment_value, userId, stage.started_at)
-      })
+           ) VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))`,
+        [stage.id, approver.assignment_type, approver.assignment_value, userId, stage.started_at]
+      )
+    }
 
-    db.prepare('DELETE FROM approval_workflow_approver_instances WHERE id = ?').run(approver.id)
+    await db.execute('DELETE FROM approval_workflow_approver_instances WHERE id = ?', [approver.id])
   }
 }
 
-function reconcileWorkflowApprovers(db: AppDatabase, workflow: DbWorkflowInstance): void {
+async function reconcileWorkflowApprovers(db: DbAdapter, workflow: DbWorkflowInstance): Promise<void> {
   if (workflow.status !== 'pending') {
     return
   }
 
-  const stages = db.prepare(
+  const stages = await db.queryAll<DbStageInstance>(
     `SELECT *
      FROM approval_workflow_stage_instances
      WHERE workflow_instance_id = ?
-       AND status = 'pending'`
-  ).all(workflow.id) as unknown as DbStageInstance[]
+       AND status = 'pending'`,
+    [workflow.id]
+  )
 
-  stages.forEach((stage) => {
-    reconcilePendingStageApprovers(db, workflow, stage)
-  })
+  for (const stage of stages) {
+    await reconcilePendingStageApprovers(db, workflow, stage)
+  }
 }
 
-function loadStageSummaries(db: AppDatabase, workflowInstanceId: number): ApprovalWorkflowStageSummary[] {
-  const stages = db.prepare(
+async function loadStageSummaries(db: DbAdapter, workflowInstanceId: number): Promise<ApprovalWorkflowStageSummary[]> {
+  const stages = await db.queryAll<DbStageInstance>(
     `SELECT *
      FROM approval_workflow_stage_instances
      WHERE workflow_instance_id = ?
-     ORDER BY stage_order ASC, id ASC`
-  ).all(workflowInstanceId) as unknown as DbStageInstance[]
+     ORDER BY stage_order ASC, id ASC`,
+    [workflowInstanceId]
+  )
 
-  const approvers = db.prepare(
+  const approvers = await db.queryAll<DbApproverInstance>(
     `SELECT ai.*, u.name AS user_name, u.email AS user_email
      FROM approval_workflow_approver_instances ai
      LEFT JOIN users u ON u.id = ai.user_id
      WHERE ai.stage_instance_id IN (
        SELECT id FROM approval_workflow_stage_instances WHERE workflow_instance_id = ?
      )
-     ORDER BY ai.id ASC`
-  ).all(workflowInstanceId) as unknown as DbApproverInstance[]
+     ORDER BY ai.id ASC`,
+    [workflowInstanceId]
+  )
 
   const approversByStage = new Map<number, ApprovalWorkflowApproverSummary[]>()
   for (const approver of approvers) {
@@ -518,16 +521,17 @@ function loadStageSummaries(db: AppDatabase, workflowInstanceId: number): Approv
   }))
 }
 
-export function getWorkflowSummaryForResponse(responseId: number, dbArg?: AppDatabase): ApprovalWorkflowSummary | null {
-  const db = dbArg ?? getDb()
-  const workflow = db.prepare(
+export async function getWorkflowSummaryForResponse(responseId: number, dbArg?: DbAdapter): Promise<ApprovalWorkflowSummary | null> {
+  const db = dbArg ?? await getDbAsync()
+  const workflow = await db.queryOne<DbWorkflowInstance>(
     `SELECT id, collection_id, response_id, status, active_stage_order, active_stage_name, started_at, completed_at
      FROM approval_workflow_instances
-     WHERE response_id = ?`
-  ).get(responseId) as unknown as DbWorkflowInstance | undefined
+     WHERE response_id = ?`,
+    [responseId]
+  )
 
   if (!workflow) return null
-  reconcileWorkflowApprovers(db, workflow)
+  await reconcileWorkflowApprovers(db, workflow)
   return {
     id: workflow.id,
     status: workflow.status,
@@ -535,39 +539,40 @@ export function getWorkflowSummaryForResponse(responseId: number, dbArg?: AppDat
     activeStageName: workflow.active_stage_name,
     startedAt: workflow.started_at,
     completedAt: workflow.completed_at,
-    stages: loadStageSummaries(db, workflow.id),
+    stages: await loadStageSummaries(db, workflow.id),
   }
 }
 
-export function initializeWorkflowForResponse(input: {
+export async function initializeWorkflowForResponse(input: {
   collectionId: number
   responseId: number
   organizationId: number | null
   collectionTitle: string
   workflowDefinition: ApprovalWorkflowDefinition | null
   fieldValues: WorkflowFieldValue[]
-  db?: AppDatabase
-}): void {
-  const db = input.db ?? getDb()
+  db?: DbAdapter
+}): Promise<void> {
+  const db = input.db ?? await getDbAsync()
   const definition = normalizeWorkflowDefinition(input.workflowDefinition)
   if (!definition || !definition.enabled || definition.stages.length === 0) {
     return
   }
 
-  const existing = db.prepare('SELECT id FROM approval_workflow_instances WHERE response_id = ?').get(input.responseId) as { id: number } | undefined
+  const existing = await db.queryOne<{ id: number }>('SELECT id FROM approval_workflow_instances WHERE response_id = ?', [input.responseId])
   if (existing) return
 
   const valueMap = new Map<string, string[]>()
   input.fieldValues.forEach((item) => valueMap.set(item.fieldKey, parseStoredValue(item.value)))
 
   const now = new Date()
-  const inserted = db.prepare(
+  const inserted = await db.execute(
     `INSERT INTO approval_workflow_instances (
        collection_id, response_id, status, active_stage_order, active_stage_name, started_at, updated_at
-     ) VALUES (?, ?, 'pending', NULL, NULL, ?, datetime('now'))`
-  ).run(input.collectionId, input.responseId, now.toISOString())
+     ) VALUES (?, ?, 'pending', NULL, NULL, ?, datetime('now'))`,
+    [input.collectionId, input.responseId, now.toISOString()]
+  )
   const workflowInstanceId = Number(inserted.lastInsertRowid)
-  insertHistory(db, workflowInstanceId, 'workflow_started', { message: 'Approval workflow started' })
+  await insertHistory(db, workflowInstanceId, 'workflow_started', { message: 'Approval workflow started' })
 
   let firstActiveStageRow: DbStageInstance | null = null
   let firstActiveStageApprovers: DbApproverInstance[] = []
@@ -579,47 +584,50 @@ export function initializeWorkflowForResponse(input: {
       ? addHoursIso(now, stage.escalationAfterHours ?? stage.reminderAfterHours ?? null)
       : null
     const status: ApprovalStageStatus = matches ? 'pending' : 'skipped'
-    const stageInsert = db.prepare(
+    const stageInsert = await db.execute(
       `INSERT INTO approval_workflow_stage_instances (
          workflow_instance_id, stage_id, stage_name, stage_order, approval_mode, status,
          conditions_json, reminder_after_hours, escalation_after_hours, started_at, due_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-    ).run(
-      workflowInstanceId,
-      stage.id,
-      stage.name,
-      index + 1,
-      stage.approvalMode,
-      status,
-      stage.conditions ? JSON.stringify(stage.conditions) : null,
-      stage.reminderAfterHours ?? null,
-      stage.escalationAfterHours ?? null,
-      startedAt,
-      dueAt,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [
+        workflowInstanceId,
+        stage.id,
+        stage.name,
+        index + 1,
+        stage.approvalMode,
+        status,
+        stage.conditions ? JSON.stringify(stage.conditions) : null,
+        stage.reminderAfterHours ?? null,
+        stage.escalationAfterHours ?? null,
+        startedAt,
+        dueAt,
+      ]
     )
     const stageInstanceId = Number(stageInsert.lastInsertRowid)
 
     const assigneeSource = status === 'pending' ? stage.assignees : []
     const approverRows: DbApproverInstance[] = []
-    assigneeSource.forEach((assignee) => {
-      const userIds = resolveUserIdsForAssignee(db, input.organizationId, assignee)
+    for (const assignee of assigneeSource) {
+      const userIds = await resolveUserIdsForAssignee(db, input.organizationId, assignee)
       if (userIds.length === 0) {
-        db.prepare(
+        await db.execute(
           `INSERT INTO approval_workflow_approver_instances (
              stage_instance_id, assignment_type, assignment_value, user_id, status, updated_at
-           ) VALUES (?, ?, ?, NULL, 'skipped', datetime('now'))`
-        ).run(stageInstanceId, assignee.type, assignee.value)
-        return
+           ) VALUES (?, ?, ?, NULL, 'skipped', datetime('now'))`,
+          [stageInstanceId, assignee.type, assignee.value]
+        )
+        continue
       }
 
-      userIds.forEach((userId) => {
-        const insertedApprover = db.prepare(
+      for (const userId of userIds) {
+        const insertedApprover = await db.execute(
           `INSERT INTO approval_workflow_approver_instances (
              stage_instance_id, assignment_type, assignment_value, user_id, status, notified_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))`
-        ).run(stageInstanceId, assignee.type, assignee.value, userId, startedAt)
+           ) VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))`,
+          [stageInstanceId, assignee.type, assignee.value, userId, startedAt]
+        )
         const approverId = Number(insertedApprover.lastInsertRowid)
-        const user = db.prepare('SELECT name AS user_name, email AS user_email FROM users WHERE id = ?').get(userId) as { user_name: string | null; user_email: string | null } | undefined
+        const user = await db.queryOne<{ user_name: string | null; user_email: string | null }>('SELECT name AS user_name, email AS user_email FROM users WHERE id = ?', [userId])
         approverRows.push({
           id: approverId,
           stage_instance_id: stageInstanceId,
@@ -634,8 +642,8 @@ export function initializeWorkflowForResponse(input: {
           user_name: user?.user_name ?? null,
           user_email: user?.user_email ?? null,
         })
-      })
-    })
+      }
+    }
 
     if (status === 'pending' && firstActiveStageRow === null) {
       const row: DbStageInstance = {
@@ -656,25 +664,27 @@ export function initializeWorkflowForResponse(input: {
       }
       firstActiveStageRow = row
       firstActiveStageApprovers = approverRows
-      insertHistory(db, workflowInstanceId, 'stage_started', { stageInstanceId, message: `Stage started: ${stage.name}` })
+      await insertHistory(db, workflowInstanceId, 'stage_started', { stageInstanceId, message: `Stage started: ${stage.name}` })
     }
   }
 
   if (!firstActiveStageRow) {
-    db.prepare(
+    await db.execute(
       `UPDATE approval_workflow_instances
        SET status = 'approved', completed_at = datetime('now'), updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(workflowInstanceId)
-    insertHistory(db, workflowInstanceId, 'workflow_completed', { message: 'Workflow auto-completed with no applicable stages' })
+       WHERE id = ?`,
+      [workflowInstanceId]
+    )
+    await insertHistory(db, workflowInstanceId, 'workflow_completed', { message: 'Workflow auto-completed with no applicable stages' })
     return
   }
 
-  db.prepare(
+  await db.execute(
     `UPDATE approval_workflow_instances
      SET active_stage_order = ?, active_stage_name = ?, updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(firstActiveStageRow.stage_order, firstActiveStageRow.stage_name, workflowInstanceId)
+     WHERE id = ?`,
+    [firstActiveStageRow.stage_order, firstActiveStageRow.stage_name, workflowInstanceId]
+  )
 
   notifyApprovers(
     db,
@@ -689,105 +699,116 @@ export function initializeWorkflowForResponse(input: {
   )
 }
 
-function activateNextPendingStage(db: AppDatabase, workflow: DbWorkflowInstance, collectionTitle: string, organizationId: number | null): void {
-  const nextStage = db.prepare(
+async function activateNextPendingStage(db: DbAdapter, workflow: DbWorkflowInstance, collectionTitle: string, organizationId: number | null): Promise<void> {
+  const nextStage = await db.queryOne<DbStageInstance>(
     `SELECT *
      FROM approval_workflow_stage_instances
      WHERE workflow_instance_id = ?
        AND status = 'pending'
        AND started_at IS NULL
      ORDER BY stage_order ASC
-     LIMIT 1`
-  ).get(workflow.id) as unknown as DbStageInstance | undefined
+     LIMIT 1`,
+    [workflow.id]
+  )
 
   if (!nextStage) {
-    db.prepare(
+    await db.execute(
       `UPDATE approval_workflow_instances
        SET status = 'approved', active_stage_order = NULL, active_stage_name = NULL,
            completed_at = datetime('now'), updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(workflow.id)
-    insertHistory(db, workflow.id, 'workflow_completed', { message: 'Workflow approved' })
+       WHERE id = ?`,
+      [workflow.id]
+    )
+    await insertHistory(db, workflow.id, 'workflow_completed', { message: 'Workflow approved' })
     return
   }
 
   const now = new Date()
-  const dueAt = addHoursIso(now, (db.prepare('SELECT escalation_after_hours, reminder_after_hours FROM approval_workflow_stage_instances WHERE id = ?').get(nextStage.id) as { escalation_after_hours: number | null; reminder_after_hours: number | null }).escalation_after_hours ?? null)
-    ?? addHoursIso(now, (db.prepare('SELECT reminder_after_hours FROM approval_workflow_stage_instances WHERE id = ?').get(nextStage.id) as { reminder_after_hours: number | null }).reminder_after_hours ?? null)
+  const stageInfo = await db.queryOne<{ escalation_after_hours: number | null; reminder_after_hours: number | null }>('SELECT escalation_after_hours, reminder_after_hours FROM approval_workflow_stage_instances WHERE id = ?', [nextStage.id])
+  const dueAt = addHoursIso(now, stageInfo?.escalation_after_hours ?? null)
+    ?? addHoursIso(now, stageInfo?.reminder_after_hours ?? null)
 
-  db.prepare(
+  await db.execute(
     `UPDATE approval_workflow_stage_instances
      SET started_at = ?, due_at = ?, updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(now.toISOString(), dueAt, nextStage.id)
+     WHERE id = ?`,
+    [now.toISOString(), dueAt, nextStage.id]
+  )
 
-  db.prepare(
+  await db.execute(
     `UPDATE approval_workflow_approver_instances
      SET notified_at = COALESCE(notified_at, ?), updated_at = datetime('now')
-     WHERE stage_instance_id = ? AND status = 'pending'`
-  ).run(now.toISOString(), nextStage.id)
+     WHERE stage_instance_id = ? AND status = 'pending'`,
+    [now.toISOString(), nextStage.id]
+  )
 
-  db.prepare(
+  await db.execute(
     `UPDATE approval_workflow_instances
      SET active_stage_order = ?, active_stage_name = ?, status = 'pending', updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(nextStage.stage_order, nextStage.stage_name, workflow.id)
+     WHERE id = ?`,
+    [nextStage.stage_order, nextStage.stage_name, workflow.id]
+  )
 
-  insertHistory(db, workflow.id, 'stage_started', { stageInstanceId: nextStage.id, message: `Stage started: ${nextStage.stage_name}` })
+  await insertHistory(db, workflow.id, 'stage_started', { stageInstanceId: nextStage.id, message: `Stage started: ${nextStage.stage_name}` })
 
-  const approvers = db.prepare(
+  const approvers = await db.queryAll<DbApproverInstance>(
     `SELECT ai.*, u.name AS user_name, u.email AS user_email
      FROM approval_workflow_approver_instances ai
      LEFT JOIN users u ON u.id = ai.user_id
-     WHERE ai.stage_instance_id = ?`
-  ).all(nextStage.id) as unknown as DbApproverInstance[]
+     WHERE ai.stage_instance_id = ?`,
+    [nextStage.id]
+  )
 
   notifyApprovers(db, workflow.id, { ...nextStage, started_at: now.toISOString(), due_at: dueAt }, workflow.collection_id, workflow.response_id, organizationId, collectionTitle, approvers, 'assigned')
 }
 
-export function actOnWorkflowStage(input: {
+export async function actOnWorkflowStage(input: {
   responseId: number
   userId: number
   actorName: string | null
   decision: 'approved' | 'rejected'
   comment?: string | null
-  db?: AppDatabase
-}): ApprovalWorkflowSummary | null {
-  const db = input.db ?? getDb()
-  const workflow = db.prepare(
+  db?: DbAdapter
+}): Promise<ApprovalWorkflowSummary | null> {
+  const db = input.db ?? await getDbAsync()
+  const workflow = await db.queryOne<DbWorkflowInstance>(
     `SELECT id, collection_id, response_id, status, active_stage_order, active_stage_name, started_at, completed_at
      FROM approval_workflow_instances
-     WHERE response_id = ?`
-  ).get(input.responseId) as unknown as DbWorkflowInstance | undefined
+     WHERE response_id = ?`,
+    [input.responseId]
+  )
   if (!workflow || workflow.status !== 'pending') return workflow ? getWorkflowSummaryForResponse(input.responseId, db) : null
-  reconcileWorkflowApprovers(db, workflow)
+  await reconcileWorkflowApprovers(db, workflow)
 
-  const stage = db.prepare(
+  const stage = await db.queryOne<DbStageInstance>(
     `SELECT *
      FROM approval_workflow_stage_instances
      WHERE workflow_instance_id = ?
        AND stage_order = ?
-     LIMIT 1`
-  ).get(workflow.id, workflow.active_stage_order) as unknown as DbStageInstance | undefined
+     LIMIT 1`,
+    [workflow.id, workflow.active_stage_order]
+  )
   if (!stage || stage.status !== 'pending' || !stage.started_at) return getWorkflowSummaryForResponse(input.responseId, db)
 
-  const approver = db.prepare(
+  const approver = await db.queryOne<DbApproverInstance>(
     `SELECT ai.*, u.name AS user_name, u.email AS user_email
      FROM approval_workflow_approver_instances ai
      LEFT JOIN users u ON u.id = ai.user_id
      WHERE ai.stage_instance_id = ? AND ai.user_id = ? AND ai.status = 'pending'
-     LIMIT 1`
-  ).get(stage.id, input.userId) as unknown as DbApproverInstance | undefined
+     LIMIT 1`,
+    [stage.id, input.userId]
+  )
   if (!approver) return getWorkflowSummaryForResponse(input.responseId, db)
 
   const actedAt = new Date().toISOString()
-  db.prepare(
+  await db.execute(
     `UPDATE approval_workflow_approver_instances
      SET status = ?, acted_at = ?, acted_by = ?, action_comment = ?, updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(input.decision, actedAt, input.userId, input.comment?.trim() ?? null, approver.id)
+     WHERE id = ?`,
+    [input.decision, actedAt, input.userId, input.comment?.trim() ?? null, approver.id]
+  )
 
-  insertHistory(db, workflow.id, input.decision, {
+  await insertHistory(db, workflow.id, input.decision, {
     stageInstanceId: stage.id,
     approverInstanceId: approver.id,
     actorUserId: input.userId,
@@ -795,59 +816,64 @@ export function actOnWorkflowStage(input: {
     message: input.comment?.trim() || `${input.decision} by ${input.actorName ?? 'approver'}`,
   })
 
-  const pendingCountRow = db.prepare(
+  const pendingCountRow = await db.queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM approval_workflow_approver_instances
-     WHERE stage_instance_id = ? AND status = 'pending'`
-  ).get(stage.id) as { count: number }
-  const approvedCountRow = db.prepare(
+     WHERE stage_instance_id = ? AND status = 'pending'`,
+    [stage.id]
+  )
+  const approvedCountRow = await db.queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM approval_workflow_approver_instances
-     WHERE stage_instance_id = ? AND status = 'approved'`
-  ).get(stage.id) as { count: number }
-  const rejectedCountRow = db.prepare(
+     WHERE stage_instance_id = ? AND status = 'approved'`,
+    [stage.id]
+  )
+  const rejectedCountRow = await db.queryOne<{ count: number }>(
     `SELECT COUNT(*) AS count
      FROM approval_workflow_approver_instances
-     WHERE stage_instance_id = ? AND status = 'rejected'`
-  ).get(stage.id) as { count: number }
+     WHERE stage_instance_id = ? AND status = 'rejected'`,
+    [stage.id]
+  )
 
   let stageStatus: ApprovalStageStatus = 'pending'
   if (input.decision === 'rejected') {
     stageStatus = 'rejected'
-  } else if (stage.approval_mode === 'any' && approvedCountRow.count > 0) {
+  } else if (stage.approval_mode === 'any' && (approvedCountRow?.count ?? 0) > 0) {
     stageStatus = 'approved'
-  } else if (stage.approval_mode === 'all' && pendingCountRow.count === 0 && rejectedCountRow.count === 0) {
+  } else if (stage.approval_mode === 'all' && (pendingCountRow?.count ?? 0) === 0 && (rejectedCountRow?.count ?? 0) === 0) {
     stageStatus = 'approved'
   }
 
   if (stageStatus !== 'pending') {
-    db.prepare(
+    await db.execute(
       `UPDATE approval_workflow_stage_instances
        SET status = ?, acted_at = ?, acted_by = ?, action_comment = ?, updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(stageStatus, actedAt, input.userId, input.comment?.trim() ?? null, stage.id)
+       WHERE id = ?`,
+      [stageStatus, actedAt, input.userId, input.comment?.trim() ?? null, stage.id]
+    )
 
-    const collection = db.prepare('SELECT title, organization_id FROM collections WHERE id = ?').get(workflow.collection_id) as { title: string; organization_id: number | null } | undefined
+    const collection = await db.queryOne<{ title: string; organization_id: number | null }>('SELECT title, organization_id FROM collections WHERE id = ?', [workflow.collection_id])
 
     if (stageStatus === 'rejected') {
-      db.prepare(
+      await db.execute(
         `UPDATE approval_workflow_instances
          SET status = 'rejected', active_stage_order = NULL, active_stage_name = NULL,
              completed_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(workflow.id)
+         WHERE id = ?`,
+        [workflow.id]
+      )
     } else {
-      activateNextPendingStage(db, workflow, collection?.title ?? 'Request', collection?.organization_id ?? null)
+      await activateNextPendingStage(db, workflow, collection?.title ?? 'Request', collection?.organization_id ?? null)
     }
   }
 
   return getWorkflowSummaryForResponse(input.responseId, db)
 }
 
-export function processWorkflowEscalations(dbArg?: AppDatabase): void {
-  const db = dbArg ?? getDb()
+export async function processWorkflowEscalations(dbArg?: DbAdapter): Promise<void> {
+  const db = dbArg ?? await getDbAsync()
   const nowIso = new Date().toISOString()
-  const activeStages = db.prepare(
+  const activeStages = await db.queryAll<DbStageInstance & { collection_id: number; response_id: number; collection_title: string; organization_id: number | null }>(
     `SELECT s.*, w.collection_id, w.response_id, c.title AS collection_title, c.organization_id
      FROM approval_workflow_stage_instances s
      JOIN approval_workflow_instances w ON w.id = s.workflow_instance_id
@@ -855,45 +881,49 @@ export function processWorkflowEscalations(dbArg?: AppDatabase): void {
      WHERE w.status = 'pending'
        AND s.status = 'pending'
        AND s.started_at IS NOT NULL`
-  ).all() as Array<DbStageInstance & { collection_id: number; response_id: number; collection_title: string; organization_id: number | null }>
+  )
 
   for (const stage of activeStages) {
-    const reminderAfterHours = db.prepare('SELECT reminder_after_hours, escalation_after_hours FROM approval_workflow_stage_instances WHERE id = ?').get(stage.id) as { reminder_after_hours: number | null; escalation_after_hours: number | null }
+    const reminderAfterHours = await db.queryOne<{ reminder_after_hours: number | null; escalation_after_hours: number | null }>('SELECT reminder_after_hours, escalation_after_hours FROM approval_workflow_stage_instances WHERE id = ?', [stage.id])
     const startedAt = stage.started_at ? new Date(stage.started_at) : null
     if (!startedAt) continue
     const elapsedMs = Date.now() - startedAt.getTime()
 
-    const approvers = db.prepare(
+    const approvers = await db.queryAll<DbApproverInstance>(
       `SELECT ai.*, u.name AS user_name, u.email AS user_email
        FROM approval_workflow_approver_instances ai
        LEFT JOIN users u ON u.id = ai.user_id
-       WHERE ai.stage_instance_id = ? AND ai.status = 'pending'`
-    ).all(stage.id) as unknown as DbApproverInstance[]
+       WHERE ai.stage_instance_id = ? AND ai.status = 'pending'`,
+      [stage.id]
+    )
     if (approvers.length === 0) continue
 
-    if (reminderAfterHours.reminder_after_hours && !stage.reminded_at && elapsedMs >= reminderAfterHours.reminder_after_hours * 60 * 60 * 1000) {
+    if (reminderAfterHours?.reminder_after_hours && !stage.reminded_at && elapsedMs >= reminderAfterHours.reminder_after_hours * 60 * 60 * 1000) {
       notifyApprovers(db, stage.workflow_instance_id, stage, stage.collection_id, stage.response_id, stage.organization_id, stage.collection_title, approvers, 'reminder')
-      db.prepare(
+      await db.execute(
         `UPDATE approval_workflow_stage_instances
          SET reminded_at = ?, updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(nowIso, stage.id)
-      insertHistory(db, stage.workflow_instance_id, 'reminder_sent', { stageInstanceId: stage.id, message: `Reminder sent for ${stage.stage_name}` })
+         WHERE id = ?`,
+        [nowIso, stage.id]
+      )
+      await insertHistory(db, stage.workflow_instance_id, 'reminder_sent', { stageInstanceId: stage.id, message: `Reminder sent for ${stage.stage_name}` })
     }
 
-    if (reminderAfterHours.escalation_after_hours && !stage.escalated_at && elapsedMs >= reminderAfterHours.escalation_after_hours * 60 * 60 * 1000) {
+    if (reminderAfterHours?.escalation_after_hours && !stage.escalated_at && elapsedMs >= reminderAfterHours.escalation_after_hours * 60 * 60 * 1000) {
       notifyApprovers(db, stage.workflow_instance_id, stage, stage.collection_id, stage.response_id, stage.organization_id, stage.collection_title, approvers, 'escalation')
-      db.prepare(
+      await db.execute(
         `UPDATE approval_workflow_stage_instances
          SET status = 'escalated', escalated_at = ?, updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(nowIso, stage.id)
-      db.prepare(
+         WHERE id = ?`,
+        [nowIso, stage.id]
+      )
+      await db.execute(
         `UPDATE approval_workflow_instances
          SET status = 'escalated', last_escalated_at = ?, updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(nowIso, stage.workflow_instance_id)
-      insertHistory(db, stage.workflow_instance_id, 'escalated', { stageInstanceId: stage.id, message: `Stage escalated: ${stage.stage_name}` })
+         WHERE id = ?`,
+        [nowIso, stage.workflow_instance_id]
+      )
+      await insertHistory(db, stage.workflow_instance_id, 'escalated', { stageInstanceId: stage.id, message: `Stage escalated: ${stage.stage_name}` })
     }
   }
 }

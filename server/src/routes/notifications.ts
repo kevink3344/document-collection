@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator } from '../middleware/organizationAccess'
 import {
@@ -71,15 +71,15 @@ function parsePreferenceUpdates(body: unknown): Partial<NotificationPreferences>
  *       401:
  *         description: Unauthorized
  */
-router.get('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  generateDueDateNotifications()
-  res.json(listInAppNotificationsForUser(context.id, context.organizationId, isAdministrator(context)))
+  await generateDueDateNotifications()
+  res.json(await listInAppNotificationsForUser(context.id, context.organizationId, isAdministrator(context)))
 })
 
 /**
@@ -104,15 +104,15 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
  *       401:
  *         description: Unauthorized
  */
-router.get('/unread-count', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.get('/unread-count', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  generateDueDateNotifications()
-  res.json({ count: getUnreadInAppNotificationCount(context.id, context.organizationId, isAdministrator(context)) })
+  await generateDueDateNotifications()
+  res.json({ count: await getUnreadInAppNotificationCount(context.id, context.organizationId, isAdministrator(context)) })
 })
 
 /**
@@ -141,8 +141,8 @@ router.get('/unread-count', authenticateToken, (req: Request, res: Response) => 
  *       404:
  *         description: Notification not found
  */
-router.patch('/:id/read', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.patch('/:id/read', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -154,7 +154,7 @@ router.patch('/:id/read', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const updated = markInAppNotificationRead(id, context.id, context.organizationId, isAdministrator(context))
+  const updated = await markInAppNotificationRead(id, context.id, context.organizationId, isAdministrator(context))
   if (!updated) {
     res.status(404).json({ error: 'Notification not found' })
     return
@@ -185,18 +185,18 @@ router.patch('/:id/read', authenticateToken, (req: Request, res: Response) => {
  *       401:
  *         description: Unauthorized
  */
-router.patch('/read-all', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.patch('/read-all', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  res.json({ updated: markAllInAppNotificationsRead(context.id, context.organizationId, isAdministrator(context)) })
+  res.json({ updated: await markAllInAppNotificationsRead(context.id, context.organizationId, isAdministrator(context)) })
 })
 
-router.patch('/:id/archive', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.patch('/:id/archive', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -208,7 +208,7 @@ router.patch('/:id/archive', authenticateToken, (req: Request, res: Response) =>
     return
   }
 
-  const archived = dismissInAppNotification(id, context.id, context.organizationId, isAdministrator(context))
+  const archived = await dismissInAppNotification(id, context.id, context.organizationId, isAdministrator(context))
   if (!archived) {
     res.status(404).json({ error: 'Notification not found' })
     return
@@ -217,35 +217,31 @@ router.patch('/:id/archive', authenticateToken, (req: Request, res: Response) =>
   res.json(archived)
 })
 
-router.get('/recipients', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.get('/recipients', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
   const organizationId = context.organizationId ?? (req.user?.activeOrganizationId ?? req.user?.organizationId ?? null)
 
   const rows = context.role === 'super_admin'
-    ? db
-        .prepare(`
+    ? await db.queryAll<{ id: number; name: string; email: string; role: string; organization_id: number | null }>(`
           SELECT u.id, u.name, u.email, uo.role, uo.organization_id
           FROM users u
           JOIN user_organizations uo ON uo.user_id = u.id
           ORDER BY u.name COLLATE NOCASE, u.email
         `)
-        .all() as Array<{ id: number; name: string; email: string; role: string; organization_id: number | null }>
     : organizationId
-      ? db
-          .prepare(`
+      ? await db.queryAll<{ id: number; name: string; email: string; role: string; organization_id: number | null }>(`
             SELECT u.id, u.name, u.email, uo.role, uo.organization_id
             FROM users u
             JOIN user_organizations uo ON uo.user_id = u.id
             WHERE uo.organization_id = ?
             ORDER BY u.name COLLATE NOCASE, u.email
-          `)
-          .all(organizationId) as Array<{ id: number; name: string; email: string; role: string; organization_id: number | null }>
+          `, [organizationId])
       : []
 
   res.json(rows
@@ -259,8 +255,8 @@ router.get('/recipients', authenticateToken, (req: Request, res: Response) => {
     })))
 })
 
-router.post('/send', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.post('/send', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -286,16 +282,14 @@ router.post('/send', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const recipient = db
-    .prepare(`
+  const db = await getDbAsync()
+  const recipient = await db.queryOne<{ id: number; organization_id: number | null; role: string }>(`
       SELECT u.id, uo.organization_id, uo.role
       FROM users u
       JOIN user_organizations uo ON uo.user_id = u.id
       WHERE u.id = ?
       LIMIT 1
-    `)
-    .get(recipientUserId) as { id: number; organization_id: number | null; role: string } | undefined
+    `, [recipientUserId])
 
   if (!recipient) {
     res.status(404).json({ error: 'Recipient not found' })
@@ -312,7 +306,7 @@ router.post('/send', authenticateToken, (req: Request, res: Response) => {
   }
 
   try {
-    createNotificationEventWithDeliveries(
+    await createNotificationEventWithDeliveries(
       {
         organizationId: recipient.organization_id,
         type: 'system',
@@ -348,14 +342,14 @@ router.post('/send', authenticateToken, (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/NotificationPreferences'
  */
-router.get('/preferences', authenticateToken, (req: Request, res: Response) => {
+router.get('/preferences', authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user?.sub
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  res.json(getNotificationPreferences(userId))
+  res.json(await getNotificationPreferences(userId))
 })
 
 /**
@@ -376,7 +370,7 @@ router.get('/preferences', authenticateToken, (req: Request, res: Response) => {
  *       200:
  *         description: Updated notification preferences
  */
-router.put('/preferences', authenticateToken, (req: Request, res: Response) => {
+router.put('/preferences', authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user?.sub
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' })
@@ -389,7 +383,7 @@ router.put('/preferences', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  res.json(updateNotificationPreferences(userId, updates))
+  res.json(await updateNotificationPreferences(userId, updates))
 })
 
 /**
@@ -404,14 +398,14 @@ router.put('/preferences', authenticateToken, (req: Request, res: Response) => {
  *       200:
  *         description: Email CC recipients
  */
-router.get('/email-ccs', authenticateToken, (req: Request, res: Response) => {
+router.get('/email-ccs', authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user?.sub
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  res.json(listNotificationEmailCcs(userId))
+  res.json(await listNotificationEmailCcs(userId))
 })
 
 /**
@@ -432,7 +426,7 @@ router.get('/email-ccs', authenticateToken, (req: Request, res: Response) => {
  *       200:
  *         description: Stored email CC recipient
  */
-router.post('/email-ccs', authenticateToken, (req: Request, res: Response) => {
+router.post('/email-ccs', authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user?.sub
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' })
@@ -460,7 +454,7 @@ router.post('/email-ccs', authenticateToken, (req: Request, res: Response) => {
   }
 
   try {
-    res.json(addNotificationEmailCc(userId, email, (notificationTypes ?? null) as NotificationType[] | null))
+    res.json(await addNotificationEmailCc(userId, email, (notificationTypes ?? null) as NotificationType[] | null))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Unable to save email CC recipient' })
   }
@@ -475,7 +469,7 @@ router.post('/email-ccs', authenticateToken, (req: Request, res: Response) => {
  *     security:
  *       - bearerAuth: []
  */
-router.delete('/email-ccs/:id', authenticateToken, (req: Request, res: Response) => {
+router.delete('/email-ccs/:id', authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user?.sub
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' })
@@ -488,7 +482,7 @@ router.delete('/email-ccs/:id', authenticateToken, (req: Request, res: Response)
     return
   }
 
-  if (!deleteNotificationEmailCc(userId, id)) {
+  if (!await deleteNotificationEmailCc(userId, id)) {
     res.status(404).json({ error: 'Email CC recipient not found' })
     return
   }

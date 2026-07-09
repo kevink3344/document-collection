@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 
 const router = Router()
@@ -39,45 +39,42 @@ function requireAdministrator(req: Request, res: Response): boolean {
   return true
 }
 
-router.get('/', authenticateToken, (req: Request, res: Response) => {
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
   const role = req.user?.role
   if (role !== 'super_admin' && role !== 'administrator') {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
 
   if (role === 'administrator') {
     // Return only the orgs the administrator belongs to
-    const rows = db
-      .prepare(
+    const rows = await db.queryAll<DbOrganization>(
         `SELECT o.*,
                 (SELECT COUNT(*) FROM users u WHERE u.organization_id = o.id) AS user_count,
                 (SELECT COUNT(*) FROM collections c WHERE c.organization_id = o.id) AS collection_count
          FROM organizations o
          JOIN user_organizations uo ON uo.organization_id = o.id AND uo.user_id = ?
-         ORDER BY lower(o.name) ASC`
+         ORDER BY lower(o.name) ASC`,
+        [req.user!.sub]
       )
-      .all(req.user!.sub) as unknown as DbOrganization[]
     res.json(rows.map(toApiOrganization))
     return
   }
 
-  const rows = db
-    .prepare(
+  const rows = await db.queryAll<DbOrganization>(
       `SELECT o.*, 
               (SELECT COUNT(*) FROM users u WHERE u.organization_id = o.id) AS user_count,
               (SELECT COUNT(*) FROM collections c WHERE c.organization_id = o.id) AS collection_count
        FROM organizations o
        ORDER BY lower(o.name) ASC`
     )
-    .all() as unknown as DbOrganization[]
 
   res.json(rows.map(toApiOrganization))
 })
 
-router.get('/:id', authenticateToken, (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
@@ -88,16 +85,15 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const row = db
-    .prepare(
+  const db = await getDbAsync()
+  const row = await db.queryOne<DbOrganization>(
       `SELECT o.*, 
               (SELECT COUNT(*) FROM users u WHERE u.organization_id = o.id) AS user_count,
               (SELECT COUNT(*) FROM collections c WHERE c.organization_id = o.id) AS collection_count
        FROM organizations o
-       WHERE o.id = ?`
+       WHERE o.id = ?`,
+      [id]
     )
-    .get(id) as unknown as DbOrganization | undefined
 
   if (!row) {
     res.status(404).json({ error: 'Organization not found' })
@@ -107,7 +103,7 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
   res.json(toApiOrganization(row))
 })
 
-router.post('/', authenticateToken, (req: Request, res: Response) => {
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
@@ -129,41 +125,38 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   const description = typeof body.description === 'string' && body.description.trim() ? body.description.trim() : null
   const isActive = body.isActive === false ? 0 : 1
 
-  const db = getDb()
+  const db = await getDbAsync()
 
-  const duplicate = db
-    .prepare('SELECT id FROM organizations WHERE lower(name) = lower(?)')
-    .get(name) as unknown as { id: number } | undefined
+  const duplicate = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE lower(name) = lower(?)', [name])
   if (duplicate) {
     res.status(409).json({ error: 'Organization name already exists' })
     return
   }
 
   if (slug) {
-    const slugDuplicate = db
-      .prepare('SELECT id FROM organizations WHERE slug = ?')
-      .get(slug) as unknown as { id: number } | undefined
+    const slugDuplicate = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE slug = ?', [slug])
     if (slugDuplicate) {
       res.status(409).json({ error: 'Organization slug already exists' })
       return
     }
   }
 
-  const inserted = db
-    .prepare(
+  const inserted = await db.execute(
       `INSERT INTO organizations (name, slug, description, is_active)
-       VALUES (?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?)`,
+      [name, slug, description, isActive]
     )
-    .run(name, slug, description, isActive)
 
-  const created = db
-    .prepare('SELECT * FROM organizations WHERE id = ?')
-    .get(Number(inserted.lastInsertRowid)) as unknown as DbOrganization
+  const created = await db.queryOne<DbOrganization>('SELECT * FROM organizations WHERE id = ?', [Number(inserted.lastInsertRowid)])
+  if (!created) {
+    res.status(500).json({ error: 'Failed to load created organization' })
+    return
+  }
 
   res.status(201).json(toApiOrganization(created))
 })
 
-router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
+router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
@@ -181,10 +174,8 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
     isActive?: unknown
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT * FROM organizations WHERE id = ?')
-    .get(id) as unknown as DbOrganization | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<DbOrganization>('SELECT * FROM organizations WHERE id = ?', [id])
 
   if (!existing) {
     res.status(404).json({ error: 'Organization not found' })
@@ -207,38 +198,37 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
     ? (body.isActive ? 1 : 0)
     : existing.is_active
 
-  const duplicate = db
-    .prepare('SELECT id FROM organizations WHERE lower(name) = lower(?) AND id != ?')
-    .get(name, id) as unknown as { id: number } | undefined
+  const duplicate = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE lower(name) = lower(?) AND id != ?', [name, id])
   if (duplicate) {
     res.status(409).json({ error: 'Organization name already exists' })
     return
   }
 
   if (slug) {
-    const slugDuplicate = db
-      .prepare('SELECT id FROM organizations WHERE slug = ? AND id != ?')
-      .get(slug, id) as unknown as { id: number } | undefined
+    const slugDuplicate = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE slug = ? AND id != ?', [slug, id])
     if (slugDuplicate) {
       res.status(409).json({ error: 'Organization slug already exists' })
       return
     }
   }
 
-  db.prepare(
+  await db.execute(
     `UPDATE organizations
      SET name = ?, slug = ?, description = ?, is_active = ?, updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(name, slug, description, isActive, id)
+     WHERE id = ?`,
+    [name, slug, description, isActive, id]
+  )
 
-  const updated = db
-    .prepare('SELECT * FROM organizations WHERE id = ?')
-    .get(id) as unknown as DbOrganization
+  const updated = await db.queryOne<DbOrganization>('SELECT * FROM organizations WHERE id = ?', [id])
+  if (!updated) {
+    res.status(500).json({ error: 'Failed to load updated organization' })
+    return
+  }
 
   res.json(toApiOrganization(updated))
 })
 
-router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
@@ -256,39 +246,31 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT id FROM organizations WHERE id = ?')
-    .get(id) as unknown as { id: number } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ?', [id])
 
   if (!existing) {
     res.status(404).json({ error: 'Organization not found' })
     return
   }
 
-  const userRef = db
-    .prepare('SELECT COUNT(*) AS count FROM users WHERE organization_id = ?')
-    .get(id) as unknown as { count: number }
-  const collectionRef = db
-    .prepare('SELECT COUNT(*) AS count FROM collections WHERE organization_id = ?')
-    .get(id) as unknown as { count: number }
+  const userRef = await db.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM users WHERE organization_id = ?', [id])
+  const collectionRef = await db.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM collections WHERE organization_id = ?', [id])
 
-  const categoryRef = db
-    .prepare('SELECT COUNT(*) AS count FROM categories WHERE organization_id = ?')
-    .get(id) as unknown as { count: number }
+  const categoryRef = await db.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM categories WHERE organization_id = ?', [id])
 
-  if (userRef.count > 0 || collectionRef.count > 0) {
+  if ((userRef?.count ?? 0) > 0 || (collectionRef?.count ?? 0) > 0) {
     res.status(409).json({ error: 'Organization cannot be deleted while users or collections are assigned to it' })
     return
   }
 
   try {
-    db.transaction(() => {
-      if (categoryRef.count > 0) {
-        db.prepare('DELETE FROM categories WHERE organization_id = ?').run(id)
+    await db.transaction(async (tx) => {
+      if ((categoryRef?.count ?? 0) > 0) {
+        await tx.execute('DELETE FROM categories WHERE organization_id = ?', [id])
       }
-      db.prepare('DELETE FROM organizations WHERE id = ?').run(id)
-    })()
+      await tx.execute('DELETE FROM organizations WHERE id = ?', [id])
+    })
     res.status(204).end()
   } catch (err) {
     console.error('[organizations] delete:', err)

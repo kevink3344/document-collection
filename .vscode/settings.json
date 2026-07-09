@@ -7,6 +7,10 @@
         "/^npm --prefix \"c:\\\\Users\\\\kkey2\\\\Desktop\\\\Github Projects\\\\document-collection\\\\client\" install recharts$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\kkey2\\\\Desktop\\\\Github Projects\\\\document-collection\\\\server\"; npx tsc --noEmit 2>&1 \\| Select-Object -First 50$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

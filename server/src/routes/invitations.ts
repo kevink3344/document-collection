@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 import { sendNotificationEmail, isEmailDeliveryConfigured } from '../services/notificationEmail'
@@ -35,7 +35,7 @@ export function verifyPassword(plain: string, stored: string): boolean {
  * Admin or super_admin sends an invite to an email address.
  */
 router.post('/', authenticateToken, async (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context || (context.role !== 'administrator' && context.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -64,12 +64,10 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
 
   interface PendingUser { id: number; invite_token: string | null; password_hash: string | null }
-  const existing = db
-    .prepare('SELECT id, invite_token, password_hash FROM users WHERE email = ?')
-    .get(email.trim()) as unknown as PendingUser | undefined
+  const existing = await db.queryOne<PendingUser>('SELECT id, invite_token, password_hash FROM users WHERE email = ?', [email.trim()])
 
   if (existing && existing.password_hash && !existing.invite_token) {
     // Fully active user — already registered with a password
@@ -83,30 +81,34 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
 
   if (existing) {
     // Resend: refresh token + name
-    db.transaction(() => {
-      db.prepare(
+    await db.transaction(async (tx) => {
+      await tx.execute(
         `UPDATE users
          SET name = ?, role = ?, organization_id = ?, invite_token = ?, invite_token_expires_at = ?
-         WHERE id = ?`
-      ).run(name.trim(), userRole, organizationId, tokenHash, expiresAt, existing.id)
-      db.prepare('DELETE FROM user_organizations WHERE user_id = ?').run(existing.id)
-      db.prepare(
+         WHERE id = ?`,
+        [name.trim(), userRole, organizationId, tokenHash, expiresAt, existing.id]
+      )
+      await tx.execute('DELETE FROM user_organizations WHERE user_id = ?', [existing.id])
+      await tx.execute(
         `INSERT INTO user_organizations (user_id, organization_id, role, is_default)
-         VALUES (?, ?, ?, 1)`
-      ).run(existing.id, organizationId, userRole)
-    })()
+         VALUES (?, ?, ?, 1)`,
+        [existing.id, organizationId, userRole]
+      )
+    })
   } else {
     // Create pending user (no password yet)
-    db.transaction(() => {
-      const inserted = db.prepare(
+    await db.transaction(async (tx) => {
+      const inserted = await tx.execute(
         `INSERT INTO users (name, email, role, organization_id, must_change_password, invite_token, invite_token_expires_at)
-         VALUES (?, ?, ?, ?, 1, ?, ?)`
-      ).run(name.trim(), email.trim(), userRole, organizationId, tokenHash, expiresAt)
-      db.prepare(
+         VALUES (?, ?, ?, ?, 1, ?, ?)`,
+        [name.trim(), email.trim(), userRole, organizationId, tokenHash, expiresAt]
+      )
+      await tx.execute(
         `INSERT INTO user_organizations (user_id, organization_id, role, is_default)
-         VALUES (?, ?, ?, 1)`
-      ).run(Number(inserted.lastInsertRowid), organizationId, userRole)
-    })()
+         VALUES (?, ?, ?, 1)`,
+        [Number(inserted.lastInsertRowid), organizationId, userRole]
+      )
+    })
   }
 
   const appUrl = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '')
@@ -151,7 +153,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
  * POST /api/invitations/accept
  * Public endpoint — user sets their password using the token from the invite email.
  */
-router.post('/accept', (req: Request, res: Response) => {
+router.post('/accept', async (req: Request, res: Response) => {
   const { token, newPassword } = req.body as { token: unknown; newPassword: unknown }
 
   if (typeof token !== 'string' || !token.trim()) {
@@ -163,13 +165,11 @@ router.post('/accept', (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
   const tokenHash = hashToken(token.trim())
 
   interface InviteUser { id: number; invite_token_expires_at: string }
-  const user = db
-    .prepare('SELECT id, invite_token_expires_at FROM users WHERE invite_token = ?')
-    .get(tokenHash) as unknown as InviteUser | undefined
+  const user = await db.queryOne<InviteUser>('SELECT id, invite_token_expires_at FROM users WHERE invite_token = ?', [tokenHash])
 
   if (!user) {
     res.status(400).json({ error: 'Invalid or already-used invite link.' })
@@ -183,11 +183,12 @@ router.post('/accept', (req: Request, res: Response) => {
 
   const passwordHash = hashPassword(newPassword)
 
-  db.prepare(
+  await db.execute(
     `UPDATE users
      SET password_hash = ?, must_change_password = 0, invite_token = NULL, invite_token_expires_at = NULL
-     WHERE id = ?`
-  ).run(passwordHash, user.id)
+     WHERE id = ?`,
+    [passwordHash, user.id]
+  )
 
   res.json({ message: 'Password set successfully. You can now log in.' })
 })

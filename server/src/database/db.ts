@@ -1,15 +1,23 @@
 ﻿import Database from 'libsql'
+import sql from 'mssql'
 import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 
 import { createSchema, seedData } from './schema'
 import type { AppDatabase } from './types'
+import type { DbAdapter } from './adapter'
+import { LibsqlAdapter } from './adapters/libsql-adapter'
+import { MssqlAdapter } from './adapters/mssql-adapter'
 
 let db: AppDatabase | null = null
 let dbConnectedMode: 'turso' | 'sqlite' | null = null
 let dbLastVerifiedAt = 0
 let dbTursoLastFailedAt = 0
+
+// SQL Server connection pool (created once, reused across requests)
+let mssqlPool: sql.ConnectionPool | null = null
+let mssqlPoolConnecting: Promise<sql.ConnectionPool> | null = null
 
 // Turso Hrana streams expire after ~5 min of idle; reconnect proactively.
 const TURSO_VERIFY_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
@@ -716,7 +724,9 @@ export function getDb(): AppDatabase {
 
   if (!db) {
     if (target.mode === 'sqlserver') {
-      console.warn('[db] SQL Server mode selected; the current deployment uses the migration workflow and will continue with the local SQLite fallback until the SQL Server cutover is completed.')
+      // SQL Server is handled by getDbAsync() — fall through to SQLite here only
+      // as a last resort if getDbAsync() hasn't been called yet.
+      console.warn('[db] SQL Server mode detected in getDb() — use getDbAsync() for SQL Server connections.')
     }
 
     if (target.mode === 'turso') {
@@ -771,7 +781,73 @@ export function getDb(): AppDatabase {
   return db!
 }
 
+/**
+ * Returns a DbAdapter for the configured database mode.
+ * - sqlserver: creates/reuses an mssql ConnectionPool, returns MssqlAdapter
+ * - turso / sqlite: wraps the libsql connection in a LibsqlAdapter
+ *
+ * All routes and services should use this instead of getDb().
+ */
+export async function getDbAsync(): Promise<DbAdapter> {
+  const target = resolveDbTarget()
+
+  if (target.mode === 'sqlserver') {
+    if (mssqlPool?.connected) {
+      return new MssqlAdapter(mssqlPool)
+    }
+
+    // Deduplicate concurrent connection attempts
+    if (!mssqlPoolConnecting) {
+      mssqlPoolConnecting = (async () => {
+        const config: sql.config = {
+          server: target.server,
+          database: target.database,
+          user: target.user,
+          password: target.password,
+          options: {
+            encrypt: true,
+            trustServerCertificate: false,
+          },
+          pool: {
+            max: 10,
+            min: 0,
+            idleTimeoutMillis: 30000,
+          },
+        }
+        const pool = new sql.ConnectionPool(config)
+        await pool.connect()
+        mssqlPool = pool
+        mssqlPoolConnecting = null
+        console.log('[db] SQL Server connection pool ready')
+        return pool
+      })()
+    }
+
+    const pool = await mssqlPoolConnecting!
+    return new MssqlAdapter(pool)
+  }
+
+  // turso / sqlite — wrap libsql in LibsqlAdapter
+  const rawDb = getDb()
+  return new LibsqlAdapter(rawDb)
+}
+
+/** Gracefully close the SQL Server pool on server shutdown. */
+export async function closeMssqlPool(): Promise<void> {
+  if (mssqlPool) {
+    await mssqlPool.close()
+    mssqlPool = null
+    console.log('[db] SQL Server connection pool closed')
+  }
+}
+
 export function setupDatabase(): void {
+  // SQL Server: schema and data already exist — skip all migrations.
+  if (getConfiguredDatabaseMode() === 'sqlserver') {
+    console.log('[db] SQL Server mode \u2014 skipping local schema/migration setup')
+    return
+  }
+
   const initialize = (database: AppDatabase) => {
     createSchema(database)
     runMigrations(database)

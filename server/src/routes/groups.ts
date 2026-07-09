@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
@@ -12,11 +12,11 @@ function canManageGroups(role: string): boolean {
 }
 
 // ── GET /api/groups — list groups for org ────────────────────────────────────
-router.get('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
 
-  const db = getDb()
+  const db = await getDbAsync()
 
   let rows: Array<{
     id: number
@@ -31,23 +31,23 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
 
   if (context.role === 'super_admin' && !context.organizationId) {
     // super_admin without org scope — return all groups
-    rows = db.prepare(`
+    rows = await db.queryAll(`
       SELECT g.*, COUNT(gm.user_id) AS member_count
       FROM groups g
       LEFT JOIN group_members gm ON gm.group_id = g.id
       GROUP BY g.id
       ORDER BY lower(g.name)
-    `).all() as typeof rows
+    `) as typeof rows
   } else {
     const orgId = context.organizationId
-    rows = db.prepare(`
+    rows = await db.queryAll(`
       SELECT g.*, COUNT(gm.user_id) AS member_count
       FROM groups g
       LEFT JOIN group_members gm ON gm.group_id = g.id
       WHERE g.organization_id = ?
       GROUP BY g.id
       ORDER BY lower(g.name)
-    `).all(orgId) as typeof rows
+    `, [orgId]) as typeof rows
   }
 
   res.json(rows.map(g => ({
@@ -63,8 +63,8 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
 })
 
 // ── POST /api/groups — create group ──────────────────────────────────────────
-router.post('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
@@ -74,19 +74,24 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   const orgId = context.organizationId
   if (!orgId) return void res.status(400).json({ error: 'Organization context required' })
 
-  const db = getDb()
+  const db = await getDbAsync()
   try {
-    const result = db.prepare(`
+    const result = await db.execute(`
       INSERT INTO groups (organization_id, name, description, created_by)
       VALUES (?, ?, ?, ?)
-    `).run(orgId, name.trim(), description?.trim() ?? null, context.id)
+    `, [orgId, name.trim(), description?.trim() ?? null, context.id])
 
-    const row = db.prepare(`
-      SELECT g.*, 0 AS member_count
-      FROM groups g WHERE g.id = ?
-    `).get(result.lastInsertRowid) as {
+    const row = await db.queryOne<{
       id: number; organization_id: number; name: string; description: string | null
       created_by: number | null; created_at: string; updated_at: string; member_count: number
+    }>(`
+      SELECT g.*, 0 AS member_count
+      FROM groups g WHERE g.id = ?
+    `, [result.lastInsertRowid])
+
+    if (!row) {
+      res.status(500).json({ error: 'Failed to load created group' })
+      return
     }
 
     res.status(201).json({
@@ -108,8 +113,8 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
 })
 
 // ── PATCH /api/groups/:id — update name/description ──────────────────────────
-router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
@@ -117,10 +122,8 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
   const { name, description } = req.body as { name?: string; description?: string }
   if (!name?.trim()) return void res.status(400).json({ error: 'name is required' })
 
-  const db = getDb()
-  const existing = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as {
-    id: number; organization_id: number
-  } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
   if (!existing) return void res.status(404).json({ error: 'Group not found' })
 
@@ -130,19 +133,24 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
   }
 
   try {
-    db.prepare(`
+    await db.execute(`
       UPDATE groups SET name = ?, description = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(name.trim(), description?.trim() ?? null, groupId)
+    `, [name.trim(), description?.trim() ?? null, groupId])
 
-    const row = db.prepare(`
+    const row = await db.queryOne<{
+      id: number; organization_id: number; name: string; description: string | null
+      created_by: number | null; created_at: string; updated_at: string; member_count: number
+    }>(`
       SELECT g.*, COUNT(gm.user_id) AS member_count
       FROM groups g LEFT JOIN group_members gm ON gm.group_id = g.id
       WHERE g.id = ?
       GROUP BY g.id
-    `).get(groupId) as {
-      id: number; organization_id: number; name: string; description: string | null
-      created_by: number | null; created_at: string; updated_at: string; member_count: number
+    `, [groupId])
+
+    if (!row) {
+      res.status(500).json({ error: 'Failed to load updated group' })
+      return
     }
 
     res.json({
@@ -164,16 +172,14 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
 })
 
 // ── DELETE /api/groups/:id ────────────────────────────────────────────────────
-router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
   const groupId = Number(req.params.id)
-  const db = getDb()
-  const existing = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as {
-    id: number; organization_id: number
-  } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
   if (!existing) return void res.status(404).json({ error: 'Group not found' })
 
@@ -181,20 +187,18 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return void res.status(403).json({ error: 'Forbidden' })
   }
 
-  db.prepare('DELETE FROM groups WHERE id = ?').run(groupId)
+  await db.execute('DELETE FROM groups WHERE id = ?', [groupId])
   res.json({ success: true })
 })
 
-// ── GET /api/groups/:id/members ───────────────────────────────────────────────
-router.get('/:id/members', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+// ── GET /api/groups/:id/members ─────────────────────────────────────────────
+router.get('/:id/members', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
 
   const groupId = Number(req.params.id)
-  const db = getDb()
-  const existing = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as {
-    id: number; organization_id: number
-  } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
   if (!existing) return void res.status(404).json({ error: 'Group not found' })
 
@@ -202,13 +206,13 @@ router.get('/:id/members', authenticateToken, (req: Request, res: Response) => {
     return void res.status(403).json({ error: 'Forbidden' })
   }
 
-  const members = db.prepare(`
+  const members = await db.queryAll<{ id: number; name: string; email: string; role: string; added_at: string }>(`
     SELECT u.id, u.name, u.email, u.role, gm.added_at
     FROM group_members gm
     JOIN users u ON u.id = gm.user_id
     WHERE gm.group_id = ?
     ORDER BY lower(u.name)
-  `).all(groupId) as Array<{ id: number; name: string; email: string; role: string; added_at: string }>
+  `, [groupId])
 
   res.json(members.map(m => ({
     userId: m.id,
@@ -220,8 +224,8 @@ router.get('/:id/members', authenticateToken, (req: Request, res: Response) => {
 })
 
 // ── POST /api/groups/:id/members — add user ───────────────────────────────────
-router.post('/:id/members', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.post('/:id/members', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
@@ -229,10 +233,8 @@ router.post('/:id/members', authenticateToken, (req: Request, res: Response) => 
   const { userId } = req.body as { userId?: number }
   if (!userId) return void res.status(400).json({ error: 'userId is required' })
 
-  const db = getDb()
-  const existing = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as {
-    id: number; organization_id: number
-  } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
   if (!existing) return void res.status(404).json({ error: 'Group not found' })
 
@@ -240,25 +242,23 @@ router.post('/:id/members', authenticateToken, (req: Request, res: Response) => 
     return void res.status(403).json({ error: 'Forbidden' })
   }
 
-  db.prepare(`
+  await db.execute(`
     INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)
-  `).run(groupId, userId)
+  `, [groupId, userId])
 
   res.status(201).json({ success: true })
 })
 
 // ── DELETE /api/groups/:id/members/:userId — remove user ─────────────────────
-router.delete('/:id/members/:userId', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.delete('/:id/members/:userId', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
   const groupId = Number(req.params.id)
   const userId = Number(req.params.userId)
-  const db = getDb()
-  const existing = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as {
-    id: number; organization_id: number
-  } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
   if (!existing) return void res.status(404).json({ error: 'Group not found' })
 
@@ -266,7 +266,7 @@ router.delete('/:id/members/:userId', authenticateToken, (req: Request, res: Res
     return void res.status(403).json({ error: 'Forbidden' })
   }
 
-  db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(groupId, userId)
+  await db.execute('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [groupId, userId])
   res.json({ success: true })
 })
 

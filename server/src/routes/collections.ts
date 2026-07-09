@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import multer from 'multer'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
+import type { DbAdapter } from '../database/types'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
 import { parseAttachmentValue, stringifyAttachmentValue, type AttachmentReference } from '../lib/attachmentValue'
@@ -37,14 +38,12 @@ function slugifyTitle(title: string): string {
     .replace(/^-|-$/g, '')
 }
 
-function generateUniqueSlug(db: ReturnType<typeof getDb>, title: string): string {
+async function generateUniqueSlug(db: DbAdapter, title: string): Promise<string> {
   const base = slugifyTitle(title) || 'collection'
   for (let i = 0; i < 20; i++) {
     const suffix = crypto.randomUUID().slice(0, 8)
     const candidate = `${base}-${suffix}`
-    const exists = db
-      .prepare('SELECT 1 FROM collections WHERE slug = ? LIMIT 1')
-      .get(candidate) as unknown as { 1: number } | undefined
+    const exists = await db.queryOne<{ 1: number }>('SELECT 1 FROM collections WHERE slug = ? LIMIT 1', [candidate])
     if (!exists) return candidate
   }
   return `${base}-${crypto.randomUUID()}`
@@ -204,32 +203,29 @@ function buildAttachmentDownloadUrl(attachmentId: number): string {
   return `/api/collections/attachments/${attachmentId}/download`
 }
 
-function ensureWorkflowInstanceForResponse(
-  db: ReturnType<typeof getDb>,
+async function ensureWorkflowInstanceForResponse(
+  db: DbAdapter,
   collection: DbCollection,
   responseId: number,
-): void {
+): Promise<void> {
   if (!collection.workflow_definition) {
     return
   }
 
-  const existing = db
-    .prepare('SELECT id FROM approval_workflow_instances WHERE response_id = ?')
-    .get(responseId) as { id: number } | undefined
+  const existing = await db.queryOne<{ id: number }>('SELECT id FROM approval_workflow_instances WHERE response_id = ?', [responseId])
   if (existing) {
     return
   }
 
-  const responseValues = db
-    .prepare(
+  const responseValues = await db.queryAll<{ value: string | null; field_key: string | null }>(
       `SELECT rv.value, cf.field_key
        FROM collection_response_values rv
        JOIN collection_fields cf ON cf.id = rv.field_id
-       WHERE rv.response_id = ?`
+       WHERE rv.response_id = ?`,
+      [responseId]
     )
-    .all(responseId) as Array<{ value: string | null; field_key: string | null }>
 
-  initializeWorkflowForResponse({
+  await initializeWorkflowForResponse({
     collectionId: collection.id,
     responseId,
     organizationId: collection.organization_id,
@@ -245,11 +241,11 @@ function ensureWorkflowInstanceForResponse(
   })
 }
 
-function getVisibleResponseCountMap(
-  db: ReturnType<typeof getDb>,
+async function getVisibleResponseCountMap(
+  db: DbAdapter,
   context: RequestUserContext,
   collectionIds: number[],
-): Map<number, number> {
+): Promise<Map<number, number>> {
   if (collectionIds.length === 0) {
     return new Map()
   }
@@ -257,29 +253,25 @@ function getVisibleResponseCountMap(
   const ph = collectionIds.map(() => '?').join(',')
 
   if (canViewAllResponses(context)) {
-    const responseCounts = db
-      .prepare(`SELECT collection_id, COUNT(*) AS n FROM collection_responses WHERE collection_id IN (${ph}) GROUP BY collection_id`)
-      .all(...collectionIds) as unknown as Array<{ collection_id: number; n: number }>
+    const responseCounts = await db.queryAll<{ collection_id: number; n: number }>(`SELECT collection_id, COUNT(*) AS n FROM collection_responses WHERE collection_id IN (${ph}) GROUP BY collection_id`, collectionIds)
     return new Map(responseCounts.map(row => [row.collection_id, row.n]))
   }
 
-  const locationFields = db
-    .prepare(
+  const locationFields = await db.queryAll<{ id: number; collection_id: number }>(
       `SELECT MIN(id) AS id, collection_id
        FROM collection_fields
        WHERE collection_id IN (${ph}) AND type = 'location' AND location_filter_enabled = 1
-       GROUP BY collection_id`
+       GROUP BY collection_id`,
+      collectionIds
     )
-    .all(...collectionIds) as unknown as Array<{ id: number; collection_id: number }>
   const locationFieldByCollection = new Map(locationFields.map(row => [row.collection_id, row.id]))
 
-  const assignedLocations = db
-    .prepare(
+  const assignedLocations = await db.queryAll<{ name: string }>(
       `SELECT l.name FROM user_locations ul
        JOIN locations l ON l.id = ul.location_id
-       WHERE ul.user_id = ?`
+       WHERE ul.user_id = ?`,
+      [context.id]
     )
-    .all(context.id) as unknown as Array<{ name: string }>
   const locationNames = assignedLocations.map(row => row.name)
 
   const result = new Map<number, number>()
@@ -287,10 +279,8 @@ function getVisibleResponseCountMap(
   for (const collectionId of collectionIds) {
     const locationFieldId = locationFieldByCollection.get(collectionId)
     if (!locationFieldId) {
-      const row = db
-        .prepare('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ?')
-        .get(collectionId) as unknown as { n: number }
-      result.set(collectionId, row.n)
+      const row = await db.queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ?', [collectionId])
+      result.set(collectionId, row?.n ?? 0)
       continue
     }
 
@@ -300,17 +290,16 @@ function getVisibleResponseCountMap(
     }
 
     const locationPh = locationNames.map(() => '?').join(',')
-    const row = db
-      .prepare(
+    const row = await db.queryOne<{ n: number }>(
         `SELECT COUNT(DISTINCT rv.response_id) AS n
          FROM collection_response_values rv
          JOIN collection_responses cr ON cr.id = rv.response_id
          WHERE cr.collection_id = ?
            AND rv.field_id = ?
-           AND rv.value IN (${locationPh})`
+           AND rv.value IN (${locationPh})`,
+        [collectionId, locationFieldId, ...locationNames]
       )
-      .get(collectionId, locationFieldId, ...locationNames) as unknown as { n: number }
-    result.set(collectionId, row.n)
+    result.set(collectionId, row?.n ?? 0)
   }
 
   return result
@@ -440,12 +429,12 @@ function buildCollectionCoverPhotoUrl(slug: string, coverPhotoAssetId: number | 
   return coverPhotoUrl
 }
 
-function resolveCoverPhotoSelection(
-  db: ReturnType<typeof getDb>,
+async function resolveCoverPhotoSelection(
+  db: DbAdapter,
   slug: string,
   organizationId: number,
   body: CollectionBody,
-): { coverPhotoAssetId: number | null; coverPhotoUrl: string | null } {
+): Promise<{ coverPhotoAssetId: number | null; coverPhotoUrl: string | null }> {
   const assetIdRaw = body.coverPhotoAssetId
   if (assetIdRaw === undefined) {
     return {
@@ -466,11 +455,11 @@ function resolveCoverPhotoSelection(
     throw new Error('coverPhotoAssetId must be a positive integer')
   }
 
-  const asset = db.prepare(`
+  const asset = await db.queryOne<{ id: number; organization_id: number }>(`
     SELECT id, organization_id
     FROM gallery_assets
     WHERE id = ?
-  `).get(assetId) as { id: number; organization_id: number } | undefined
+  `, [assetId])
 
   if (!asset || asset.organization_id !== organizationId) {
     throw new Error('Selected gallery image does not exist in the chosen organization')
@@ -482,13 +471,11 @@ function resolveCoverPhotoSelection(
   }
 }
 
-function ensureCategoryExists(category: string | null): string | null {
+async function ensureCategoryExists(category: string | null): Promise<string | null> {
   if (!category) return null
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT name FROM categories WHERE lower(name) = lower(?)')
-    .get(category) as unknown as { name: string } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ name: string }>('SELECT name FROM categories WHERE lower(name) = lower(?)', [category])
 
   if (!existing) {
     throw new Error('Selected category does not exist')
@@ -497,7 +484,7 @@ function ensureCategoryExists(category: string | null): string | null {
   return existing.name
 }
 
-function getPreviewUserContext(req: Request): RequestUserContext | null {
+async function getPreviewUserContext(req: Request): Promise<RequestUserContext | null> {
   const authHeader = req.headers.authorization
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
   if (!token) {
@@ -523,11 +510,11 @@ function getPreviewUserContext(req: Request): RequestUserContext | null {
   }
 }
 
-function resolveCollectionOrganization(
+async function resolveCollectionOrganization(
   context: RequestUserContext,
   requestedOrganizationId: number | undefined,
-): { id: number; name: string } {
-  const db = getDb()
+): Promise<{ id: number; name: string }> {
+  const db = await getDbAsync()
 
   const resolvedId = isAdministrator(context)
     ? requestedOrganizationId ?? context.organizationId ?? null
@@ -537,9 +524,7 @@ function resolveCollectionOrganization(
     throw new Error('An organization assignment is required')
   }
 
-  const organization = db
-    .prepare('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1')
-    .get(resolvedId) as unknown as { id: number; name: string } | undefined
+  const organization = await db.queryOne<{ id: number; name: string }>('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1', [resolvedId])
 
   if (!organization) {
     throw new Error('Selected organization does not exist')
@@ -548,41 +533,33 @@ function resolveCollectionOrganization(
   return organization
 }
 
-function fetchAccessibleCollectionById(
+async function fetchAccessibleCollectionById(
   id: number,
   context: RequestUserContext,
-): DbCollection | undefined {
-  const db = getDb()
+): Promise<DbCollection | undefined> {
+  const db = await getDbAsync()
   if (isAdministrator(context)) {
-    return db
-      .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as unknown as DbCollection | undefined
+    return db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
   }
   // Check org membership first (fastest path)
-  const byOrg = db
-    .prepare(`${COL_SELECT} WHERE c.id = ? AND c.organization_id = ?`)
-    .get(id, context.organizationId) as unknown as DbCollection | undefined
+  const byOrg = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ? AND c.organization_id = ?`, [id, context.organizationId])
   if (byOrg) return byOrg
 
   // Check if directly shared with this user
-  const directShare = db
-    .prepare(`SELECT 1 FROM collection_shares WHERE collection_id = ? AND share_type = 'user' AND share_target_id = ?`)
-    .get(id, context.id) as unknown as { 1: number } | undefined
+  const directShare = await db.queryOne<{ 1: number }>(`SELECT 1 FROM collection_shares WHERE collection_id = ? AND share_type = 'user' AND share_target_id = ?`, [id, context.id])
   if (directShare) {
-    return db.prepare(`${COL_SELECT} WHERE c.id = ?`).get(id) as unknown as DbCollection | undefined
+    return db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
   }
 
   // Check if shared with any group the user belongs to
-  const groupShare = db
-    .prepare(`
+  const groupShare = await db.queryOne<{ 1: number }>(`
       SELECT 1 FROM collection_shares cs
       JOIN group_members gm ON gm.group_id = cs.share_target_id
       WHERE cs.collection_id = ? AND cs.share_type = 'group' AND gm.user_id = ?
       LIMIT 1
-    `)
-    .get(id, context.id) as unknown as { 1: number } | undefined
+    `, [id, context.id])
   if (groupShare) {
-    return db.prepare(`${COL_SELECT} WHERE c.id = ?`).get(id) as unknown as DbCollection | undefined
+    return db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
   }
 
   return undefined
@@ -662,32 +639,29 @@ function resolveRequestedStatus(body: CollectionBody): 'draft' | 'published' {
 
 // ── Helpers ───────────────────────────────────────────────────
 
-function fetchFields(
+async function fetchFields(
   collectionId: number,
   versionId: number | null
-): [DbField[], Map<number, DbTableColumn[]>] {
-  const db = getDb()
+): Promise<[DbField[], Map<number, DbTableColumn[]>]> {
+  const db = await getDbAsync()
   const fields = (versionId
-    ? db
-        .prepare(
-          'SELECT * FROM collection_fields WHERE collection_id = ? AND version_id = ? ORDER BY page_number, sort_order'
-        )
-        .all(collectionId, versionId)
-    : db
-        .prepare(
-          'SELECT * FROM collection_fields WHERE collection_id = ? ORDER BY page_number, sort_order'
-        )
-        .all(collectionId)) as unknown as DbField[]
+    ? await db.queryAll<DbField>(
+        'SELECT * FROM collection_fields WHERE collection_id = ? AND version_id = ? ORDER BY page_number, sort_order',
+        [collectionId, versionId]
+      )
+    : await db.queryAll<DbField>(
+        'SELECT * FROM collection_fields WHERE collection_id = ? ORDER BY page_number, sort_order',
+        [collectionId]
+      ))
 
   const colsByField = new Map<number, DbTableColumn[]>()
   if (fields.length > 0) {
     const ids = fields.map(f => f.id)
     const ph = ids.map(() => '?').join(',')
-    const cols = db
-      .prepare(
-        `SELECT * FROM collection_table_columns WHERE field_id IN (${ph}) ORDER BY sort_order`
-      )
-      .all(...ids) as unknown as DbTableColumn[]
+    const cols = await db.queryAll<DbTableColumn>(
+      `SELECT * FROM collection_table_columns WHERE field_id IN (${ph}) ORDER BY sort_order`,
+      ids
+    )
     for (const col of cols) {
       const arr = colsByField.get(col.field_id) ?? []
       arr.push(col)
@@ -697,115 +671,112 @@ function fetchFields(
   return [fields, colsByField]
 }
 
-function insertFields(collectionId: number, fields: FieldInput[]): void {
-  const db = getDb()
-  fields.forEach((field, idx) => {
-    const r = db
-      .prepare(
+async function insertFields(collectionId: number, fields: FieldInput[]): Promise<void> {
+  const db = await getDbAsync()
+  for (const [idx, field] of fields.entries()) {
+    const r = await db.execute(
         `INSERT INTO collection_fields
            (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only, location_filter_enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        collectionId,
-        null,
-        field.fieldKey?.trim() || crypto.randomUUID(),
-        field.type,
-        field.label,
-        field.subtitle?.trim() || null,
-        Math.max(1, Math.floor(field.page ?? 1)),
-        field.required ? 1 : 0,
-        field.options?.length ? JSON.stringify(field.options) : null,
-        resolveFieldDisplayStyle(field.type, field.displayStyle),
-        serialiseBranchRules(field.branchRules),
-        field.sortOrder ?? idx,
-        field.staffOnly ? 1 : 0,
-        field.locationFilterEnabled ? 1 : 0
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          collectionId,
+          null,
+          field.fieldKey?.trim() || crypto.randomUUID(),
+          field.type,
+          field.label,
+          field.subtitle?.trim() || null,
+          Math.max(1, Math.floor(field.page ?? 1)),
+          field.required ? 1 : 0,
+          field.options?.length ? JSON.stringify(field.options) : null,
+          resolveFieldDisplayStyle(field.type, field.displayStyle),
+          serialiseBranchRules(field.branchRules),
+          field.sortOrder ?? idx,
+          field.staffOnly ? 1 : 0,
+          field.locationFilterEnabled ? 1 : 0
+        ]
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
-      const fieldId = r.lastInsertRowid as number
-      field.tableColumns.forEach((col, ci) => {
-        db.prepare(
+      const fieldId = Number(r.lastInsertRowid)
+      for (const [ci, col] of (field.tableColumns ?? []).entries()) {
+        await db.execute(
           `INSERT INTO collection_table_columns (field_id, name, col_type, list_options, sort_order)
-           VALUES (?, ?, ?, ?, ?)`
-        ).run(
-          fieldId,
-          col.name,
-          col.colType,
-          col.colType === 'list'
-            ? JSON.stringify((col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean))
-            : null,
-          col.sortOrder ?? ci
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            fieldId,
+            col.name,
+            col.colType,
+            col.colType === 'list'
+              ? JSON.stringify((col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean))
+              : null,
+            col.sortOrder ?? ci
+          ]
         )
-      })
+      }
     }
-  })
+  }
 }
 
-function insertFieldsForVersion(collectionId: number, versionId: number, fields: FieldInput[]): void {
-  const db = getDb()
-  fields.forEach((field, idx) => {
-    const r = db
-      .prepare(
+async function insertFieldsForVersion(collectionId: number, versionId: number, fields: FieldInput[]): Promise<void> {
+  const db = await getDbAsync()
+  for (const [idx, field] of fields.entries()) {
+    const r = await db.execute(
         `INSERT INTO collection_fields
            (collection_id, version_id, field_key, type, label, subtitle, page_number, required, options, display_style, branch_rules, sort_order, staff_only, location_filter_enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        collectionId,
-        versionId,
-        field.fieldKey?.trim() || crypto.randomUUID(),
-        field.type,
-        field.label,
-        field.subtitle?.trim() || null,
-        Math.max(1, Math.floor(field.page ?? 1)),
-        field.required ? 1 : 0,
-        field.options?.length ? JSON.stringify(field.options) : null,
-        resolveFieldDisplayStyle(field.type, field.displayStyle),
-        serialiseBranchRules(field.branchRules),
-        field.sortOrder ?? idx,
-        field.staffOnly ? 1 : 0,
-        field.locationFilterEnabled ? 1 : 0
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          collectionId,
+          versionId,
+          field.fieldKey?.trim() || crypto.randomUUID(),
+          field.type,
+          field.label,
+          field.subtitle?.trim() || null,
+          Math.max(1, Math.floor(field.page ?? 1)),
+          field.required ? 1 : 0,
+          field.options?.length ? JSON.stringify(field.options) : null,
+          resolveFieldDisplayStyle(field.type, field.displayStyle),
+          serialiseBranchRules(field.branchRules),
+          field.sortOrder ?? idx,
+          field.staffOnly ? 1 : 0,
+          field.locationFilterEnabled ? 1 : 0
+        ]
       )
     if (field.type === 'custom_table' && field.tableColumns?.length) {
-      const fieldId = r.lastInsertRowid as number
-      field.tableColumns.forEach((col, ci) => {
-        db.prepare(
+      const fieldId = Number(r.lastInsertRowid)
+      for (const [ci, col] of (field.tableColumns ?? []).entries()) {
+        await db.execute(
           `INSERT INTO collection_table_columns (field_id, name, col_type, list_options, sort_order)
-           VALUES (?, ?, ?, ?, ?)`
-        ).run(
-          fieldId,
-          col.name,
-          col.colType,
-          col.colType === 'list'
-            ? JSON.stringify((col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean))
-            : null,
-          col.sortOrder ?? ci
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            fieldId,
+            col.name,
+            col.colType,
+            col.colType === 'list'
+              ? JSON.stringify((col.listOptions ?? []).map(opt => opt.trim()).filter(Boolean))
+              : null,
+            col.sortOrder ?? ci
+          ]
         )
-      })
+      }
     }
-  })
+  }
 }
 
-function createCollectionVersion(
+async function createCollectionVersion(
   collectionId: number,
   createdBy: number,
   status: 'draft' | 'published',
   fields: FieldInput[]
-): { versionId: number; versionNumber: number } {
-  const db = getDb()
-  const row = db
-    .prepare('SELECT COALESCE(MAX(version_number), 0) AS maxVersion FROM collection_versions WHERE collection_id = ?')
-    .get(collectionId) as { maxVersion: number }
-  const versionNumber = row.maxVersion + 1
-  const inserted = db
-    .prepare(
+): Promise<{ versionId: number; versionNumber: number }> {
+  const db = await getDbAsync()
+  const row = await db.queryOne<{ maxVersion: number }>('SELECT COALESCE(MAX(version_number), 0) AS maxVersion FROM collection_versions WHERE collection_id = ?', [collectionId])
+  const versionNumber = (row?.maxVersion ?? 0) + 1
+  const inserted = await db.execute(
       `INSERT INTO collection_versions (collection_id, version_number, status, created_by, published_at)
-       VALUES (?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`
+       VALUES (?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`,
+      [collectionId, versionNumber, status, createdBy, status]
     )
-    .run(collectionId, versionNumber, status, createdBy, status)
-  const versionId = inserted.lastInsertRowid as number
-  insertFieldsForVersion(collectionId, versionId, fields)
+  const versionId = Number(inserted.lastInsertRowid)
+  await insertFieldsForVersion(collectionId, versionId, fields)
   return { versionId, versionNumber }
 }
 
@@ -1142,13 +1113,11 @@ const COL_SELECT = `
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/public/:slug', optionalAuthenticateToken, (req: Request, res: Response) => {
-  const db = getDb()
+router.get('/public/:slug', optionalAuthenticateToken, async (req: Request, res: Response) => {
+  const db = await getDbAsync()
   const previewRequested = req.query.preview === 'true'
-  const previewUser = previewRequested ? getPreviewUserContext(req) : null
-  const c = db
-    .prepare(`${COL_SELECT} WHERE c.slug = ?`)
-    .get(req.params.slug) as unknown as DbCollection | undefined
+  const previewUser = previewRequested ? await getPreviewUserContext(req) : null
+  const c = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.slug = ?`, [req.params.slug])
 
   const canPreviewDraft =
     !!previewUser &&
@@ -1164,20 +1133,20 @@ router.get('/public/:slug', optionalAuthenticateToken, (req: Request, res: Respo
     return
   }
 
-  const [allFields, colsByField] = fetchFields(c.id, c.active_version_id)
+  const [allFields, colsByField] = await fetchFields(c.id, c.active_version_id)
   // Strip staff-only fields — the fill page is for submitters, not staff
   const publicFields = allFields.filter(f => !f.staff_only)
   res.json(toApiCollection(c, publicFields, colsByField))
 })
 
 router.get('/public/:slug/cover-photo', async (req: Request, res: Response) => {
-  const db = getDb()
-  const row = db.prepare(`
+  const db = await getDbAsync()
+  const row = await db.queryOne<{ status: 'draft' | 'published'; drive_file_id: string; file_data: string | null; mime_type: string }>(`
     SELECT c.status, ga.drive_file_id, ga.file_data, ga.mime_type
     FROM collections c
     JOIN gallery_assets ga ON ga.id = c.cover_photo_asset_id
     WHERE c.slug = ?
-  `).get(req.params.slug) as { status: 'draft' | 'published'; drive_file_id: string; file_data: string | null; mime_type: string } | undefined
+  `, [req.params.slug])
 
   if (!row || row.status !== 'published') {
     res.status(404).json({ error: 'Cover photo not found' })
@@ -1213,15 +1182,13 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
     return
   }
 
-  const db = getDb()
-  const col = db
-    .prepare('SELECT id, anonymous, status, active_version_id FROM collections WHERE slug = ?')
-    .get(req.params.slug) as unknown as {
+  const db = await getDbAsync()
+  const col = await db.queryOne<{
       id: number
       anonymous: number
       status: 'draft' | 'published'
       active_version_id: number | null
-    } | undefined
+    }>('SELECT id, anonymous, status, active_version_id FROM collections WHERE slug = ?', [req.params.slug])
 
   if (!col || col.status !== 'published') {
     res.status(404).json({ error: 'Collection not found' })
@@ -1244,15 +1211,14 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
     return
   }
 
-  const [fields] = fetchFields(col.id, col.active_version_id)
+  const [fields] = await fetchFields(col.id, col.active_version_id)
   const attachmentField = fields.find(field => field.id === fieldId && field.type === 'attachment' && !field.staff_only)
   if (!attachmentField) {
     res.status(400).json({ error: 'Invalid attachment field' })
     return
   }
 
-  const pendingCountRow = db
-    .prepare(`
+  const pendingCountRow = await db.queryOne<{ count: number }>(`
       SELECT COUNT(*) AS count
       FROM response_attachments
       WHERE collection_id = ?
@@ -1263,8 +1229,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
           (? IS NOT NULL AND uploaded_by_user_id = ?)
           OR (? IS NULL AND uploaded_by_user_id IS NULL)
         )
-    `)
-    .get(col.id, fieldId, req.user?.sub ?? null, req.user?.sub ?? null, req.user?.sub ?? null) as { count: number }
+    `, [col.id, fieldId, req.user?.sub ?? null, req.user?.sub ?? null, req.user?.sub ?? null])
 
   if ((pendingCountRow?.count ?? 0) >= MAX_ATTACHMENTS_PER_FIELD) {
     res.status(400).json({ error: `You can upload up to ${MAX_ATTACHMENTS_PER_FIELD} attachments for this field` })
@@ -1278,8 +1243,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
     const localId = `local:${crypto.randomUUID()}`
     const fileDataBase64 = req.file.buffer.toString('base64')
 
-    const result = db
-      .prepare(`
+    const result = await db.execute(`
         INSERT INTO response_attachments (
           collection_id,
           response_id,
@@ -1295,8 +1259,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
           file_data,
           status
         ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'uploaded')
-      `)
-      .run(
+      `, [
         col.id,
         fieldId,
         req.user?.sub ?? null,
@@ -1306,7 +1269,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
         req.file.buffer.byteLength,
         localId,
         fileDataBase64,
-      )
+      ])
 
     const attachmentId = Number(result.lastInsertRowid)
     res.status(201).json({
@@ -1328,8 +1291,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
       buffer: req.file.buffer,
     })
 
-    const result = db
-      .prepare(`
+    const result = await db.execute(`
         INSERT INTO response_attachments (
           collection_id,
           response_id,
@@ -1344,8 +1306,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
           drive_download_url,
           status
         ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded')
-      `)
-      .run(
+      `, [
         col.id,
         fieldId,
         req.user?.sub ?? null,
@@ -1356,7 +1317,7 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
         uploaded.id,
         uploaded.webViewUrl,
         uploaded.webContentUrl,
-      )
+      ])
 
     const attachmentId = Number(result.lastInsertRowid)
     res.status(201).json({
@@ -1390,10 +1351,8 @@ router.delete('/public/:slug/attachments/:attachmentId', optionalAuthenticateTok
     return
   }
 
-  const db = getDb()
-  const col = db
-    .prepare('SELECT id, anonymous, status FROM collections WHERE slug = ?')
-    .get(req.params.slug) as unknown as { id: number; anonymous: number; status: 'draft' | 'published' } | undefined
+  const db = await getDbAsync()
+  const col = await db.queryOne<{ id: number; anonymous: number; status: 'draft' | 'published' }>('SELECT id, anonymous, status FROM collections WHERE slug = ?', [req.params.slug])
 
   if (!col || col.status !== 'published') {
     res.status(404).json({ error: 'Collection not found' })
@@ -1405,13 +1364,7 @@ router.delete('/public/:slug/attachments/:attachmentId', optionalAuthenticateTok
     return
   }
 
-  const attachment = db
-    .prepare(`
-      SELECT id, collection_id, response_id, uploaded_by_user_id, temp_upload_token, drive_file_id, status
-      FROM response_attachments
-      WHERE id = ? AND collection_id = ?
-    `)
-    .get(attachmentId, col.id) as unknown as {
+  const attachment = await db.queryOne<{
       id: number
       collection_id: number
       response_id: number | null
@@ -1419,7 +1372,11 @@ router.delete('/public/:slug/attachments/:attachmentId', optionalAuthenticateTok
       temp_upload_token: string | null
       drive_file_id: string
       status: 'uploaded' | 'linked' | 'deleted'
-    } | undefined
+    }>(`
+      SELECT id, collection_id, response_id, uploaded_by_user_id, temp_upload_token, drive_file_id, status
+      FROM response_attachments
+      WHERE id = ? AND collection_id = ?
+    `, [attachmentId, col.id])
 
   if (!attachment || attachment.response_id !== null || attachment.status !== 'uploaded') {
     res.status(404).json({ error: 'Attachment not found' })
@@ -1444,11 +1401,11 @@ router.delete('/public/:slug/attachments/:attachmentId', optionalAuthenticateTok
     }
   }
 
-  db.prepare(`
+  await db.execute(`
     UPDATE response_attachments
     SET status = 'deleted', deleted_at = datetime('now')
     WHERE id = ?
-  `).run(attachment.id)
+  `, [attachment.id])
 
   res.status(204).send()
 })
@@ -1460,15 +1417,14 @@ router.get('/attachments/:attachmentId/download', authenticateToken, async (req:
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
-  const attachment = db
-    .prepare(`
+  const db = await getDbAsync()
+  const attachment = await db.queryOne<DbAttachmentRow>(`
       SELECT
         ra.id,
         ra.collection_id,
@@ -1490,8 +1446,7 @@ router.get('/attachments/:attachmentId/download', authenticateToken, async (req:
       JOIN collections c ON c.id = ra.collection_id
       LEFT JOIN collection_responses cr ON cr.id = ra.response_id
       WHERE ra.id = ? AND ra.status != 'deleted'
-    `)
-    .get(attachmentId) as unknown as DbAttachmentRow | undefined
+    `, [attachmentId])
 
   if (!attachment || attachment.response_id === null) {
     res.status(404).json({ error: 'Attachment not found' })
@@ -1504,9 +1459,7 @@ router.get('/attachments/:attachmentId/download', authenticateToken, async (req:
   }
 
   if (!permitted) {
-    const userRow = db
-      .prepare('SELECT email FROM users WHERE id = ?')
-      .get(context.id) as { email: string } | undefined
+    const userRow = await db.queryOne<{ email: string }>('SELECT email FROM users WHERE id = ?', [context.id])
     permitted = !!userRow?.email && userRow.email === attachment.respondent_email && (isAdministrator(context) || attachment.organization_id === context.organizationId)
   }
 
@@ -1599,11 +1552,9 @@ router.get('/attachments/:attachmentId/download', authenticateToken, async (req:
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request, res: Response) => {
-  const db = getDb()
-  const col = db
-    .prepare('SELECT id, title, anonymous, status, active_version_id, allow_submission_edits, submission_edit_window_hours, organization_id, workflow_definition FROM collections WHERE slug = ?')
-    .get(req.params.slug) as unknown as {
+router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Request, res: Response) => {
+  const db = await getDbAsync()
+  const col = await db.queryOne<{
       id: number
       title: string
       anonymous: number
@@ -1613,7 +1564,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
       submission_edit_window_hours: number | null
       organization_id: number | null
       workflow_definition: string | null
-    } | undefined
+    }>('SELECT id, title, anonymous, status, active_version_id, allow_submission_edits, submission_edit_window_hours, organization_id, workflow_definition FROM collections WHERE slug = ?', [req.params.slug])
 
   if (!col) {
     res.status(404).json({ error: 'Collection not found' })
@@ -1640,9 +1591,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
       return
     }
 
-    const userRow = db
-      .prepare('SELECT name, email FROM users WHERE id = ?')
-      .get(req.user.sub) as unknown as { name: string | null; email: string | null } | undefined
+    const userRow = await db.queryOne<{ name: string | null; email: string | null }>('SELECT name, email FROM users WHERE id = ?', [req.user.sub])
 
     if (!userRow?.name?.trim() || !userRow.email?.trim()) {
       res.status(400).json({ error: 'Your account must have a name and email address before submitting this form' })
@@ -1655,35 +1604,31 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
     }
   }
 
-  db.exec('BEGIN')
   try {
-    const [collectionFields] = fetchFields(col.id, col.active_version_id)
+    const [collectionFields] = await fetchFields(col.id, col.active_version_id)
     const fieldById = new Map(collectionFields.map(field => [field.id, field]))
 
     const editWindowHours = col.allow_submission_edits === 1
       ? col.submission_edit_window_hours
       : null
     const editableUntil = editWindowHours && col.anonymous !== 1
-      ? (db
-          .prepare(`SELECT datetime('now', '+' || ? || ' hours') AS ts`)
-          .get(editWindowHours) as { ts: string }).ts
+      ? (await db.queryOne<{ ts: string }>(`SELECT datetime('now', '+' || ? || ' hours') AS ts`, [editWindowHours]))?.ts ?? null
       : null
 
-    const r = db
-      .prepare(
+    const r = await db.execute(
         `INSERT INTO collection_responses
            (collection_id, collection_version_id, respondent_name, respondent_email, editable_until)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(
-        col.id,
-        col.active_version_id,
-        authenticatedRespondent?.name ?? body.respondentName?.trim() ?? null,
-        authenticatedRespondent?.email ?? body.respondentEmail?.trim() ?? null,
-        editableUntil
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          col.id,
+          col.active_version_id,
+          authenticatedRespondent?.name ?? body.respondentName?.trim() ?? null,
+          authenticatedRespondent?.email ?? body.respondentEmail?.trim() ?? null,
+          editableUntil
+        ]
       )
 
-    const responseId = r.lastInsertRowid as number
+    const responseId = Number(r.lastInsertRowid)
 
     if (body.values?.length) {
       const storedValuesForWorkflow: Array<{ fieldKey: string; value: string | null }> = []
@@ -1701,13 +1646,11 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
                 throw new Error('Attachment upload token is missing')
               }
 
-              const attachmentRow = db
-                .prepare(`
+              const attachmentRow = await db.queryOne<DbAttachmentRow>(`
                   SELECT id, collection_id, response_id, field_id, uploaded_by_user_id, temp_upload_token, file_name, mime_type, size_bytes, drive_file_id, drive_web_view_url, drive_download_url, status
                   FROM response_attachments
                   WHERE id = ? AND collection_id = ? AND field_id = ? AND status = 'uploaded'
-                `)
-                .get(attachment.attachmentId, col.id, val.fieldId) as unknown as DbAttachmentRow | undefined
+                `, [attachment.attachmentId, col.id, val.fieldId])
 
               if (!attachmentRow || attachmentRow.response_id !== null) {
                 throw new Error('Uploaded attachment could not be linked to this response')
@@ -1721,11 +1664,11 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
                 throw new Error('Uploaded attachment ownership mismatch')
               }
 
-              db.prepare(`
+              await db.execute(`
                 UPDATE response_attachments
                 SET response_id = ?, status = 'linked', temp_upload_token = NULL
                 WHERE id = ?
-              `).run(responseId, attachmentRow.id)
+              `, [responseId, attachmentRow.id])
 
               linkedAttachments.push(sanitizeAttachmentReference({
                 attachmentId: attachmentRow.id,
@@ -1741,17 +1684,18 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
           }
         }
 
-        db.prepare(
+        await db.execute(
           `INSERT INTO collection_response_values (response_id, field_id, value)
-           VALUES (?, ?, ?)`
-        ).run(responseId, val.fieldId, storedValue)
+           VALUES (?, ?, ?)`,
+          [responseId, val.fieldId, storedValue]
+        )
 
         if (field?.field_key) {
           storedValuesForWorkflow.push({ fieldKey: field.field_key, value: storedValue })
         }
       }
 
-      initializeWorkflowForResponse({
+      await initializeWorkflowForResponse({
         collectionId: col.id,
         responseId,
         organizationId: col.organization_id,
@@ -1761,7 +1705,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
         db,
       })
     } else {
-      initializeWorkflowForResponse({
+      await initializeWorkflowForResponse({
         collectionId: col.id,
         responseId,
         organizationId: col.organization_id,
@@ -1772,14 +1716,12 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
       })
     }
 
-    db.exec('COMMIT')
+    await db.execute('COMMIT')
 
     // Send confirmation email if the feature is enabled and the respondent provided an email
     const respondentEmail = authenticatedRespondent?.email ?? body.respondentEmail?.trim()
     if (respondentEmail && isEmailDeliveryConfigured()) {
-      const settingRow = db
-        .prepare(`SELECT value FROM app_settings WHERE key = 'submission_confirmation_emails'`)
-        .get() as { value: string } | undefined
+      const settingRow = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'submission_confirmation_emails'`)
       if (settingRow?.value === 'true') {
         void sendNotificationEmail({
           to: respondentEmail,
@@ -1799,7 +1741,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
     const copyEmail = body.copyEmail?.trim()
     if (copyEmail && isEmailDeliveryConfigured()) {
       try {
-        const [fields] = fetchFields(col.id, col.active_version_id)
+        const [fields] = await fetchFields(col.id, col.active_version_id)
         const fieldMap = new Map(fields.map(f => [f.id, f]))
 
         const answerLines: string[] = []
@@ -1828,9 +1770,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
           answerLines.push(`${field.label}\n${displayValue}`)
         }
 
-        const disclaimerRow = db
-          .prepare(`SELECT value FROM app_settings WHERE key = 'copy_answers_disclaimer'`)
-          .get() as { value: string } | undefined
+        const disclaimerRow = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'copy_answers_disclaimer'`)
         const disclaimer =
           disclaimerRow?.value?.trim() ||
           'For privacy your email will not be saved by the system. It will only be used for this purpose.'
@@ -1853,13 +1793,12 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, (req: Request,
 
     res.status(201).json({ id: responseId, submitted: true })
   } catch (err) {
-    db.exec('ROLLBACK')
     console.error('[collections] submit response:', err)
     res.status(500).json({ error: 'Failed to submit response' })
   }
 })
 
-router.post('/:id/seed', authenticateToken, (req: Request, res: Response) => {
+router.post('/:id/seed', authenticateToken, async (req: Request, res: Response) => {
   if (req.user?.role !== 'administrator' && req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -1878,10 +1817,8 @@ router.post('/:id/seed', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const collection = db
-    .prepare('SELECT id, title, anonymous, active_version_id FROM collections WHERE id = ?')
-    .get(id) as { id: number; title: string; anonymous: number; active_version_id: number | null } | undefined
+  const db = await getDbAsync()
+  const collection = await db.queryOne<{ id: number; title: string; anonymous: number; active_version_id: number | null }>('SELECT id, title, anonymous, active_version_id FROM collections WHERE id = ?', [id])
 
   if (!collection) {
     res.status(404).json({ error: 'Collection not found' })
@@ -1893,48 +1830,46 @@ router.post('/:id/seed', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const [fields, colsByField] = fetchFields(collection.id, collection.active_version_id)
+  const [fields, colsByField] = await fetchFields(collection.id, collection.active_version_id)
   if (fields.length === 0) {
     res.status(400).json({ error: 'Collection does not have any fields to seed' })
     return
   }
 
-  db.exec('BEGIN')
+  await db.execute('BEGIN')
   try {
     for (let submissionIndex = 0; submissionIndex < count; submissionIndex += 1) {
       const random = createSeededRandomSource(collection.id, submissionIndex)
       const respondentName = collection.anonymous === 1 ? null : buildSeededName(random, submissionIndex)
       const respondentEmail = collection.anonymous === 1
         ? null
-        : `${respondentName?.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '')}@seed.example.com`
+        : `${respondentName?.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/, '')}@seed.example.com`
       const submittedAt = buildSeededSubmittedAt(random)
 
-      const insertedResponse = db
-        .prepare(
+      const insertedResponse = await db.execute(
           `INSERT INTO collection_responses
              (collection_id, collection_version_id, respondent_name, respondent_email, editable_until, submitted_at)
-           VALUES (?, ?, ?, ?, NULL, ?)`
+           VALUES (?, ?, ?, ?, NULL, ?)`,
+          [collection.id, collection.active_version_id, respondentName, respondentEmail, submittedAt]
         )
-        .run(collection.id, collection.active_version_id, respondentName, respondentEmail, submittedAt)
 
-      const responseId = insertedResponse.lastInsertRowid as number
+      const responseId = Number(insertedResponse.lastInsertRowid)
 
       for (const field of fields) {
         if (field.id === undefined) continue
         const value = buildSeededFieldValue(field, colsByField.get(field.id) ?? [], random, submissionIndex)
         if (value === null || value === '') continue
 
-        db.prepare(
+        await db.execute(
           `INSERT INTO collection_response_values (response_id, field_id, value)
-           VALUES (?, ?, ?)`
-        ).run(responseId, field.id, value)
+           VALUES (?, ?, ?)`,
+          [responseId, field.id, value]
+        )
       }
     }
 
-    db.exec('COMMIT')
     res.status(201).json({ created: count, collectionId: collection.id, collectionTitle: collection.title })
   } catch (err) {
-    db.exec('ROLLBACK')
     console.error('[collections] seed:', err)
     res.status(500).json({ error: 'Failed to seed collection data' })
   }
@@ -1962,25 +1897,22 @@ router.post('/:id/seed', authenticateToken, (req: Request, res: Response) => {
  *       401:
  *         description: Unauthorized
  */
-router.get('/', authenticateToken, (_req: Request, res: Response) => {
-  const context = loadRequestUserContext(_req)
+router.get('/', authenticateToken, async (_req: Request, res: Response) => {
+  const context = await loadRequestUserContext(_req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
 
   // For super_admin (no org), show all collections
   let cols: DbCollection[]
   if (isAdministrator(context)) {
-    cols = db
-      .prepare(`${COL_SELECT} ORDER BY c.created_at DESC`)
-      .all() as unknown as DbCollection[]
+    cols = await db.queryAll<DbCollection>(`${COL_SELECT} ORDER BY c.created_at DESC`)
   } else {
     // Collections in the user's org + collections shared directly or via group
-    cols = db
-      .prepare(`
+    cols = await db.queryAll<DbCollection>(`
         ${COL_SELECT}
         WHERE c.organization_id = ?
            OR EXISTS (
@@ -1993,8 +1925,7 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
              WHERE cs.collection_id = c.id AND cs.share_type = 'group' AND gm.user_id = ?
            )
         ORDER BY c.created_at DESC
-      `)
-      .all(context.organizationId, context.id, context.id) as unknown as DbCollection[]
+      `, [context.organizationId, context.id, context.id])
   }
 
   if (cols.length === 0) {
@@ -2005,11 +1936,9 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
   const ids = cols.map(c => c.id)
   const ph = ids.map(() => '?').join(',')
 
-  const responseCountMap = getVisibleResponseCountMap(db, context, ids)
+  const responseCountMap = await getVisibleResponseCountMap(db, context, ids)
 
-  const customTableFlags = db
-    .prepare(`SELECT collection_id, COUNT(*) AS ct FROM collection_fields WHERE collection_id IN (${ph}) AND type = 'custom_table' GROUP BY collection_id`)
-    .all(...ids) as unknown as Array<{ collection_id: number; ct: number }>
+  const customTableFlags = await db.queryAll<{ collection_id: number; ct: number }>(`SELECT collection_id, COUNT(*) AS ct FROM collection_fields WHERE collection_id IN (${ph}) AND type = 'custom_table' GROUP BY collection_id`, ids)
   const customTableMap = new Map(customTableFlags.map(r => [r.collection_id, r.ct]))
 
   const result = cols.map(c => ({
@@ -2050,8 +1979,8 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
  *       401:
  *         description: Unauthorized
  */
-router.post('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -2063,8 +1992,8 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const slug = generateUniqueSlug(db, body.title)
+  const db = await getDbAsync()
+  const slug = await generateUniqueSlug(db, body.title)
   let organization: { id: number; name: string }
   let category: string | null
   let editSettings: { allowSubmissionEdits: boolean; submissionEditWindowHours: number | null }
@@ -2072,77 +2001,69 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   let coverSelection: { coverPhotoAssetId: number | null; coverPhotoUrl: string | null }
 
   try {
-    organization = resolveCollectionOrganization(context, body.organizationId)
-    category = ensureCategoryExists(normalizeCategory(body.category))
+    organization = await resolveCollectionOrganization(context, body.organizationId)
+    category = await ensureCategoryExists(normalizeCategory(body.category))
     editSettings = resolveSubmissionEditSettings(body)
     if (body.sourceTemplateCollectionId !== null && body.sourceTemplateCollectionId !== undefined) {
       const templateId = Number(body.sourceTemplateCollectionId)
       if (!Number.isInteger(templateId) || templateId < 1) {
         throw new Error('sourceTemplateCollectionId must be a positive integer')
       }
-      const template = fetchAccessibleCollectionById(templateId, context)
+      const template = await fetchAccessibleCollectionById(templateId, context)
       if (!template) {
         throw new Error('Selected template collection does not exist')
       }
       sourceTemplateCollectionId = template.id
     }
-    coverSelection = resolveCoverPhotoSelection(db, slug, organization.id, body)
+    coverSelection = await resolveCoverPhotoSelection(db, slug, organization.id, body)
   } catch (err) {
     res.status(400).json({ error: (err as Error).message })
     return
   }
 
-  db.exec('BEGIN')
   try {
     const requestedStatus = resolveRequestedStatus(body)
-    const r = db
-      .prepare(
+    const r = await db.execute(
         `INSERT INTO collections
            (slug, title, status, description, category, created_by, date_due, cover_photo_url,
             cover_photo_asset_id, logo_url, instructions, instructions_doc_url, workflow_definition, source_template_collection_id, organization_id, anonymous, allow_submission_edits,
             submission_edit_window_hours, collection_type, active_version_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        [
+          slug,
+          body.title.trim(),
+          requestedStatus,
+          body.description?.trim() ?? null,
+          category,
+          req.user!.sub,
+          body.dateDue ?? null,
+          coverSelection.coverPhotoUrl,
+          coverSelection.coverPhotoAssetId,
+          body.logoUrl ?? null,
+          body.instructions ?? null,
+          body.instructionsDocUrl ?? null,
+          serializeWorkflowDefinition(body.workflowDefinition),
+          sourceTemplateCollectionId,
+          organization.id,
+          body.anonymous ? 1 : 0,
+          editSettings.allowSubmissionEdits ? 1 : 0,
+          editSettings.submissionEditWindowHours,
+          body.collectionType === 'signup_sheet' ? 'signup_sheet' : 'standard'
+        ]
       )
-      .run(
-        slug,
-        body.title.trim(),
-        requestedStatus,
-        body.description?.trim() ?? null,
-        category,
-        req.user!.sub,
-        body.dateDue ?? null,
-        coverSelection.coverPhotoUrl,
-        coverSelection.coverPhotoAssetId,
-        body.logoUrl ?? null,
-        body.instructions ?? null,
-        body.instructionsDocUrl ?? null,
-        serializeWorkflowDefinition(body.workflowDefinition),
-        sourceTemplateCollectionId,
-        organization.id,
-        body.anonymous ? 1 : 0,
-        editSettings.allowSubmissionEdits ? 1 : 0,
-        editSettings.submissionEditWindowHours,
-        body.collectionType === 'signup_sheet' ? 'signup_sheet' : 'standard'
-      )
 
-    const id = r.lastInsertRowid as number
-    const { versionId } = createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
-    db.prepare('UPDATE collections SET active_version_id = ? WHERE id = ?').run(versionId, id)
+    const id = Number(r.lastInsertRowid)
+    const { versionId } = await createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
+    await db.execute('UPDATE collections SET active_version_id = ? WHERE id = ?', [versionId, id])
 
-    db.exec('COMMIT')
-
-    const c = db
-      .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as unknown as DbCollection | undefined
+    const c = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
     if (!c) {
-      db.exec('ROLLBACK')
       res.status(500).json({ error: 'Failed to load created collection' })
       return
     }
-    const [fields, colsByField] = fetchFields(id, c.active_version_id)
+    const [fields, colsByField] = await fetchFields(id, c.active_version_id)
     res.status(201).json(toApiCollection(c, fields, colsByField))
   } catch (err) {
-    db.exec('ROLLBACK')
     console.error('[collections] create:', err)
     res.status(500).json({ error: 'Failed to create collection' })
   }
@@ -2180,26 +2101,26 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/:id', authenticateToken, (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const c = fetchAccessibleCollectionById(id, context)
+  const c = await fetchAccessibleCollectionById(id, context)
 
   if (!c) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
-  const [fields, colsByField] = fetchFields(id, c.active_version_id)
+  const [fields, colsByField] = await fetchFields(id, c.active_version_id)
   res.json(toApiCollection(c, fields, colsByField))
 })
 
@@ -2252,14 +2173,14 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.put('/:id', authenticateToken, (req: Request, res: Response) => {
+router.put('/:id', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -2277,16 +2198,16 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
   let coverSelection: { coverPhotoAssetId: number | null; coverPhotoUrl: string | null }
 
   try {
-    organization = resolveCollectionOrganization(context, body.organizationId)
-    category = ensureCategoryExists(normalizeCategory(body.category))
+    organization = await resolveCollectionOrganization(context, body.organizationId)
+    category = await ensureCategoryExists(normalizeCategory(body.category))
     editSettings = resolveSubmissionEditSettings(body)
   } catch (err) {
     res.status(400).json({ error: (err as Error).message })
     return
   }
 
-  const db = getDb()
-  const existingCollection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const existingCollection = await fetchAccessibleCollectionById(id, context)
 
   if (!existingCollection) {
     res.status(404).json({ error: 'Collection not found' })
@@ -2294,7 +2215,7 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
   }
 
   try {
-    coverSelection = resolveCoverPhotoSelection(getDb(), existingCollection.slug, organization.id, body)
+    coverSelection = await resolveCoverPhotoSelection(db, existingCollection.slug, organization.id, body)
   } catch (err) {
     res.status(400).json({ error: (err as Error).message })
     return
@@ -2308,13 +2229,11 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 
   const requestedStatus = resolveRequestedStatus(body)
 
-  db.exec('BEGIN')
   try {
-    const { n: responseCount } = db
-      .prepare('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ? AND collection_version_id = ?')
-      .get(id, activeVersionId) as { n: number }
+    const responseCountRow = await db.queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ? AND collection_version_id = ?', [id, activeVersionId])
+    const responseCount = responseCountRow?.n ?? 0
 
-    const [existingFields, existingColsByField] = fetchFields(id, activeVersionId)
+    const [existingFields, existingColsByField] = await fetchFields(id, activeVersionId)
     const incomingFields = body.fields ?? []
     const sameStructure =
       normaliseDbFields(existingFields, existingColsByField)
@@ -2322,96 +2241,92 @@ router.put('/:id', authenticateToken, (req: Request, res: Response) => {
 
     let targetVersionId = activeVersionId
     if (responseCount > 0 && !sameStructure) {
-      const { versionId } = createCollectionVersion(id, req.user!.sub, requestedStatus, incomingFields)
+      const { versionId } = await createCollectionVersion(id, req.user!.sub, requestedStatus, incomingFields)
       targetVersionId = versionId
     } else if (responseCount === 0) {
-      db.prepare('DELETE FROM collection_fields WHERE collection_id = ? AND version_id = ?').run(id, activeVersionId)
+      await db.execute('DELETE FROM collection_fields WHERE collection_id = ? AND version_id = ?', [id, activeVersionId])
       if (incomingFields.length) {
-        insertFieldsForVersion(id, activeVersionId, incomingFields)
+        await insertFieldsForVersion(id, activeVersionId, incomingFields)
       }
     }
 
-    db.prepare(
+    await db.execute(
       `UPDATE collections
          SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
           cover_photo_asset_id = ?, logo_url = ?, instructions = ?, instructions_doc_url = ?, workflow_definition = ?, organization_id = ?, anonymous = ?, allow_submission_edits = ?,
            submission_edit_window_hours = ?, collection_type = ?, active_version_id = ?,
            updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(
-      body.title.trim(),
-      requestedStatus,
-      body.description?.trim() ?? null,
-      category,
-      body.dateDue ?? null,
-      coverSelection.coverPhotoUrl,
-      coverSelection.coverPhotoAssetId,
-      body.logoUrl ?? null,
-      body.instructions ?? null,
-      body.instructionsDocUrl ?? null,
-      serializeWorkflowDefinition(body.workflowDefinition),
-      organization.id,
-      body.anonymous ? 1 : 0,
-      editSettings.allowSubmissionEdits ? 1 : 0,
-      editSettings.submissionEditWindowHours,
-      body.collectionType === 'signup_sheet' ? 'signup_sheet' : 'standard',
-      targetVersionId,
-      id
+       WHERE id = ?`,
+      [
+        body.title.trim(),
+        requestedStatus,
+        body.description?.trim() ?? null,
+        category,
+        body.dateDue ?? null,
+        coverSelection.coverPhotoUrl,
+        coverSelection.coverPhotoAssetId,
+        body.logoUrl ?? null,
+        body.instructions ?? null,
+        body.instructionsDocUrl ?? null,
+        serializeWorkflowDefinition(body.workflowDefinition),
+        organization.id,
+        body.anonymous ? 1 : 0,
+        editSettings.allowSubmissionEdits ? 1 : 0,
+        editSettings.submissionEditWindowHours,
+        body.collectionType === 'signup_sheet' ? 'signup_sheet' : 'standard',
+        targetVersionId,
+        id
+      ]
     )
 
-    db.prepare(
+    await db.execute(
       `UPDATE collection_versions
        SET status = ?, published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, datetime('now')) ELSE NULL END
-       WHERE id = ?`
-    ).run(requestedStatus, requestedStatus, targetVersionId)
+       WHERE id = ?`,
+      [requestedStatus, requestedStatus, targetVersionId]
+    )
 
-    db.exec('COMMIT')
-
-    const c = db
-      .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as unknown as DbCollection | undefined
+    const c = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
     if (!c) {
       res.status(500).json({ error: 'Failed to load updated collection' })
       return
     }
-    const [fields, colsByField] = fetchFields(id, c.active_version_id)
+    const [fields, colsByField] = await fetchFields(id, c.active_version_id)
     res.json(toApiCollection(c, fields, colsByField))
   } catch (err) {
-    try { db.exec('ROLLBACK') } catch { /* ignore if already committed */ }
     console.error('[collections] update:', err)
     res.status(500).json({ error: 'Failed to update collection' })
   }
 })
 
-router.get('/:id/versions', authenticateToken, (req: Request, res: Response) => {
+router.get('/:id/versions', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
-  const collection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
 
   if (!collection) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
 
-  const versions = db
-    .prepare(
+  const versions = await db.queryAll<DbCollectionVersion>(
       `SELECT *
        FROM collection_versions
        WHERE collection_id = ?
-       ORDER BY version_number DESC`
+       ORDER BY version_number DESC`,
+      [id]
     )
-    .all(id) as unknown as DbCollectionVersion[]
 
   res.json(
     versions.map(v => ({
@@ -2426,7 +2341,7 @@ router.get('/:id/versions', authenticateToken, (req: Request, res: Response) => 
   )
 })
 
-router.get('/:id/versions/:versionId', authenticateToken, (req: Request, res: Response) => {
+router.get('/:id/versions/:versionId', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   const versionId = parseInt(req.params.versionId, 10)
   if (isNaN(id) || isNaN(versionId)) {
@@ -2434,41 +2349,39 @@ router.get('/:id/versions/:versionId', authenticateToken, (req: Request, res: Re
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
-  const collection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
 
   if (!collection) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
 
-  const version = db
-    .prepare('SELECT id FROM collection_versions WHERE id = ? AND collection_id = ?')
-    .get(versionId, id) as { id: number } | undefined
+  const version = await db.queryOne<{ id: number }>('SELECT id FROM collection_versions WHERE id = ? AND collection_id = ?', [versionId, id])
 
   if (!version) {
     res.status(404).json({ error: 'Version not found' })
     return
   }
 
-  const [fields, colsByField] = fetchFields(id, versionId)
+  const [fields, colsByField] = await fetchFields(id, versionId)
   res.json(toApiCollection(collection, fields, colsByField))
 })
 
-router.post('/:id/versions', authenticateToken, (req: Request, res: Response) => {
+router.post('/:id/versions', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -2480,8 +2393,8 @@ router.post('/:id/versions', authenticateToken, (req: Request, res: Response) =>
     return
   }
 
-  const db = getDb()
-  const collection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
 
   if (!collection) {
     res.status(404).json({ error: 'Collection not found' })
@@ -2493,61 +2406,56 @@ router.post('/:id/versions', authenticateToken, (req: Request, res: Response) =>
   let coverSelection: { coverPhotoAssetId: number | null; coverPhotoUrl: string | null }
 
   try {
-    category = ensureCategoryExists(normalizeCategory(body.category))
-    coverSelection = resolveCoverPhotoSelection(db, collection.slug, collection.organization_id, body)
+    category = await ensureCategoryExists(normalizeCategory(body.category))
+    coverSelection = await resolveCoverPhotoSelection(db, collection.slug, collection.organization_id, body)
   } catch (err) {
     res.status(400).json({ error: (err as Error).message })
     return
   }
 
-  db.exec('BEGIN')
   try {
-    const { versionId } = createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
+    const { versionId } = await createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
 
-    db.prepare(
+    await db.execute(
       `UPDATE collections
          SET title = ?, status = ?, description = ?, category = ?, date_due = ?, cover_photo_url = ?,
           cover_photo_asset_id = ?, logo_url = ?, instructions = ?, instructions_doc_url = ?, workflow_definition = ?, anonymous = ?, active_version_id = ?,
            updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(
-      body.title.trim(),
-      requestedStatus,
-      body.description?.trim() ?? null,
-      category,
-      body.dateDue ?? null,
-      coverSelection.coverPhotoUrl,
-      coverSelection.coverPhotoAssetId,
-      body.logoUrl ?? null,
-      body.instructions ?? null,
-      body.instructionsDocUrl ?? null,
-      serializeWorkflowDefinition(body.workflowDefinition),
-      body.anonymous ? 1 : 0,
-      versionId,
-      id
+       WHERE id = ?`,
+      [
+        body.title.trim(),
+        requestedStatus,
+        body.description?.trim() ?? null,
+        category,
+        body.dateDue ?? null,
+        coverSelection.coverPhotoUrl,
+        coverSelection.coverPhotoAssetId,
+        body.logoUrl ?? null,
+        body.instructions ?? null,
+        body.instructionsDocUrl ?? null,
+        serializeWorkflowDefinition(body.workflowDefinition),
+        body.anonymous ? 1 : 0,
+        versionId,
+        id
+      ]
     )
 
-    db.exec('COMMIT')
-
-    const updated = db
-      .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as DbCollection | undefined
+    const updated = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
 
     if (!updated) {
       res.status(500).json({ error: 'Failed to load updated collection' })
       return
     }
 
-    const [fields, colsByField] = fetchFields(id, updated.active_version_id)
+    const [fields, colsByField] = await fetchFields(id, updated.active_version_id)
     res.status(201).json(toApiCollection(updated, fields, colsByField))
   } catch (err) {
-    db.exec('ROLLBACK')
     console.error('[collections] create version:', err)
     res.status(500).json({ error: 'Failed to create collection version' })
   }
 })
 
-router.post('/:id/versions/:versionId/publish', authenticateToken, (req: Request, res: Response) => {
+router.post('/:id/versions/:versionId/publish', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   const versionId = parseInt(req.params.versionId, 10)
   if (isNaN(id) || isNaN(versionId)) {
@@ -2555,57 +2463,51 @@ router.post('/:id/versions/:versionId/publish', authenticateToken, (req: Request
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const accessibleCollection = fetchAccessibleCollectionById(id, context)
+  const accessibleCollection = await fetchAccessibleCollectionById(id, context)
   if (!accessibleCollection) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
 
-  const db = getDb()
-  const version = db
-    .prepare('SELECT id, collection_id FROM collection_versions WHERE id = ? AND collection_id = ?')
-    .get(versionId, id) as { id: number; collection_id: number } | undefined
+  const db = await getDbAsync()
+  const version = await db.queryOne<{ id: number; collection_id: number }>('SELECT id, collection_id FROM collection_versions WHERE id = ? AND collection_id = ?', [versionId, id])
 
   if (!version) {
     res.status(404).json({ error: 'Version not found' })
     return
   }
 
-  db.exec('BEGIN')
   try {
-    db.prepare(
+    await db.execute(
       `UPDATE collection_versions
        SET status = 'published', published_at = COALESCE(published_at, datetime('now'))
-       WHERE id = ?`
-    ).run(versionId)
+       WHERE id = ?`,
+      [versionId]
+    )
 
-    db.prepare(
+    await db.execute(
       `UPDATE collections
        SET status = 'published', active_version_id = ?, updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(versionId, id)
+       WHERE id = ?`,
+      [versionId, id]
+    )
 
-    db.exec('COMMIT')
-
-    const updated = db
-      .prepare(`${COL_SELECT} WHERE c.id = ?`)
-      .get(id) as DbCollection | undefined
+    const updated = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
 
     if (!updated) {
       res.status(500).json({ error: 'Failed to load updated collection' })
       return
     }
 
-    const [fields, colsByField] = fetchFields(id, updated.active_version_id)
+    const [fields, colsByField] = await fetchFields(id, updated.active_version_id)
     res.json(toApiCollection(updated, fields, colsByField))
   } catch (err) {
-    db.exec('ROLLBACK')
     console.error('[collections] publish version:', err)
     res.status(500).json({ error: 'Failed to publish version' })
   }
@@ -2639,44 +2541,40 @@ router.post('/:id/versions/:versionId/publish', authenticateToken, (req: Request
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
-  const exists = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const exists = await fetchAccessibleCollectionById(id, context)
   if (!exists) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
 
-  const responseCountRow = db
-    .prepare('SELECT COUNT(*) AS count FROM collection_responses WHERE collection_id = ?')
-    .get(id) as { count: number }
-  const templateUsageRow = db
-    .prepare('SELECT COUNT(*) AS count FROM collections WHERE source_template_collection_id = ?')
-    .get(id) as { count: number }
+  const responseCountRow = await db.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM collection_responses WHERE collection_id = ?', [id])
+  const templateUsageRow = await db.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM collections WHERE source_template_collection_id = ?', [id])
 
-  if (responseCountRow.count > 0) {
+  if ((responseCountRow?.count ?? 0) > 0) {
     res.status(409).json({ error: 'This template cannot be deleted because it has responses.' })
     return
   }
 
-  if (templateUsageRow.count > 0) {
+  if ((templateUsageRow?.count ?? 0) > 0) {
     res.status(409).json({ error: 'This template cannot be deleted because other collections were created from it.' })
     return
   }
 
-  db.prepare('DELETE FROM collections WHERE id = ?').run(id)
+  await db.execute('DELETE FROM collections WHERE id = ?', [id])
   res.status(204).send()
 })
 
@@ -2712,14 +2610,14 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/:id/responses', authenticateToken, (req: Request, res: Response) => {
+router.get('/:id/responses', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -2731,8 +2629,8 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
     return
   }
 
-  const db = getDb()
-  const collection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
   if (!collection) {
     res.status(404).json({ error: 'Collection not found' })
     return
@@ -2745,21 +2643,19 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
 
   if (!canViewAllResponses(context)) {
     // Find the location field in this collection (if any) that has filtering enabled
-    const locationField = db
-      .prepare(
-        `SELECT id FROM collection_fields WHERE collection_id = ? AND type = 'location' AND location_filter_enabled = 1 LIMIT 1`
+    const locationField = await db.queryOne<{ id: number }>(
+        `SELECT id FROM collection_fields WHERE collection_id = ? AND type = 'location' AND location_filter_enabled = 1 LIMIT 1`,
+        [id]
       )
-      .get(id) as unknown as { id: number } | undefined
 
     if (locationField) {
       // Get the reviewer's assigned location names
-      const assignedLocations = db
-        .prepare(
+      const assignedLocations = await db.queryAll<{ name: string }>(
           `SELECT l.name FROM user_locations ul
            JOIN locations l ON l.id = ul.location_id
-           WHERE ul.user_id = ?`
+           WHERE ul.user_id = ?`,
+          [context.id]
         )
-        .all(context.id) as unknown as Array<{ name: string }>
       const locationNames = assignedLocations.map(l => l.name)
 
       if (locationNames.length === 0) {
@@ -2769,13 +2665,12 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
 
       // Find response IDs where the location field value is in the reviewer's locations
       const ph = locationNames.map(() => '?').join(',')
-      const matchingResponseIds = db
-        .prepare(
+      const matchingResponseIds = await db.queryAll<{ response_id: number }>(
           `SELECT DISTINCT rv.response_id
            FROM collection_response_values rv
-           WHERE rv.field_id = ? AND rv.value IN (${ph})`
+           WHERE rv.field_id = ? AND rv.value IN (${ph})`,
+          [locationField.id, ...locationNames]
         )
-        .all(locationField.id, ...locationNames) as unknown as Array<{ response_id: number }>
       const ids = matchingResponseIds.map(r => r.response_id)
 
       if (ids.length === 0) {
@@ -2784,27 +2679,24 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
       }
 
       const idPh = ids.map(() => '?').join(',')
-      responses = db
-        .prepare(
+      responses = await db.queryAll<DbResponse>(
           `SELECT * FROM collection_responses
            WHERE collection_id = ? AND id IN (${idPh})
-           ORDER BY submitted_at DESC`
+           ORDER BY submitted_at DESC`,
+          [id, ...ids]
         )
-        .all(id, ...ids) as unknown as DbResponse[]
     } else {
       // No location field in this collection — reviewer sees all responses
-      responses = db
-        .prepare(
-          'SELECT * FROM collection_responses WHERE collection_id = ? ORDER BY submitted_at DESC'
+      responses = await db.queryAll<DbResponse>(
+          'SELECT * FROM collection_responses WHERE collection_id = ? ORDER BY submitted_at DESC',
+          [id]
         )
-        .all(id) as unknown as DbResponse[]
     }
   } else {
-    responses = db
-      .prepare(
-        'SELECT * FROM collection_responses WHERE collection_id = ? ORDER BY submitted_at DESC'
+    responses = await db.queryAll<DbResponse>(
+        'SELECT * FROM collection_responses WHERE collection_id = ? ORDER BY submitted_at DESC',
+        [id]
       )
-      .all(id) as unknown as DbResponse[]
   }
 
   if (responses.length === 0) {
@@ -2814,14 +2706,13 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
 
   const responseIds = responses.map(r => r.id)
   const ph = responseIds.map(() => '?').join(',')
-  const values = db
-    .prepare(
+  const values = await db.queryAll<DbResponseValue>(
       `SELECT rv.*, cf.label AS field_label
        FROM collection_response_values rv
        LEFT JOIN collection_fields cf ON cf.id = rv.field_id
-       WHERE rv.response_id IN (${ph})`
+       WHERE rv.response_id IN (${ph})`,
+      responseIds
     )
-    .all(...responseIds) as unknown as DbResponseValue[]
 
   const valsByResponse = new Map<number, DbResponseValue[]>()
   for (const v of values) {
@@ -2830,17 +2721,17 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
     valsByResponse.set(v.response_id, arr)
   }
 
-  responses.forEach((response) => {
-    ensureWorkflowInstanceForResponse(db, collection, response.id)
-  })
+  for (const response of responses) {
+    await ensureWorkflowInstanceForResponse(db, collection, response.id)
+  }
 
   res.json(
-    responses.map(r => ({
+    await Promise.all(responses.map(async r => ({
       id: r.id,
       respondentName: r.respondent_name,
       respondentEmail: r.respondent_email,
       submittedAt: r.submitted_at,
-      workflow: getWorkflowSummaryForResponse(r.id, db),
+      workflow: await getWorkflowSummaryForResponse(r.id, db),
       values: (valsByResponse.get(r.id) ?? []).map(v => ({
         fieldId: v.field_id,
         value: v.value,
@@ -2848,7 +2739,7 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
         staffUpdatedByName: v.staff_updated_by_name ?? null,
         staffUpdatedAt: v.staff_updated_at ?? null,
       })),
-    }))
+    })))
   )
 })
 
@@ -2856,7 +2747,7 @@ router.get('/:id/responses', authenticateToken, (req: Request, res: Response) =>
  * PUT /api/collections/:id/responses/:responseId/staff-fields
  * Upsert values for staff-only fields on a specific response. Staff roles only.
  */
-router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: Request, res: Response): void => {
+router.put('/:id/responses/:responseId/staff-fields', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (isNaN(id) || isNaN(responseId)) {
@@ -2864,7 +2755,7 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: R
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -2882,19 +2773,17 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: R
   const bodyValues = body.values
 
   try {
-    const db = getDb()
+    const db = await getDbAsync()
 
     // Verify collection is accessible to this staff member
-    const collection = fetchAccessibleCollectionById(id, context)
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) {
       res.status(404).json({ error: 'Collection not found' })
       return
     }
 
     // Verify response belongs to collection
-    const responseRow = db
-      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
-      .get(responseId, id) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, id])
     if (!responseRow) {
       res.status(404).json({ error: 'Response not found' })
       return
@@ -2904,11 +2793,10 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: R
     if (body.values.length > 0) {
       const fieldIds = body.values.map(v => v.fieldId)
       const ph = fieldIds.map(() => '?').join(',')
-      const staffFields = db
-        .prepare(
-          `SELECT id FROM collection_fields WHERE id IN (${ph}) AND staff_only = 1 AND collection_id = ?`
+      const staffFields = await db.queryAll<{ id: number }>(
+          `SELECT id FROM collection_fields WHERE id IN (${ph}) AND staff_only = 1 AND collection_id = ?`,
+          [...fieldIds, id]
         )
-        .all(...fieldIds, id) as { id: number }[]
       const staffFieldIds = new Set(staffFields.map(f => f.id))
       const badId = fieldIds.find(fid => !staffFieldIds.has(fid))
       if (badId !== undefined) {
@@ -2918,29 +2806,27 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: R
     }
 
     // Look up the editor's name for the audit trail
-    const editorRow = db
-      .prepare('SELECT name FROM users WHERE id = ?')
-      .get(context.id) as { name: string } | undefined
+    const editorRow = await db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = ?', [context.id])
     const editorName = editorRow?.name ?? null
     const editedAt = new Date().toISOString()
 
     // Upsert values inside a transaction
-    db.transaction(() => {
+    await db.transaction(async (tx) => {
       for (const val of bodyValues) {
-        const existing = db
-          .prepare('SELECT id FROM collection_response_values WHERE response_id = ? AND field_id = ?')
-          .get(responseId, val.fieldId) as { id: number } | undefined
+        const existing = await tx.queryOne<{ id: number }>('SELECT id FROM collection_response_values WHERE response_id = ? AND field_id = ?', [responseId, val.fieldId])
         if (existing) {
-          db.prepare(
-            'UPDATE collection_response_values SET value = ?, staff_updated_by_name = ?, staff_updated_at = ? WHERE response_id = ? AND field_id = ?'
-          ).run(val.value ?? null, editorName, editedAt, responseId, val.fieldId)
+          await tx.execute(
+            'UPDATE collection_response_values SET value = ?, staff_updated_by_name = ?, staff_updated_at = ? WHERE response_id = ? AND field_id = ?',
+            [val.value ?? null, editorName, editedAt, responseId, val.fieldId]
+          )
         } else {
-          db.prepare(
-            'INSERT INTO collection_response_values (response_id, field_id, value, staff_updated_by_name, staff_updated_at) VALUES (?, ?, ?, ?, ?)'
-          ).run(responseId, val.fieldId, val.value ?? null, editorName, editedAt)
+          await tx.execute(
+            'INSERT INTO collection_response_values (response_id, field_id, value, staff_updated_by_name, staff_updated_at) VALUES (?, ?, ?, ?, ?)',
+            [responseId, val.fieldId, val.value ?? null, editorName, editedAt]
+          )
         }
       }
-    })()
+    })
 
     res.json({ ok: true })
   } catch (err) {
@@ -2949,7 +2835,7 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, (req: R
   }
 })
 
-router.get('/:id/responses/:responseId/workflow', authenticateToken, (req: Request, res: Response): void => {
+router.get('/:id/responses/:responseId/workflow', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (isNaN(id) || isNaN(responseId)) {
@@ -2957,38 +2843,36 @@ router.get('/:id/responses/:responseId/workflow', authenticateToken, (req: Reque
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) {
       res.status(404).json({ error: 'Collection not found' })
       return
     }
 
-    const responseRow = db
-      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
-      .get(responseId, id) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, id])
     if (!responseRow) {
       res.status(404).json({ error: 'Response not found' })
       return
     }
 
-    ensureWorkflowInstanceForResponse(db, collection, responseId)
+    await ensureWorkflowInstanceForResponse(db, collection, responseId)
 
-    res.json(getWorkflowSummaryForResponse(responseId, db))
+    res.json(await getWorkflowSummaryForResponse(responseId, db))
   } catch (err) {
     console.error('[collections] get workflow:', err)
     res.status(500).json({ error: 'Failed to load workflow' })
   }
 })
 
-router.post('/:id/responses/:responseId/workflow/:decision(approve|reject)', authenticateToken, (req: Request, res: Response): void => {
+router.post('/:id/responses/:responseId/workflow/:decision(approve|reject)', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (isNaN(id) || isNaN(responseId)) {
@@ -2996,30 +2880,28 @@ router.post('/:id/responses/:responseId/workflow/:decision(approve|reject)', aut
     return
   }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) {
       res.status(404).json({ error: 'Collection not found' })
       return
     }
 
-    const responseRow = db
-      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
-      .get(responseId, id) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, id])
     if (!responseRow) {
       res.status(404).json({ error: 'Response not found' })
       return
     }
 
-    const actor = db.prepare('SELECT name FROM users WHERE id = ?').get(context.id) as { name: string | null } | undefined
-    const summary = actOnWorkflowStage({
+    const actor = await db.queryOne<{ name: string | null }>('SELECT name FROM users WHERE id = ?', [context.id])
+    const summary = await actOnWorkflowStage({
       responseId,
       userId: context.id,
       actorName: actor?.name ?? null,
@@ -3045,28 +2927,24 @@ router.post('/:id/responses/:responseId/workflow/:decision(approve|reject)', aut
 /**
  * GET /api/collections/:id/responses/:responseId/comments
  */
-router.get('/:id/responses/:responseId/comments', authenticateToken, (req: Request, res: Response): void => {
+router.get('/:id/responses/:responseId/comments', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (isNaN(id) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid ID' }); return }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) { res.status(401).json({ error: 'Authentication required' }); return }
   if (context.role === 'user') { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const responseRow = db
-      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
-      .get(responseId, id) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, id])
     if (!responseRow) { res.status(404).json({ error: 'Response not found' }); return }
 
-    const comments = db
-      .prepare('SELECT id, user_id, user_name, body, created_at FROM submission_comments WHERE response_id = ? ORDER BY created_at ASC')
-      .all(responseId) as unknown as Array<{ id: number; user_id: number; user_name: string; body: string; created_at: string }>
+    const comments = await db.queryAll<{ id: number; user_id: number; user_name: string; body: string; created_at: string }>('SELECT id, user_id, user_name, body, created_at FROM submission_comments WHERE response_id = ? ORDER BY created_at ASC', [responseId])
 
     res.json(comments.map(c => ({
       id: c.id,
@@ -3084,12 +2962,12 @@ router.get('/:id/responses/:responseId/comments', authenticateToken, (req: Reque
 /**
  * POST /api/collections/:id/responses/:responseId/comments
  */
-router.post('/:id/responses/:responseId/comments', authenticateToken, (req: Request, res: Response): void => {
+router.post('/:id/responses/:responseId/comments', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (isNaN(id) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid ID' }); return }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) { res.status(401).json({ error: 'Authentication required' }); return }
   if (context.role === 'user') { res.status(403).json({ error: 'Staff access required' }); return }
 
@@ -3097,25 +2975,20 @@ router.post('/:id/responses/:responseId/comments', authenticateToken, (req: Requ
   if (!body) { res.status(400).json({ error: 'Comment body is required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const responseRow = db
-      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
-      .get(responseId, id) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, id])
     if (!responseRow) { res.status(404).json({ error: 'Response not found' }); return }
 
-    const userRow = db.prepare('SELECT name FROM users WHERE id = ?').get(context.id) as { name: string } | undefined
+    const userRow = await db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = ?', [context.id])
     const userName = userRow?.name ?? 'Unknown'
 
-    const result = db
-      .prepare('INSERT INTO submission_comments (response_id, user_id, user_name, body) VALUES (?, ?, ?, ?)')
-      .run(responseId, context.id, userName, body) as { lastInsertRowid: number | bigint }
+    const result = await db.execute('INSERT INTO submission_comments (response_id, user_id, user_name, body) VALUES (?, ?, ?, ?)', [responseId, context.id, userName, body])
 
-    const comment = db
-      .prepare('SELECT id, user_id, user_name, body, created_at FROM submission_comments WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as { id: number; user_id: number; user_name: string; body: string; created_at: string }
+    const comment = await db.queryOne<{ id: number; user_id: number; user_name: string; body: string; created_at: string }>('SELECT id, user_id, user_name, body, created_at FROM submission_comments WHERE id = ?', [Number(result.lastInsertRowid)])
+    if (!comment) { res.status(500).json({ error: 'Failed to retrieve saved comment' }); return }
 
     res.status(201).json({
       id: comment.id,
@@ -3134,30 +3007,28 @@ router.post('/:id/responses/:responseId/comments', authenticateToken, (req: Requ
  * DELETE /api/collections/:id/responses/:responseId/comments/:commentId
  * Own comments only (admins/super_admin can delete any).
  */
-router.delete('/:id/responses/:responseId/comments/:commentId', authenticateToken, (req: Request, res: Response): void => {
+router.delete('/:id/responses/:responseId/comments/:commentId', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   const commentId = parseInt(req.params.commentId, 10)
   if (isNaN(id) || isNaN(responseId) || isNaN(commentId)) { res.status(400).json({ error: 'Invalid ID' }); return }
 
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) { res.status(401).json({ error: 'Authentication required' }); return }
   if (context.role === 'user') { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const comment = db
-      .prepare('SELECT id, user_id FROM submission_comments WHERE id = ? AND response_id = ?')
-      .get(commentId, responseId) as { id: number; user_id: number } | undefined
+    const comment = await db.queryOne<{ id: number; user_id: number }>('SELECT id, user_id FROM submission_comments WHERE id = ? AND response_id = ?', [commentId, responseId])
     if (!comment) { res.status(404).json({ error: 'Comment not found' }); return }
 
     const canDelete = context.role === 'super_admin' || context.role === 'administrator' || comment.user_id === context.id
     if (!canDelete) { res.status(403).json({ error: 'Not allowed to delete this comment' }); return }
 
-    db.prepare('DELETE FROM submission_comments WHERE id = ?').run(commentId)
+    await db.execute('DELETE FROM submission_comments WHERE id = ?', [commentId])
     res.json({ ok: true })
   } catch (err) {
     console.error('[collections] delete comment:', err)
@@ -3173,13 +3044,13 @@ function normalizeTicketAuditValue(value: string | null | undefined): string | n
   return value == null || value === '' ? null : value
 }
 
-function resolveTicketActorName(db: ReturnType<typeof getDb>, userId: number): string | null {
-  const row = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string } | undefined
+async function resolveTicketActorName(db: DbAdapter, userId: number): Promise<string | null> {
+  const row = await db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = ?', [userId])
   return row?.name ?? null
 }
 
-function insertTicketHistoryEntry(
-  db: ReturnType<typeof getDb>,
+async function insertTicketHistoryEntry(
+  db: DbAdapter,
   entry: {
     ticketResponseId: number
     ticketFieldId?: number | null
@@ -3192,8 +3063,8 @@ function insertTicketHistoryEntry(
     changedBy: number | null
     changedByName: string | null
   }
-): void {
-  db.prepare(
+): Promise<void> {
+  await db.execute(
     `INSERT INTO ticket_history (
       ticket_response_id,
       ticket_field_id,
@@ -3205,18 +3076,19 @@ function insertTicketHistoryEntry(
       new_value,
       changed_by,
       changed_by_name
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    entry.ticketResponseId,
-    entry.ticketFieldId ?? null,
-    entry.ticketFieldKey ?? null,
-    entry.fieldLabelSnapshot ?? null,
-    entry.fieldTypeSnapshot ?? null,
-    entry.eventType,
-    entry.oldValue ?? null,
-    entry.newValue ?? null,
-    entry.changedBy,
-    entry.changedByName,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      entry.ticketResponseId,
+      entry.ticketFieldId ?? null,
+      entry.ticketFieldKey ?? null,
+      entry.fieldLabelSnapshot ?? null,
+      entry.fieldTypeSnapshot ?? null,
+      entry.eventType,
+      entry.oldValue ?? null,
+      entry.newValue ?? null,
+      entry.changedBy,
+      entry.changedByName,
+    ]
   )
 }
 
@@ -3233,11 +3105,11 @@ function canManageCollectionTickets(context: RequestUserContext): boolean {
   return isAdministrator(context) || context.role === 'administrator' || context.role === 'team_manager'
 }
 
-function fetchAssignedTicketTemplates(
-  db: ReturnType<typeof getDb>,
+async function fetchAssignedTicketTemplates(
+  db: DbAdapter,
   collectionId: number,
-): DbAssignedTicketTemplate[] {
-  return db.prepare(`
+): Promise<DbAssignedTicketTemplate[]> {
+  return db.queryAll<DbAssignedTicketTemplate>(`
     SELECT
       ctt.id,
       ctt.ticket_template_id,
@@ -3249,15 +3121,15 @@ function fetchAssignedTicketTemplates(
     JOIN ticket_templates tt ON tt.id = ctt.ticket_template_id
     WHERE ctt.collection_id = ? AND ctt.is_active = 1 AND tt.is_active = 1
     ORDER BY ctt.display_order ASC, ctt.id ASC
-  `).all(collectionId) as DbAssignedTicketTemplate[]
+  `, [collectionId])
 }
 
-function fetchAccessibleTicketTemplateForCollection(
-  db: ReturnType<typeof getDb>,
+async function fetchAccessibleTicketTemplateForCollection(
+  db: DbAdapter,
   collectionId: number,
   templateId: number,
-): DbAssignedTicketTemplate | undefined {
-  return db.prepare(`
+): Promise<DbAssignedTicketTemplate | undefined> {
+  return db.queryOne<DbAssignedTicketTemplate>(`
     SELECT
       ctt.id,
       ctt.ticket_template_id,
@@ -3272,7 +3144,7 @@ function fetchAccessibleTicketTemplateForCollection(
       AND ctt.is_active = 1
       AND tt.is_active = 1
     LIMIT 1
-  `).get(collectionId, templateId) as DbAssignedTicketTemplate | undefined
+  `, [collectionId, templateId])
 }
 
 function serializeTicketResponse(
@@ -3304,22 +3176,22 @@ function serializeTicketResponse(
 }
 
 // GET /:id/ticket-templates — list ticket templates assigned to a collection
-router.get('/:id/ticket-templates', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/ticket-templates', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = parseInt(req.params.id, 10)
   if (!context || isNaN(id)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
     const includeArchived = req.query.includeArchived === 'true'
 
     if (includeArchived) {
       type AllAssignedRow = DbAssignedTicketTemplate & { ctt_is_active: number }
-      const all = db.prepare(`
+      const all = await db.queryAll<AllAssignedRow>(`
         SELECT
           ctt.id,
           ctt.ticket_template_id,
@@ -3332,7 +3204,7 @@ router.get('/:id/ticket-templates', authenticateToken, (req: Request, res: Respo
         JOIN ticket_templates tt ON tt.id = ctt.ticket_template_id
         WHERE ctt.collection_id = ? AND tt.is_active = 1
         ORDER BY ctt.is_active DESC, ctt.display_order ASC, ctt.id ASC
-      `).all(id) as AllAssignedRow[]
+      `, [id])
       res.json(all.map(t => ({
         id: t.ticket_template_id,
         title: t.title,
@@ -3341,7 +3213,7 @@ router.get('/:id/ticket-templates', authenticateToken, (req: Request, res: Respo
         isArchived: t.ctt_is_active === 0,
       })))
     } else {
-      const templates = fetchAssignedTicketTemplates(db, id)
+      const templates = await fetchAssignedTicketTemplates(db, id)
       res.json(templates.map(template => ({
         id: template.ticket_template_id,
         title: template.title,
@@ -3357,28 +3229,31 @@ router.get('/:id/ticket-templates', authenticateToken, (req: Request, res: Respo
 })
 
 // PATCH /:id/ticket-templates/:templateId — archive or restore an assigned ticket template
-router.patch('/:id/ticket-templates/:templateId', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.patch('/:id/ticket-templates/:templateId', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const templateId = parseInt(req.params.templateId, 10)
   if (!context || isNaN(collectionId) || isNaN(templateId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canManageCollectionTickets(context)) { res.status(403).json({ error: 'Manager access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
     const body = req.body as { isActive?: boolean }
     if (typeof body.isActive !== 'boolean') { res.status(400).json({ error: 'isActive boolean required' }); return }
 
-    const result = db.prepare(`
+    const existingAssignment = await db.queryOne<{ id: number }>(`
+      SELECT id FROM collection_ticket_templates WHERE collection_id = ? AND ticket_template_id = ?
+    `, [collectionId, templateId])
+    if (!existingAssignment) { res.status(404).json({ error: 'Ticket template assignment not found' }); return }
+
+    await db.execute(`
       UPDATE collection_ticket_templates
       SET is_active = ?, updated_at = datetime('now')
       WHERE collection_id = ? AND ticket_template_id = ?
-    `).run(body.isActive ? 1 : 0, collectionId, templateId)
-
-    if (result.changes === 0) { res.status(404).json({ error: 'Ticket template assignment not found' }); return }
+    `, [body.isActive ? 1 : 0, collectionId, templateId])
 
     res.json({ success: true })
   } catch (err) {
@@ -3388,15 +3263,15 @@ router.patch('/:id/ticket-templates/:templateId', authenticateToken, (req: Reque
 })
 
 // PUT /:id/ticket-templates — replace assigned ticket templates for a collection
-router.put('/:id/ticket-templates', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.put('/:id/ticket-templates', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = parseInt(req.params.id, 10)
   if (!context || isNaN(id)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canManageCollectionTickets(context)) { res.status(403).json({ error: 'Manager access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
     const body = req.body as { templateIds?: number[] }
@@ -3406,31 +3281,31 @@ router.put('/:id/ticket-templates', authenticateToken, (req: Request, res: Respo
 
     if (templateIds.length > 0) {
       const placeholders = templateIds.map(() => '?').join(',')
-      const accessibleCount = db.prepare(`
+      const accessibleCount = await db.queryOne<{ count: number }>(`
         SELECT COUNT(*) AS count
         FROM ticket_templates
         WHERE id IN (${placeholders})
           AND is_active = 1
           AND (${isAdministrator(context) ? '1 = 1' : 'organization_id = ?'})
-      `).get(...templateIds, ...(isAdministrator(context) ? [] : [context.organizationId])) as { count: number }
+      `, [...templateIds, ...(isAdministrator(context) ? [] : [context.organizationId])])
 
-      if (accessibleCount.count !== templateIds.length) {
+      if ((accessibleCount?.count ?? 0) !== templateIds.length) {
         res.status(400).json({ error: 'One or more ticket templates are unavailable for this collection' })
         return
       }
     }
 
-    db.transaction(() => {
-      db.prepare('DELETE FROM collection_ticket_templates WHERE collection_id = ?').run(id)
-      templateIds.forEach((templateId, index) => {
-        db.prepare(`
+    await db.transaction(async (tx) => {
+      await tx.execute('DELETE FROM collection_ticket_templates WHERE collection_id = ?', [id])
+      for (let index = 0; index < templateIds.length; index++) {
+        await tx.execute(`
           INSERT INTO collection_ticket_templates (collection_id, ticket_template_id, display_order)
           VALUES (?, ?, ?)
-        `).run(id, templateId, index)
-      })
-    })()
+        `, [id, templateIds[index], index])
+      }
+    })
 
-    const templates = fetchAssignedTicketTemplates(db, id)
+    const templates = await fetchAssignedTicketTemplates(db, id)
     res.json(templates.map(template => ({
       id: template.ticket_template_id,
       title: template.title,
@@ -3444,28 +3319,23 @@ router.put('/:id/ticket-templates', authenticateToken, (req: Request, res: Respo
 })
 
 // GET /:id/responses/:responseId/tickets — list assigned tickets for a response
-router.get('/:id/responses/:responseId/tickets', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/responses/:responseId/tickets', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (!context || isNaN(collectionId) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const responseRow = db.prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?').get(responseId, collectionId) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, collectionId])
     if (!responseRow) { res.status(404).json({ error: 'Response not found' }); return }
 
-    const templates = fetchAssignedTicketTemplates(db, collectionId)
-    const tickets = db.prepare(`
-      SELECT tr.*, u.name AS finalized_by_name
-      FROM ticket_responses tr
-      LEFT JOIN users u ON u.id = tr.finalized_by
-      WHERE tr.collection_id = ? AND tr.collection_response_id = ?
-    `).all(collectionId, responseId) as Array<{
+    const templates = await fetchAssignedTicketTemplates(db, collectionId)
+    const tickets = await db.queryAll<{
       id: number
       collection_response_id: number
       collection_id: number
@@ -3475,7 +3345,12 @@ router.get('/:id/responses/:responseId/tickets', authenticateToken, (req: Reques
       finalized: number
       finalized_at: string | null
       finalized_by_name: string | null
-    }>
+    }>(`
+      SELECT tr.*, u.name AS finalized_by_name
+      FROM ticket_responses tr
+      LEFT JOIN users u ON u.id = tr.finalized_by
+      WHERE tr.collection_id = ? AND tr.collection_response_id = ?
+    `, [collectionId, responseId])
 
     const ticketByTemplateId = new Map(tickets.map(ticket => [ticket.ticket_template_id ?? 0, ticket]))
 
@@ -3498,8 +3373,8 @@ router.get('/:id/responses/:responseId/tickets', authenticateToken, (req: Reques
 })
 
 // GET /:id/responses/:responseId/tickets/:templateId — get ticket instance (or null)
-router.get('/:id/responses/:responseId/tickets/:templateId', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/responses/:responseId/tickets/:templateId', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   const templateId = parseInt(req.params.templateId, 10)
@@ -3507,19 +3382,13 @@ router.get('/:id/responses/:responseId/tickets/:templateId', authenticateToken, 
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
-    const template = fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
+    const template = await fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
     if (!template) { res.status(404).json({ error: 'Ticket template not assigned to this collection' }); return }
 
-    const ticket = db.prepare(`
-      SELECT tr.*, u.name AS finalized_by_name
-      FROM ticket_responses tr
-      LEFT JOIN users u ON u.id = tr.finalized_by
-      WHERE tr.collection_response_id = ? AND tr.collection_id = ? AND tr.ticket_template_id = ?
-      LIMIT 1
-    `).get(responseId, collectionId, templateId) as {
+    const ticket = await db.queryOne<{
       id: number
       collection_response_id: number
       collection_id: number
@@ -3529,11 +3398,17 @@ router.get('/:id/responses/:responseId/tickets/:templateId', authenticateToken, 
       finalized: number
       finalized_at: string | null
       finalized_by_name: string | null
-    } | undefined
+    }>(`
+      SELECT tr.*, u.name AS finalized_by_name
+      FROM ticket_responses tr
+      LEFT JOIN users u ON u.id = tr.finalized_by
+      WHERE tr.collection_response_id = ? AND tr.collection_id = ? AND tr.ticket_template_id = ?
+      LIMIT 1
+    `, [responseId, collectionId, templateId])
 
     if (!ticket) { res.json(null); return }
 
-    const values = db.prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?').all(ticket.id) as Array<{ ticket_field_id: number; value: string | null }>
+    const values = await db.queryAll<{ ticket_field_id: number; value: string | null }>('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?', [ticket.id])
     res.json(serializeTicketResponse(ticket, values))
   } catch (err) {
     console.error('[collections] get template ticket:', err)
@@ -3542,8 +3417,8 @@ router.get('/:id/responses/:responseId/tickets/:templateId', authenticateToken, 
 })
 
 // POST /:id/responses/:responseId/tickets/:templateId — create or update ticket draft
-router.post('/:id/responses/:responseId/tickets/:templateId', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.post('/:id/responses/:responseId/tickets/:templateId', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   const templateId = parseInt(req.params.templateId, 10)
@@ -3551,68 +3426,66 @@ router.post('/:id/responses/:responseId/tickets/:templateId', authenticateToken,
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
-    const template = fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
+    const template = await fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
     if (!template) { res.status(404).json({ error: 'Ticket template not assigned to this collection' }); return }
 
-    const responseRow = db.prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?').get(responseId, collectionId) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?', [responseId, collectionId])
     if (!responseRow) { res.status(404).json({ error: 'Response not found' }); return }
 
-    const existing = db.prepare(`
+    const existing = await db.queryOne<{ id: number; finalized: number }>(`
       SELECT id, finalized
       FROM ticket_responses
       WHERE collection_response_id = ? AND collection_id = ? AND ticket_template_id = ?
       LIMIT 1
-    `).get(responseId, collectionId, templateId) as { id: number; finalized: number } | undefined
+    `, [responseId, collectionId, templateId])
 
     const body = req.body as { values?: Array<{ fieldId: number; value: string }> }
     const values = Array.isArray(body.values) ? body.values : []
     const existingValues = existing
-      ? db.prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?').all(existing.id) as Array<{ ticket_field_id: number; value: string | null }>
+      ? await db.queryAll<{ ticket_field_id: number; value: string | null }>('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?', [existing.id])
       : []
     const previousValueByFieldId = new Map(existingValues.map(value => [value.ticket_field_id, value.value]))
-    const fieldRows = db.prepare(`
+    const fieldRows = await db.queryAll<{ id: number; field_key: string | null; label: string; type: string }>(`
       SELECT id, field_key, label, type
       FROM ticket_fields
       WHERE ticket_template_id = ?
-    `).all(templateId) as Array<{ id: number; field_key: string | null; label: string; type: string }>
+    `, [templateId])
     const fieldMetaById = new Map(fieldRows.map(field => [field.id, field]))
-    const actorName = resolveTicketActorName(db, context.id)
+    const actorName = await resolveTicketActorName(db, context.id)
 
     let ticketId: number
     if (!existing) {
-      const inserted = db.prepare(`
+      const inserted = await db.execute(`
         INSERT INTO ticket_responses (collection_response_id, collection_id, ticket_template_id, filled_by, filled_at, updated_at)
         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-      `).run(responseId, collectionId, templateId, context.id)
+      `, [responseId, collectionId, templateId, context.id])
       ticketId = Number(inserted.lastInsertRowid)
     } else {
       ticketId = existing.id
-      db.prepare(`
+      await db.execute(`
         UPDATE ticket_responses
         SET filled_by = ?, filled_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ?
-      `).run(context.id, ticketId)
+      `, [context.id, ticketId])
     }
-
-    const upsert = db.prepare(`
-      INSERT INTO ticket_response_values (ticket_response_id, ticket_field_id, value)
-      VALUES (?, ?, ?)
-      ON CONFLICT(ticket_response_id, ticket_field_id) DO UPDATE SET value = excluded.value
-    `)
 
     for (const valueRow of values) {
       if (!fieldMetaById.has(valueRow.fieldId)) continue
-      upsert.run(ticketId, valueRow.fieldId, valueRow.value)
+      await db.execute(`
+        INSERT INTO ticket_response_values (ticket_response_id, ticket_field_id, value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(ticket_response_id, ticket_field_id) DO UPDATE SET value = excluded.value
+      `, [ticketId, valueRow.fieldId, valueRow.value])
 
       const oldValue = normalizeTicketAuditValue(previousValueByFieldId.get(valueRow.fieldId))
       const newValue = normalizeTicketAuditValue(valueRow.value)
       if (oldValue === newValue) continue
 
       const fieldMeta = fieldMetaById.get(valueRow.fieldId)
-      insertTicketHistoryEntry(db, {
+      await insertTicketHistoryEntry(db, {
         ticketResponseId: ticketId,
         ticketFieldId: valueRow.fieldId,
         ticketFieldKey: fieldMeta?.field_key ?? null,
@@ -3626,13 +3499,8 @@ router.post('/:id/responses/:responseId/tickets/:templateId', authenticateToken,
       })
     }
 
-    const savedValues = db.prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?').all(ticketId) as Array<{ ticket_field_id: number; value: string | null }>
-    const savedTicket = db.prepare(`
-      SELECT tr.*, u.name AS finalized_by_name
-      FROM ticket_responses tr
-      LEFT JOIN users u ON u.id = tr.finalized_by
-      WHERE tr.id = ?
-    `).get(ticketId) as {
+    const savedValues = await db.queryAll<{ ticket_field_id: number; value: string | null }>('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?', [ticketId])
+    const savedTicket = await db.queryOne<{
       id: number
       collection_response_id: number
       collection_id: number
@@ -3642,9 +3510,14 @@ router.post('/:id/responses/:responseId/tickets/:templateId', authenticateToken,
       finalized: number
       finalized_at: string | null
       finalized_by_name: string | null
-    }
+    }>(`
+      SELECT tr.*, u.name AS finalized_by_name
+      FROM ticket_responses tr
+      LEFT JOIN users u ON u.id = tr.finalized_by
+      WHERE tr.id = ?
+    `, [ticketId])
 
-    res.json(serializeTicketResponse(savedTicket, savedValues))
+    res.json(serializeTicketResponse(savedTicket!, savedValues))
   } catch (err) {
     console.error('[collections] save template ticket:', err)
     res.status(500).json({ error: 'Failed to save ticket' })
@@ -3652,8 +3525,8 @@ router.post('/:id/responses/:responseId/tickets/:templateId', authenticateToken,
 })
 
 // POST /:id/responses/:responseId/tickets/:templateId/finalize — toggle ticket closed/open
-router.post('/:id/responses/:responseId/tickets/:templateId/finalize', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.post('/:id/responses/:responseId/tickets/:templateId/finalize', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   const templateId = parseInt(req.params.templateId, 10)
@@ -3661,37 +3534,37 @@ router.post('/:id/responses/:responseId/tickets/:templateId/finalize', authentic
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
-    const template = fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
+    const template = await fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
     if (!template) { res.status(404).json({ error: 'Ticket template not assigned to this collection' }); return }
 
-    const ticket = db.prepare(`
+    const ticket = await db.queryOne<{ id: number; finalized: number }>(`
       SELECT id, finalized
       FROM ticket_responses
       WHERE collection_response_id = ? AND collection_id = ? AND ticket_template_id = ?
       LIMIT 1
-    `).get(responseId, collectionId, templateId) as { id: number; finalized: number } | undefined
+    `, [responseId, collectionId, templateId])
     if (!ticket) { res.status(404).json({ error: 'Ticket not found. Save a draft first.' }); return }
 
     const nowClosed = ticket.finalized !== 1
-    const actorName = resolveTicketActorName(db, context.id)
+    const actorName = await resolveTicketActorName(db, context.id)
     if (nowClosed) {
-      db.prepare(`
+      await db.execute(`
         UPDATE ticket_responses
         SET finalized = 1, finalized_at = datetime('now'), finalized_by = ?, updated_at = datetime('now')
         WHERE id = ?
-      `).run(context.id, ticket.id)
+      `, [context.id, ticket.id])
     } else {
-      db.prepare(`
+      await db.execute(`
         UPDATE ticket_responses
         SET finalized = 0, finalized_at = NULL, finalized_by = NULL, updated_at = datetime('now')
         WHERE id = ?
-      `).run(ticket.id)
+      `, [ticket.id])
     }
 
-    insertTicketHistoryEntry(db, {
+    await insertTicketHistoryEntry(db, {
       ticketResponseId: ticket.id,
       eventType: nowClosed ? 'ticket_closed' : 'ticket_reopened',
       oldValue: nowClosed ? 'open' : 'closed',
@@ -3701,12 +3574,7 @@ router.post('/:id/responses/:responseId/tickets/:templateId/finalize', authentic
       fieldLabelSnapshot: 'Ticket status',
     })
 
-    const updatedTicket = db.prepare(`
-      SELECT tr.*, u.name AS finalized_by_name
-      FROM ticket_responses tr
-      LEFT JOIN users u ON u.id = tr.finalized_by
-      WHERE tr.id = ?
-    `).get(ticket.id) as {
+    const updatedTicket = await db.queryOne<{
       id: number
       collection_response_id: number
       collection_id: number
@@ -3716,10 +3584,15 @@ router.post('/:id/responses/:responseId/tickets/:templateId/finalize', authentic
       finalized: number
       finalized_at: string | null
       finalized_by_name: string | null
-    }
-    const values = db.prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?').all(ticket.id) as Array<{ ticket_field_id: number; value: string | null }>
+    }>(`
+      SELECT tr.*, u.name AS finalized_by_name
+      FROM ticket_responses tr
+      LEFT JOIN users u ON u.id = tr.finalized_by
+      WHERE tr.id = ?
+    `, [ticket.id])
+    const values = await db.queryAll<{ ticket_field_id: number; value: string | null }>('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?', [ticket.id])
 
-    res.json(serializeTicketResponse(updatedTicket, values))
+    res.json(serializeTicketResponse(updatedTicket!, values))
   } catch (err) {
     console.error('[collections] toggle template ticket closed:', err)
     res.status(500).json({ error: 'Failed to update ticket' })
@@ -3727,8 +3600,8 @@ router.post('/:id/responses/:responseId/tickets/:templateId/finalize', authentic
 })
 
 // GET /:id/responses/:responseId/tickets/:templateId/history — list ticket history entries
-router.get('/:id/responses/:responseId/tickets/:templateId/history', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/responses/:responseId/tickets/:templateId/history', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   const templateId = parseInt(req.params.templateId, 10)
@@ -3736,22 +3609,34 @@ router.get('/:id/responses/:responseId/tickets/:templateId/history', authenticat
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
-    const template = fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
+    const template = await fetchAccessibleTicketTemplateForCollection(db, collectionId, templateId)
     if (!template) { res.status(404).json({ error: 'Ticket template not assigned to this collection' }); return }
 
-    const ticket = db.prepare(`
+    const ticket = await db.queryOne<{ id: number }>(`
       SELECT id
       FROM ticket_responses
       WHERE collection_response_id = ? AND collection_id = ? AND ticket_template_id = ?
       LIMIT 1
-    `).get(responseId, collectionId, templateId) as { id: number } | undefined
+    `, [responseId, collectionId, templateId])
 
     if (!ticket) { res.json([]); return }
 
-    const rows = db.prepare(`
+    const rows = await db.queryAll<{
+      id: number
+      ticket_field_id: number | null
+      ticket_field_key: string | null
+      field_label_snapshot: string | null
+      field_type_snapshot: string | null
+      event_type: TicketHistoryEventType
+      old_value: string | null
+      new_value: string | null
+      changed_by: number | null
+      changed_by_name: string | null
+      changed_at: string
+    }>(`
       SELECT
         id,
         ticket_field_id,
@@ -3767,19 +3652,7 @@ router.get('/:id/responses/:responseId/tickets/:templateId/history', authenticat
       FROM ticket_history
       WHERE ticket_response_id = ?
       ORDER BY datetime(changed_at) DESC, id DESC
-    `).all(ticket.id) as Array<{
-      id: number
-      ticket_field_id: number | null
-      ticket_field_key: string | null
-      field_label_snapshot: string | null
-      field_type_snapshot: string | null
-      event_type: TicketHistoryEventType
-      old_value: string | null
-      new_value: string | null
-      changed_by: number | null
-      changed_by_name: string | null
-      changed_at: string
-    }>
+    `, [ticket.id])
 
     res.json(rows.map(row => ({
       id: row.id,
@@ -3801,31 +3674,34 @@ router.get('/:id/responses/:responseId/tickets/:templateId/history', authenticat
 })
 
 // GET /:id/ticket — return ticket field definitions for a collection
-router.get('/:id/ticket', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/ticket', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = parseInt(req.params.id, 10)
   if (!context || isNaN(id)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const assignedTemplate = fetchAssignedTicketTemplates(db, id)[0]
+    const assignedTemplates = await fetchAssignedTicketTemplates(db, id)
+    const assignedTemplate = assignedTemplates[0]
     if (!assignedTemplate) { res.json([]); return }
 
-    const fields = db
-      .prepare('SELECT * FROM ticket_fields WHERE ticket_template_id = ? ORDER BY page_number ASC, sort_order ASC, id ASC')
-      .all(assignedTemplate.ticket_template_id) as Array<{ id: number; collection_id: number | null; ticket_template_id: number | null; field_key: string | null; type: string; label: string; subtitle: string | null; page_number: number; required: number; options: string | null; display_style: string; sort_order: number }>
+    const fields = await db.queryAll<{ id: number; collection_id: number | null; ticket_template_id: number | null; field_key: string | null; type: string; label: string; subtitle: string | null; page_number: number; required: number; options: string | null; display_style: string; sort_order: number }>(
+      'SELECT * FROM ticket_fields WHERE ticket_template_id = ? ORDER BY page_number ASC, sort_order ASC, id ASC',
+      [assignedTemplate.ticket_template_id]
+    )
 
     const fieldIds = fields.map(f => f.id)
-    const cols: Array<{ id: number; ticket_field_id: number; name: string; col_type: string; list_options: string | null; sort_order: number }> =
+    type ColRow = { id: number; ticket_field_id: number; name: string; col_type: string; list_options: string | null; sort_order: number }
+    const cols: ColRow[] =
       fieldIds.length > 0
-        ? (db.prepare(`SELECT * FROM ticket_table_columns WHERE ticket_field_id IN (${fieldIds.map(() => '?').join(',')}) ORDER BY sort_order ASC`).all(...fieldIds) as typeof cols)
+        ? await db.queryAll<ColRow>(`SELECT * FROM ticket_table_columns WHERE ticket_field_id IN (${fieldIds.map(() => '?').join(',')}) ORDER BY sort_order ASC`, fieldIds)
         : []
 
-    const colsByFieldId = new Map<number, typeof cols>()
+    const colsByFieldId = new Map<number, ColRow[]>()
     cols.forEach(col => {
       const arr = colsByFieldId.get(col.ticket_field_id) ?? []
       arr.push(col)
@@ -3860,8 +3736,8 @@ router.get('/:id/ticket', authenticateToken, (req: Request, res: Response): void
 })
 
 // PUT /:id/ticket — replace all ticket fields for a collection
-router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.put('/:id/ticket', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = parseInt(req.params.id, 10)
   if (!context || isNaN(id)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!isAdministrator(context) && context.role !== 'administrator' && context.role !== 'team_manager') {
@@ -3869,18 +3745,20 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
   }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(id, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(id, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const assignedTemplate = fetchAssignedTicketTemplates(db, id)[0]
+    const assignedTemplates = await fetchAssignedTicketTemplates(db, id)
+    const assignedTemplate = assignedTemplates[0]
     if (!assignedTemplate) { res.status(400).json({ error: 'Assign a ticket template before editing ticket fields' }); return }
 
     const body = req.body as { fields?: FieldInput[] }
     const fields = Array.isArray(body.fields) ? body.fields : []
-    const existingFields = db
-      .prepare('SELECT id, field_key FROM ticket_fields WHERE ticket_template_id = ?')
-      .all(assignedTemplate.ticket_template_id) as Array<{ id: number; field_key: string | null }>
+    const existingFields = await db.queryAll<{ id: number; field_key: string | null }>(
+      'SELECT id, field_key FROM ticket_fields WHERE ticket_template_id = ?',
+      [assignedTemplate.ticket_template_id]
+    )
     const oldFieldIds = existingFields.map(field => field.id)
     const existingFieldKeyById = new Map(
       existingFields.map(field => [field.id, field.field_key?.trim() || `tf-${field.id}`])
@@ -3888,76 +3766,78 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
 
     // Disable FK checks so we can replace ticket_fields even when
     // ticket_response_values already reference them
-    try { db.exec('PRAGMA foreign_keys = OFF') } catch { /* Turso */ }
+    try { await db.execute('PRAGMA foreign_keys = OFF') } catch { /* Turso */ }
 
     // Delete existing ticket fields (cascade removes ticket_table_columns)
-    db.prepare('DELETE FROM ticket_fields WHERE ticket_template_id = ?').run(assignedTemplate.ticket_template_id)
+    await db.execute('DELETE FROM ticket_fields WHERE ticket_template_id = ?', [assignedTemplate.ticket_template_id])
 
     const newFieldIdByKey = new Map<string, number>()
 
-    fields.forEach((field, idx) => {
+    for (let idx = 0; idx < fields.length; idx++) {
+      const field = fields[idx]
       const normalizedFieldKey = field.fieldKey?.trim() || crypto.randomUUID()
-      const r = db.prepare(
+      const r = await db.execute(
         `INSERT INTO ticket_fields (collection_id, ticket_template_id, field_key, type, label, subtitle, page_number, required, options, display_style, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        null,
-        assignedTemplate.ticket_template_id,
-        normalizedFieldKey,
-        field.type,
-        field.label,
-        field.subtitle?.trim() || null,
-        Math.max(1, Math.floor(field.page ?? 1)),
-        field.required ? 1 : 0,
-        field.options?.length ? JSON.stringify(field.options) : null,
-        resolveFieldDisplayStyle(field.type, field.displayStyle),
-        field.sortOrder ?? idx,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          null,
+          assignedTemplate.ticket_template_id,
+          normalizedFieldKey,
+          field.type,
+          field.label,
+          field.subtitle?.trim() || null,
+          Math.max(1, Math.floor(field.page ?? 1)),
+          field.required ? 1 : 0,
+          field.options?.length ? JSON.stringify(field.options) : null,
+          resolveFieldDisplayStyle(field.type, field.displayStyle),
+          field.sortOrder ?? idx,
+        ]
       )
       if (!newFieldIdByKey.has(normalizedFieldKey)) {
         newFieldIdByKey.set(normalizedFieldKey, Number(r.lastInsertRowid))
       }
       if (field.type === 'custom_table' && field.tableColumns?.length) {
-        const fieldId = r.lastInsertRowid as number
-        field.tableColumns.forEach((col, ci) => {
-          db.prepare(
-            `INSERT INTO ticket_table_columns (ticket_field_id, name, col_type, list_options, sort_order) VALUES (?, ?, ?, ?, ?)`
-          ).run(
-            fieldId, col.name, col.colType,
-            col.colType === 'list' ? JSON.stringify((col.listOptions ?? []).map(o => o.trim()).filter(Boolean)) : null,
-            col.sortOrder ?? ci,
+        const fieldId = Number(r.lastInsertRowid)
+        for (let ci = 0; ci < field.tableColumns.length; ci++) {
+          const col = field.tableColumns[ci]
+          await db.execute(
+            `INSERT INTO ticket_table_columns (ticket_field_id, name, col_type, list_options, sort_order) VALUES (?, ?, ?, ?, ?)`,
+            [
+              fieldId, col.name, col.colType,
+              col.colType === 'list' ? JSON.stringify((col.listOptions ?? []).map(o => o.trim()).filter(Boolean)) : null,
+              col.sortOrder ?? ci,
+            ]
           )
-        })
-      }
-    })
-
-    if (oldFieldIds.length > 0) {
-      const obsoleteFieldIds: number[] = []
-      const remapValueField = db.prepare(
-        'UPDATE ticket_response_values SET ticket_field_id = ? WHERE ticket_field_id = ?'
-      )
-
-      oldFieldIds.forEach(oldFieldId => {
-        const fieldKey = existingFieldKeyById.get(oldFieldId)
-        const replacementFieldId = fieldKey ? newFieldIdByKey.get(fieldKey) : undefined
-        if (replacementFieldId) {
-          remapValueField.run(replacementFieldId, oldFieldId)
-        } else {
-          obsoleteFieldIds.push(oldFieldId)
         }
-      })
-
-      if (obsoleteFieldIds.length > 0) {
-        db.prepare(
-          `DELETE FROM ticket_response_values WHERE ticket_field_id IN (${obsoleteFieldIds.map(() => '?').join(',')})`
-        ).run(...obsoleteFieldIds)
       }
     }
 
-    try { db.exec('PRAGMA foreign_keys = ON') } catch { /* Turso */ }
+    if (oldFieldIds.length > 0) {
+      const obsoleteFieldIds: number[] = []
+
+      for (const oldFieldId of oldFieldIds) {
+        const fieldKey = existingFieldKeyById.get(oldFieldId)
+        const replacementFieldId = fieldKey ? newFieldIdByKey.get(fieldKey) : undefined
+        if (replacementFieldId) {
+          await db.execute('UPDATE ticket_response_values SET ticket_field_id = ? WHERE ticket_field_id = ?', [replacementFieldId, oldFieldId])
+        } else {
+          obsoleteFieldIds.push(oldFieldId)
+        }
+      }
+
+      if (obsoleteFieldIds.length > 0) {
+        await db.execute(
+          `DELETE FROM ticket_response_values WHERE ticket_field_id IN (${obsoleteFieldIds.map(() => '?').join(',')})`,
+          obsoleteFieldIds
+        )
+      }
+    }
+
+    try { await db.execute('PRAGMA foreign_keys = ON') } catch { /* Turso */ }
     res.json({ ok: true })
   } catch (err) {
-    const db2 = getDb()
-    try { db2.exec('PRAGMA foreign_keys = ON') } catch { /* Turso */ }
+    const db2 = await getDbAsync()
+    try { await db2.execute('PRAGMA foreign_keys = ON') } catch { /* Turso */ }
     console.error('[collections] save ticket fields:', err)
     res.status(500).json({ error: 'Failed to save ticket fields' })
   }
@@ -3966,28 +3846,30 @@ router.put('/:id/ticket', authenticateToken, (req: Request, res: Response): void
 // ── Ticket instance routes ─────────────────────────────────────────────────
 
 // GET /:id/responses/:responseId/ticket — get ticket instance (or null)
-router.get('/:id/responses/:responseId/ticket', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/responses/:responseId/ticket', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (!context || isNaN(collectionId) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
     type TicketRow = { id: number; collection_response_id: number; collection_id: number; filled_by: number | null; filled_at: string | null; finalized: number; finalized_at: string | null; finalized_by: number | null; finalized_by_name: string | null; created_at: string; updated_at: string }
-    const ticket = db
-      .prepare(`SELECT tr.*, u.name AS finalized_by_name FROM ticket_responses tr LEFT JOIN users u ON u.id = tr.finalized_by WHERE tr.collection_response_id = ? AND tr.collection_id = ?`)
-      .get(responseId, collectionId) as TicketRow | undefined
+    const ticket = await db.queryOne<TicketRow>(
+      `SELECT tr.*, u.name AS finalized_by_name FROM ticket_responses tr LEFT JOIN users u ON u.id = tr.finalized_by WHERE tr.collection_response_id = ? AND tr.collection_id = ?`,
+      [responseId, collectionId]
+    )
 
     if (!ticket) { res.json(null); return }
 
-    const values = db
-      .prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?')
-      .all(ticket.id) as Array<{ ticket_field_id: number; value: string | null }>
+    const values = await db.queryAll<{ ticket_field_id: number; value: string | null }>(
+      'SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?',
+      [ticket.id]
+    )
 
     res.json({
       id: ticket.id,
@@ -4007,63 +3889,69 @@ router.get('/:id/responses/:responseId/ticket', authenticateToken, (req: Request
 })
 
 // POST /:id/responses/:responseId/ticket — create or update ticket draft
-router.post('/:id/responses/:responseId/ticket', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.post('/:id/responses/:responseId/ticket', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (!context || isNaN(collectionId) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const responseRow = db
-      .prepare('SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?')
-      .get(responseId, collectionId) as { id: number } | undefined
+    const responseRow = await db.queryOne<{ id: number }>(
+      'SELECT id FROM collection_responses WHERE id = ? AND collection_id = ?',
+      [responseId, collectionId]
+    )
     if (!responseRow) { res.status(404).json({ error: 'Response not found' }); return }
 
-    const existing = db
-      .prepare('SELECT id, finalized FROM ticket_responses WHERE collection_response_id = ? AND collection_id = ?')
-      .get(responseId, collectionId) as { id: number; finalized: number } | undefined
+    const existing = await db.queryOne<{ id: number; finalized: number }>(
+      'SELECT id, finalized FROM ticket_responses WHERE collection_response_id = ? AND collection_id = ?',
+      [responseId, collectionId]
+    )
     const body = req.body as { values?: Array<{ fieldId: number; value: string }> }
     const values = Array.isArray(body.values) ? body.values : []
     const existingValues = existing
-      ? db.prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?').all(existing.id) as Array<{ ticket_field_id: number; value: string | null }>
+      ? await db.queryAll<{ ticket_field_id: number; value: string | null }>('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?', [existing.id])
       : []
     const previousValueByFieldId = new Map(existingValues.map(value => [value.ticket_field_id, value.value]))
-    const fieldRows = db
-      .prepare('SELECT id, field_key, label, type FROM ticket_fields WHERE collection_id = ?')
-      .all(collectionId) as Array<{ id: number; field_key: string | null; label: string; type: string }>
+    const fieldRows = await db.queryAll<{ id: number; field_key: string | null; label: string; type: string }>(
+      'SELECT id, field_key, label, type FROM ticket_fields WHERE collection_id = ?',
+      [collectionId]
+    )
     const fieldMetaById = new Map(fieldRows.map(field => [field.id, field]))
-    const actorName = resolveTicketActorName(db, context.id)
+    const actorName = await resolveTicketActorName(db, context.id)
 
     let ticketId: number
     if (!existing) {
-      const r = db.prepare(
-        `INSERT INTO ticket_responses (collection_response_id, collection_id, filled_by, filled_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))`
-      ).run(responseId, collectionId, context.id)
+      const r = await db.execute(
+        `INSERT INTO ticket_responses (collection_response_id, collection_id, filled_by, filled_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))`,
+        [responseId, collectionId, context.id]
+      )
       ticketId = r.lastInsertRowid as number
     } else {
       ticketId = existing.id
-      db.prepare(`UPDATE ticket_responses SET filled_by = ?, filled_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`)
-        .run(context.id, ticketId)
+      await db.execute(
+        `UPDATE ticket_responses SET filled_by = ?, filled_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+        [context.id, ticketId]
+      )
     }
 
-    const upsert = db.prepare(
-      `INSERT INTO ticket_response_values (ticket_response_id, ticket_field_id, value) VALUES (?, ?, ?)
-       ON CONFLICT(ticket_response_id, ticket_field_id) DO UPDATE SET value = excluded.value`
-    )
     for (const v of values) {
-      upsert.run(ticketId, v.fieldId, v.value)
+      await db.execute(
+        `INSERT INTO ticket_response_values (ticket_response_id, ticket_field_id, value) VALUES (?, ?, ?)
+         ON CONFLICT(ticket_response_id, ticket_field_id) DO UPDATE SET value = excluded.value`,
+        [ticketId, v.fieldId, v.value]
+      )
 
       const oldValue = normalizeTicketAuditValue(previousValueByFieldId.get(v.fieldId))
       const newValue = normalizeTicketAuditValue(v.value)
       if (oldValue === newValue) continue
 
       const fieldMeta = fieldMetaById.get(v.fieldId)
-      insertTicketHistoryEntry(db, {
+      await insertTicketHistoryEntry(db, {
         ticketResponseId: ticketId,
         ticketFieldId: v.fieldId,
         ticketFieldKey: fieldMeta?.field_key ?? null,
@@ -4077,9 +3965,10 @@ router.post('/:id/responses/:responseId/ticket', authenticateToken, (req: Reques
       })
     }
 
-    const savedValues = db
-      .prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?')
-      .all(ticketId) as Array<{ ticket_field_id: number; value: string | null }>
+    const savedValues = await db.queryAll<{ ticket_field_id: number; value: string | null }>(
+      'SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?',
+      [ticketId]
+    )
 
     res.json({
       id: ticketId,
@@ -4099,36 +3988,39 @@ router.post('/:id/responses/:responseId/ticket', authenticateToken, (req: Reques
 })
 
 // POST /:id/responses/:responseId/ticket/finalize — toggle ticket closed/open
-router.post('/:id/responses/:responseId/ticket/finalize', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.post('/:id/responses/:responseId/ticket/finalize', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (!context || isNaN(collectionId) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const ticket = db
-      .prepare('SELECT id, finalized FROM ticket_responses WHERE collection_response_id = ? AND collection_id = ?')
-      .get(responseId, collectionId) as { id: number; finalized: number } | undefined
+    const ticket = await db.queryOne<{ id: number; finalized: number }>(
+      'SELECT id, finalized FROM ticket_responses WHERE collection_response_id = ? AND collection_id = ?',
+      [responseId, collectionId]
+    )
     if (!ticket) { res.status(404).json({ error: 'Ticket not found. Save a draft first.' }); return }
 
     const nowClosed = ticket.finalized !== 1
-    const actorName = resolveTicketActorName(db, context.id)
+    const actorName = await resolveTicketActorName(db, context.id)
     if (nowClosed) {
-      db.prepare(
-        `UPDATE ticket_responses SET finalized = 1, finalized_at = datetime('now'), finalized_by = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(context.id, ticket.id)
+      await db.execute(
+        `UPDATE ticket_responses SET finalized = 1, finalized_at = datetime('now'), finalized_by = ?, updated_at = datetime('now') WHERE id = ?`,
+        [context.id, ticket.id]
+      )
     } else {
-      db.prepare(
-        `UPDATE ticket_responses SET finalized = 0, finalized_at = NULL, finalized_by = NULL, updated_at = datetime('now') WHERE id = ?`
-      ).run(ticket.id)
+      await db.execute(
+        `UPDATE ticket_responses SET finalized = 0, finalized_at = NULL, finalized_by = NULL, updated_at = datetime('now') WHERE id = ?`,
+        [ticket.id]
+      )
     }
 
-    insertTicketHistoryEntry(db, {
+    await insertTicketHistoryEntry(db, {
       ticketResponseId: ticket.id,
       eventType: nowClosed ? 'ticket_closed' : 'ticket_reopened',
       oldValue: nowClosed ? 'open' : 'closed',
@@ -4139,11 +4031,12 @@ router.post('/:id/responses/:responseId/ticket/finalize', authenticateToken, (re
     })
 
     const userRow = nowClosed
-      ? db.prepare('SELECT name FROM users WHERE id = ?').get(context.id) as { name: string } | undefined
+      ? await db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = ?', [context.id])
       : undefined
-    const values = db
-      .prepare('SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?')
-      .all(ticket.id) as Array<{ ticket_field_id: number; value: string | null }>
+    const values = await db.queryAll<{ ticket_field_id: number; value: string | null }>(
+      'SELECT ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id = ?',
+      [ticket.id]
+    )
 
     res.json({
       id: ticket.id,
@@ -4163,28 +4056,41 @@ router.post('/:id/responses/:responseId/ticket/finalize', authenticateToken, (re
 })
 
 // GET /:id/responses/:responseId/ticket/history — list ticket history entries
-router.get('/:id/responses/:responseId/ticket/history', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/responses/:responseId/ticket/history', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   const responseId = parseInt(req.params.responseId, 10)
   if (!context || isNaN(collectionId) || isNaN(responseId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Access denied' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
-    const ticket = db
-      .prepare('SELECT id FROM ticket_responses WHERE collection_response_id = ? AND collection_id = ?')
-      .get(responseId, collectionId) as { id: number } | undefined
+    const ticket = await db.queryOne<{ id: number }>(
+      'SELECT id FROM ticket_responses WHERE collection_response_id = ? AND collection_id = ?',
+      [responseId, collectionId]
+    )
 
     if (!ticket) {
       res.json([])
       return
     }
 
-    const rows = db.prepare(`
+    const rows = await db.queryAll<{
+      id: number
+      ticket_field_id: number | null
+      ticket_field_key: string | null
+      field_label_snapshot: string | null
+      field_type_snapshot: string | null
+      event_type: TicketHistoryEventType
+      old_value: string | null
+      new_value: string | null
+      changed_by: number | null
+      changed_by_name: string | null
+      changed_at: string
+    }>(`
       SELECT
         id,
         ticket_field_id,
@@ -4200,19 +4106,7 @@ router.get('/:id/responses/:responseId/ticket/history', authenticateToken, (req:
       FROM ticket_history
       WHERE ticket_response_id = ?
       ORDER BY datetime(changed_at) DESC, id DESC
-    `).all(ticket.id) as Array<{
-      id: number
-      ticket_field_id: number | null
-      ticket_field_key: string | null
-      field_label_snapshot: string | null
-      field_type_snapshot: string | null
-      event_type: TicketHistoryEventType
-      old_value: string | null
-      new_value: string | null
-      changed_by: number | null
-      changed_by_name: string | null
-      changed_at: string
-    }>
+    `, [ticket.id])
 
     res.json(rows.map(row => ({
       id: row.id,
@@ -4234,15 +4128,15 @@ router.get('/:id/responses/:responseId/ticket/history', authenticateToken, (req:
 })
 
 // GET /:id/tickets — list all ticket responses for a collection
-router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/tickets', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const collectionId = parseInt(req.params.id, 10)
   if (!context || isNaN(collectionId)) { res.status(400).json({ error: 'Invalid request' }); return }
   if (!canViewResponses(context)) { res.status(403).json({ error: 'Staff access required' }); return }
 
   try {
-    const db = getDb()
-    const collection = fetchAccessibleCollectionById(collectionId, context)
+    const db = await getDbAsync()
+    const collection = await fetchAccessibleCollectionById(collectionId, context)
     if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
 
     type TicketListRow = {
@@ -4260,7 +4154,7 @@ router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): voi
       submitted_at: string | null
     }
 
-    const rows = db.prepare(`
+    const rows = await db.queryAll<TicketListRow>(`
       SELECT
         tr.id,
         tr.collection_response_id,
@@ -4280,7 +4174,7 @@ router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): voi
       LEFT JOIN collection_responses cr ON cr.id = tr.collection_response_id
       WHERE tr.collection_id = ?
       ORDER BY tr.id DESC
-    `).all(collectionId) as TicketListRow[]
+    `, [collectionId])
 
     const ticketIds = rows.map(r => r.id)
 
@@ -4288,9 +4182,10 @@ router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): voi
     let valRows: ValRow[] = []
     if (ticketIds.length > 0) {
       const placeholders = ticketIds.map(() => '?').join(',')
-      valRows = db.prepare(
-        `SELECT ticket_response_id, ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id IN (${placeholders})`
-      ).all(...ticketIds) as ValRow[]
+      valRows = await db.queryAll<ValRow>(
+        `SELECT ticket_response_id, ticket_field_id, value FROM ticket_response_values WHERE ticket_response_id IN (${placeholders})`,
+        ticketIds
+      )
     }
 
     const valuesByTicket = new Map<number, Array<{ fieldId: number; value: string | null }>>()
@@ -4322,37 +4217,37 @@ router.get('/:id/tickets', authenticateToken, (req: Request, res: Response): voi
 // ── Collection Share Routes ────────────────────────────────────────────────
 
 // GET /api/collections/:id/shares
-router.get('/:id/shares', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/shares', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
 
   const id = Number(req.params.id)
-  const db = getDb()
-  const collection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
   if (!collection) return void res.status(404).json({ error: 'Collection not found' })
 
-  const userShares = db.prepare(`
+  const userShares = await db.queryAll<{ id: number; name: string; email: string }>(`
     SELECT u.id, u.name, u.email
     FROM collection_shares cs
     JOIN users u ON u.id = cs.share_target_id
     WHERE cs.collection_id = ? AND cs.share_type = 'user'
     ORDER BY lower(u.name)
-  `).all(id) as Array<{ id: number; name: string; email: string }>
+  `, [id])
 
-  const groupShares = db.prepare(`
+  const groupShares = await db.queryAll<{ id: number; name: string }>(`
     SELECT g.id, g.name
     FROM collection_shares cs
     JOIN groups g ON g.id = cs.share_target_id
     WHERE cs.collection_id = ? AND cs.share_type = 'group'
     ORDER BY lower(g.name)
-  `).all(id) as Array<{ id: number; name: string }>
+  `, [id])
 
   res.json({ users: userShares, groups: groupShares })
 })
 
 // PUT /api/collections/:id/shares  body: { userIds: number[], groupIds: number[] }
-router.put('/:id/shares', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.put('/:id/shares', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
 
   const canManage = context.role === 'super_admin' || context.role === 'administrator' || context.role === 'team_manager'
@@ -4361,23 +4256,24 @@ router.put('/:id/shares', authenticateToken, (req: Request, res: Response) => {
   const id = Number(req.params.id)
   const { userIds = [], groupIds = [] } = req.body as { userIds?: number[]; groupIds?: number[] }
 
-  const db = getDb()
-  const collection = fetchAccessibleCollectionById(id, context)
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
   if (!collection) return void res.status(404).json({ error: 'Collection not found' })
 
   // Replace all shares atomically
-  db.prepare(`DELETE FROM collection_shares WHERE collection_id = ?`).run(id)
-
-  const insertShare = db.prepare(`
-    INSERT OR IGNORE INTO collection_shares (collection_id, share_type, share_target_id, granted_by)
-    VALUES (?, ?, ?, ?)
-  `)
+  await db.execute(`DELETE FROM collection_shares WHERE collection_id = ?`, [id])
 
   for (const uid of userIds) {
-    insertShare.run(id, 'user', uid, context.id)
+    await db.execute(`
+      INSERT OR IGNORE INTO collection_shares (collection_id, share_type, share_target_id, granted_by)
+      VALUES (?, ?, ?, ?)
+    `, [id, 'user', uid, context.id])
   }
   for (const gid of groupIds) {
-    insertShare.run(id, 'group', gid, context.id)
+    await db.execute(`
+      INSERT OR IGNORE INTO collection_shares (collection_id, share_type, share_target_id, granted_by)
+      VALUES (?, ?, ?, ?)
+    `, [id, 'group', gid, context.id])
   }
 
   res.json({ success: true })

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 
 const router = Router()
@@ -10,7 +10,7 @@ interface DbPreference {
   value: string
 }
 
-router.get('/:key', authenticateToken, (req: Request, res: Response) => {
+router.get('/:key', authenticateToken, async (req: Request, res: Response) => {
   const { key } = req.params
   if (!ALLOWED_KEYS.has(key)) {
     res.status(404).json({ error: 'Preference not found' })
@@ -23,15 +23,13 @@ router.get('/:key', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const row = db
-    .prepare('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?')
-    .get(userId, key) as unknown as DbPreference | undefined
+  const db = await getDbAsync()
+  const row = await db.queryOne<DbPreference>('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?', [userId, key])
 
   res.json({ key, value: row?.value ?? null })
 })
 
-router.put('/:key', authenticateToken, (req: Request, res: Response) => {
+router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
   const { key } = req.params
   if (!ALLOWED_KEYS.has(key)) {
     res.status(404).json({ error: 'Preference not found' })
@@ -50,13 +48,14 @@ router.put('/:key', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  db.prepare(
+  const db = await getDbAsync()
+  await db.execute(
     `INSERT INTO user_preferences (user_id, key, value, updated_at)
      VALUES (?, ?, ?, datetime('now'))
      ON CONFLICT(user_id, key)
-     DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
-  ).run(userId, key, rawValue)
+     DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    [userId, key, rawValue]
+  )
 
   res.json({ key, value: rawValue })
 })

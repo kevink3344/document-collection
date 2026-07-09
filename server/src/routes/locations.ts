@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken, optionalAuthenticateToken } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
@@ -55,13 +55,13 @@ interface DbLocation {
 }
 
 // ── GET /api/locations — list / typeahead search (public) ────
-router.get('/', optionalAuthenticateToken, (req: Request, res: Response) => {
-  const db = getDb()
+router.get('/', optionalAuthenticateToken, async (req: Request, res: Response) => {
+  const db = await getDbAsync()
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
 
   // If authenticated, scope to the caller's organization (or all orgs for super_admin).
   // If unauthenticated, require a collection slug to determine the organization.
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
 
   let resolvedOrgId: number | null | 'all' = null
 
@@ -75,9 +75,7 @@ router.get('/', optionalAuthenticateToken, (req: Request, res: Response) => {
       res.status(400).json({ error: 'slug parameter required for unauthenticated access' })
       return
     }
-    const col = db
-      .prepare('SELECT organization_id FROM collections WHERE slug = ?')
-      .get(slug) as unknown as { organization_id: number } | undefined
+    const col = await db.queryOne<{ organization_id: number }>('SELECT organization_id FROM collections WHERE slug = ?', [slug])
     if (!col) {
       res.status(404).json({ error: 'Collection not found' })
       return
@@ -88,41 +86,36 @@ router.get('/', optionalAuthenticateToken, (req: Request, res: Response) => {
   let rows: DbLocation[]
   if (resolvedOrgId === 'all') {
     rows = q
-      ? db
-          .prepare(
+      ? await db.queryAll<DbLocation>(
             `SELECT id, name, organization_id, created_at
              FROM locations
              WHERE lower(name) LIKE lower(?)
              ORDER BY lower(name)
-             LIMIT 20`
+             LIMIT 20`,
+            [`%${q}%`]
           )
-          .all(`%${q}%`) as unknown as DbLocation[]
-      : db
-          .prepare(
+      : await db.queryAll<DbLocation>(
             `SELECT id, name, organization_id, created_at
              FROM locations
              ORDER BY lower(name)`
           )
-          .all() as unknown as DbLocation[]
   } else {
     rows = q
-      ? db
-          .prepare(
+      ? await db.queryAll<DbLocation>(
             `SELECT id, name, organization_id, created_at
              FROM locations
              WHERE organization_id = ? AND lower(name) LIKE lower(?)
              ORDER BY lower(name)
-             LIMIT 20`
+             LIMIT 20`,
+            [resolvedOrgId, `%${q}%`]
           )
-          .all(resolvedOrgId, `%${q}%`) as unknown as DbLocation[]
-      : db
-          .prepare(
+      : await db.queryAll<DbLocation>(
             `SELECT id, name, organization_id, created_at
              FROM locations
              WHERE organization_id = ?
-             ORDER BY lower(name)`
+             ORDER BY lower(name)`,
+            [resolvedOrgId]
           )
-          .all(resolvedOrgId) as unknown as DbLocation[]
   }
 
   res.json(
@@ -136,8 +129,8 @@ router.get('/', optionalAuthenticateToken, (req: Request, res: Response) => {
 })
 
 // ── POST /api/locations — create (admin+) ────────────────────
-router.post('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -154,19 +147,21 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
 
   try {
-    const r = db
-      .prepare(
+    const r = await db.execute(
         `INSERT INTO locations (name, organization_id)
-         VALUES (?, ?)`
+         VALUES (?, ?)`,
+        [name.trim(), context.organizationId]
       )
-      .run(name.trim(), context.organizationId)
 
-    const location = db
-      .prepare('SELECT id, name, organization_id, created_at FROM locations WHERE id = ?')
-      .get(r.lastInsertRowid) as unknown as DbLocation
+    const location = await db.queryOne<DbLocation>('SELECT id, name, organization_id, created_at FROM locations WHERE id = ?', [r.lastInsertRowid])
+
+    if (!location) {
+      res.status(500).json({ error: 'Failed to load created location' })
+      return
+    }
 
     res.status(201).json({
       id: location.id,
@@ -186,7 +181,7 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
 
 // ── POST /api/locations/import — bulk import from configured JSON URL (admin+) ───────────────
 router.post('/import', authenticateToken, async (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -234,10 +229,10 @@ router.post('/import', authenticateToken, async (req: Request, res: Response) =>
     dedupedNames.push(name)
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
   const existingRows = context.organizationId === null
-    ? db.prepare('SELECT lower(name) AS name_key FROM locations WHERE organization_id IS NULL').all() as Array<{ name_key: string }>
-    : db.prepare('SELECT lower(name) AS name_key FROM locations WHERE organization_id = ?').all(context.organizationId) as Array<{ name_key: string }>
+    ? await db.queryAll<{ name_key: string }>('SELECT lower(name) AS name_key FROM locations WHERE organization_id IS NULL')
+    : await db.queryAll<{ name_key: string }>('SELECT lower(name) AS name_key FROM locations WHERE organization_id = ?', [context.organizationId])
   const existingNames = new Set(existingRows.map(row => row.name_key.toLowerCase()))
 
   const createdNames: string[] = []
@@ -250,7 +245,7 @@ router.post('/import', authenticateToken, async (req: Request, res: Response) =>
     }
 
     try {
-      db.prepare('INSERT INTO locations (name, organization_id) VALUES (?, ?)').run(name, context.organizationId)
+      await db.execute('INSERT INTO locations (name, organization_id) VALUES (?, ?)', [name, context.organizationId])
       existingNames.add(name.toLowerCase())
       createdNames.push(name)
     } catch (err) {
@@ -268,8 +263,8 @@ router.post('/import', authenticateToken, async (req: Request, res: Response) =>
 })
 
 // ── PATCH /api/locations/:id — rename (admin+) ───────────────
-router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -292,10 +287,8 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT id, organization_id FROM locations WHERE id = ?')
-    .get(id) as unknown as { id: number; organization_id: number } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT id, organization_id FROM locations WHERE id = ?', [id])
 
   if (!existing) {
     res.status(404).json({ error: 'Location not found' })
@@ -308,10 +301,12 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
   }
 
   try {
-    db.prepare('UPDATE locations SET name = ? WHERE id = ?').run(name.trim(), id)
-    const updated = db
-      .prepare('SELECT id, name, organization_id, created_at FROM locations WHERE id = ?')
-      .get(id) as unknown as DbLocation
+    await db.execute('UPDATE locations SET name = ? WHERE id = ?', [name.trim(), id])
+    const updated = await db.queryOne<DbLocation>('SELECT id, name, organization_id, created_at FROM locations WHERE id = ?', [id])
+    if (!updated) {
+      res.status(500).json({ error: 'Failed to load updated location' })
+      return
+    }
     res.json({
       id: updated.id,
       name: updated.name,
@@ -329,8 +324,8 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
 })
 
 // ── DELETE /api/locations/:id — delete (admin+) ──────────────
-router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -347,10 +342,8 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const location = db
-    .prepare('SELECT id, organization_id FROM locations WHERE id = ?')
-    .get(id) as unknown as { id: number; organization_id: number } | undefined
+  const db = await getDbAsync()
+  const location = await db.queryOne<{ id: number; organization_id: number }>('SELECT id, organization_id FROM locations WHERE id = ?', [id])
 
   if (!location) {
     res.status(404).json({ error: 'Location not found' })
@@ -363,7 +356,7 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  db.prepare('DELETE FROM locations WHERE id = ?').run(id)
+  await db.execute('DELETE FROM locations WHERE id = ?', [id])
   res.status(204).end()
 })
 

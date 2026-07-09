@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb, setConfiguredDatabaseMode } from '../database/db'
+import { getDbAsync, setConfiguredDatabaseMode } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 
 const router = Router()
@@ -56,17 +56,15 @@ interface DbSetting {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/:key', (req: Request, res: Response) => {
+router.get('/:key', async (req: Request, res: Response) => {
   const { key } = req.params
   if (!ALLOWED_KEYS.has(key)) {
     res.status(404).json({ error: 'Setting not found' })
     return
   }
 
-  const db = getDb()
-  const row = db
-    .prepare('SELECT key, value FROM app_settings WHERE key = ?')
-    .get(key) as unknown as DbSetting | undefined
+  const db = await getDbAsync()
+  const row = await db.queryOne<DbSetting>('SELECT key, value FROM app_settings WHERE key = ?', [key])
 
   if (!row) {
     // Return sensible defaults for keys that haven't been persisted yet
@@ -125,7 +123,7 @@ router.get('/:key', (req: Request, res: Response) => {
  *       404:
  *         description: Setting key not found
  */
-router.put('/:key', authenticateToken, (req: Request, res: Response) => {
+router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
   if (req.user?.role !== 'administrator' && req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -152,10 +150,11 @@ router.put('/:key', authenticateToken, (req: Request, res: Response) => {
     setConfiguredDatabaseMode(normalized as 'turso' | 'sqlserver' | 'sqlite')
   }
 
-  const db = getDb()
-  db.prepare(
-    'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-  ).run(key, value)
+  const db = await getDbAsync()
+  await db.execute(
+    'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    [key, value]
+  )
 
   res.json({ key, value })
 })

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken, optionalAuthenticateToken } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
@@ -70,58 +70,54 @@ function validateSlotBody(body: SlotBody): string | null {
   return null
 }
 
-function getCollectionBySlug(slug: string) {
-  const db = getDb()
-  return db
-    .prepare('SELECT id, collection_type, status, organization_id FROM collections WHERE slug = ?')
-    .get(slug) as { id: number; collection_type: string; status: string; organization_id: number } | undefined
+async function getCollectionBySlug(slug: string) {
+  const db = await getDbAsync()
+  return db.queryOne<{ id: number; collection_type: string; status: string; organization_id: number }>('SELECT id, collection_type, status, organization_id FROM collections WHERE slug = ?', [slug])
 }
 
-function getSlotsWithCounts(collectionId: number): DbSignupSlot[] {
-  const db = getDb()
-  return db
-    .prepare(`
+async function getSlotsWithCounts(collectionId: number): Promise<DbSignupSlot[]> {
+  const db = await getDbAsync()
+  return db.queryAll<DbSignupSlot>(`
       SELECT s.*,
              (SELECT COUNT(*) FROM signup_registrations r WHERE r.slot_id = s.id) AS filled_count
       FROM signup_slots s
       WHERE s.collection_id = ?
       ORDER BY s.slot_date, s.start_time, s.sort_order, s.id
-    `)
-    .all(collectionId) as unknown as DbSignupSlot[]
+    `, [collectionId])
 }
 
 // ── Authenticated routes (creator/admin managing slots) ───────
 
 // GET /api/signup-slots/collections/:id/slots
-router.get('/collections/:id/slots', authenticateToken, (req: Request, res: Response) => {
+router.get('/collections/:id/slots', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
-  const db = getDb()
-  const col = db.prepare('SELECT id, collection_type, organization_id FROM collections WHERE id = ?').get(id) as { id: number; collection_type: string; organization_id: number } | undefined
+  const db = await getDbAsync()
+  const col = await db.queryOne<{ id: number; collection_type: string; organization_id: number }>('SELECT id, collection_type, organization_id FROM collections WHERE id = ?', [id])
   if (!col) {
     res.status(404).json({ error: 'Collection not found' })
     return
   }
-  const slots = getSlotsWithCounts(id)
+  const slots = await getSlotsWithCounts(id)
   res.json(slots.map(toApiSlot))
 })
 
 // POST /api/signup-slots/collections/:id/slots
-router.post('/collections/:id/slots', authenticateToken, (req: Request, res: Response) => {
+router.post('/collections/:id/slots', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid collection ID' })
     return
   }
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -134,8 +130,8 @@ router.post('/collections/:id/slots', authenticateToken, (req: Request, res: Res
     return
   }
 
-  const db = getDb()
-  const col = db.prepare('SELECT id, collection_type FROM collections WHERE id = ?').get(id) as { id: number; collection_type: string } | undefined
+  const db = await getDbAsync()
+  const col = await db.queryOne<{ id: number; collection_type: string }>('SELECT id, collection_type FROM collections WHERE id = ?', [id])
   if (!col) {
     res.status(404).json({ error: 'Collection not found' })
     return
@@ -145,31 +141,35 @@ router.post('/collections/:id/slots', authenticateToken, (req: Request, res: Res
     return
   }
 
-  const maxSortOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM signup_slots WHERE collection_id = ?').get(id) as { m: number }
-  const sortOrder = body.sortOrder !== undefined ? Number(body.sortOrder) : maxSortOrder.m + 1
+  const maxSortOrderRow = await db.queryOne<{ m: number }>('SELECT COALESCE(MAX(sort_order), -1) AS m FROM signup_slots WHERE collection_id = ?', [id])
+  const sortOrder = body.sortOrder !== undefined ? Number(body.sortOrder) : (maxSortOrderRow?.m ?? -1) + 1
 
-  const r = db
-    .prepare(`INSERT INTO signup_slots (collection_id, slot_date, start_time, end_time, label, max_capacity, sort_order)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, body.slotDate.trim(), body.startTime.trim(), body.endTime.trim(), body.label?.trim() || 'Available Slot', Number(body.maxCapacity ?? 1), sortOrder)
+  const r = await db.execute(`INSERT INTO signup_slots (collection_id, slot_date, start_time, end_time, label, max_capacity, sort_order)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, body.slotDate.trim(), body.startTime.trim(), body.endTime.trim(), body.label?.trim() || 'Available Slot', Number(body.maxCapacity ?? 1), sortOrder])
 
-  const row = db.prepare(`
+  const row = await db.queryOne<DbSignupSlot>(`
     SELECT s.*, (SELECT COUNT(*) FROM signup_registrations r WHERE r.slot_id = s.id) AS filled_count
     FROM signup_slots s WHERE s.id = ?
-  `).get(r.lastInsertRowid) as unknown as DbSignupSlot
+  `, [r.lastInsertRowid])
+
+  if (!row) {
+    res.status(500).json({ error: 'Failed to load created slot' })
+    return
+  }
 
   res.status(201).json(toApiSlot(row))
 })
 
 // PUT /api/signup-slots/collections/:id/slots/:slotId
-router.put('/collections/:id/slots/:slotId', authenticateToken, (req: Request, res: Response) => {
+router.put('/collections/:id/slots/:slotId', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   const slotId = parseInt(req.params.slotId, 10)
   if (isNaN(id) || isNaN(slotId)) {
     res.status(400).json({ error: 'Invalid ID' })
     return
   }
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -182,8 +182,8 @@ router.put('/collections/:id/slots/:slotId', authenticateToken, (req: Request, r
     return
   }
 
-  const db = getDb()
-  const slot = db.prepare('SELECT id, collection_id FROM signup_slots WHERE id = ? AND collection_id = ?').get(slotId, id) as { id: number; collection_id: number } | undefined
+  const db = await getDbAsync()
+  const slot = await db.queryOne<{ id: number; collection_id: number }>('SELECT id, collection_id FROM signup_slots WHERE id = ? AND collection_id = ?', [slotId, id])
   if (!slot) {
     res.status(404).json({ error: 'Slot not found' })
     return
@@ -191,38 +191,43 @@ router.put('/collections/:id/slots/:slotId', authenticateToken, (req: Request, r
 
   const sortOrder = body.sortOrder !== undefined ? Number(body.sortOrder) : undefined
   if (sortOrder !== undefined) {
-    db.prepare(`UPDATE signup_slots SET slot_date = ?, start_time = ?, end_time = ?, label = ?, max_capacity = ?, sort_order = ? WHERE id = ?`)
-      .run(body.slotDate.trim(), body.startTime.trim(), body.endTime.trim(), body.label?.trim() || 'Available Slot', Number(body.maxCapacity ?? 1), sortOrder, slotId)
+    await db.execute(`UPDATE signup_slots SET slot_date = ?, start_time = ?, end_time = ?, label = ?, max_capacity = ?, sort_order = ? WHERE id = ?`,
+      [body.slotDate.trim(), body.startTime.trim(), body.endTime.trim(), body.label?.trim() || 'Available Slot', Number(body.maxCapacity ?? 1), sortOrder, slotId])
   } else {
-    db.prepare(`UPDATE signup_slots SET slot_date = ?, start_time = ?, end_time = ?, label = ?, max_capacity = ? WHERE id = ?`)
-      .run(body.slotDate.trim(), body.startTime.trim(), body.endTime.trim(), body.label?.trim() || 'Available Slot', Number(body.maxCapacity ?? 1), slotId)
+    await db.execute(`UPDATE signup_slots SET slot_date = ?, start_time = ?, end_time = ?, label = ?, max_capacity = ? WHERE id = ?`,
+      [body.slotDate.trim(), body.startTime.trim(), body.endTime.trim(), body.label?.trim() || 'Available Slot', Number(body.maxCapacity ?? 1), slotId])
   }
 
-  const row = db.prepare(`
+  const row = await db.queryOne<DbSignupSlot>(`
     SELECT s.*, (SELECT COUNT(*) FROM signup_registrations r WHERE r.slot_id = s.id) AS filled_count
     FROM signup_slots s WHERE s.id = ?
-  `).get(slotId) as unknown as DbSignupSlot
+  `, [slotId])
+
+  if (!row) {
+    res.status(500).json({ error: 'Failed to load updated slot' })
+    return
+  }
 
   res.json(toApiSlot(row))
 })
 
 // DELETE /api/signup-slots/collections/:id/slots/:slotId
-router.delete('/collections/:id/slots/:slotId', authenticateToken, (req: Request, res: Response) => {
+router.delete('/collections/:id/slots/:slotId', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   const slotId = parseInt(req.params.slotId, 10)
   if (isNaN(id) || isNaN(slotId)) {
     res.status(400).json({ error: 'Invalid ID' })
     return
   }
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
-  const db = getDb()
-  const result = db.prepare('DELETE FROM signup_slots WHERE id = ? AND collection_id = ?').run(slotId, id)
-  if (result.changes === 0) {
+  const db = await getDbAsync()
+  const result = await db.execute('DELETE FROM signup_slots WHERE id = ? AND collection_id = ?', [slotId, id])
+  if (!result.changes) {
     res.status(404).json({ error: 'Slot not found' })
     return
   }
@@ -230,25 +235,25 @@ router.delete('/collections/:id/slots/:slotId', authenticateToken, (req: Request
 })
 
 // GET /api/signup-slots/collections/:id/slots/:slotId/registrations  (admin)
-router.get('/collections/:id/slots/:slotId/registrations', authenticateToken, (req: Request, res: Response) => {
+router.get('/collections/:id/slots/:slotId/registrations', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   const slotId = parseInt(req.params.slotId, 10)
   if (isNaN(id) || isNaN(slotId)) {
     res.status(400).json({ error: 'Invalid ID' })
     return
   }
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
-  const db = getDb()
-  const slot = db.prepare('SELECT id FROM signup_slots WHERE id = ? AND collection_id = ?').get(slotId, id) as { id: number } | undefined
-  if (!slot) {
+  const db = await getDbAsync()
+  const slot2 = await db.queryOne<{ id: number }>('SELECT id FROM signup_slots WHERE id = ? AND collection_id = ?', [slotId, id])
+  if (!slot2) {
     res.status(404).json({ error: 'Slot not found' })
     return
   }
-  const rows = db.prepare('SELECT * FROM signup_registrations WHERE slot_id = ? ORDER BY created_at').all(slotId) as unknown as DbSignupRegistration[]
+  const rows = await db.queryAll<DbSignupRegistration>('SELECT * FROM signup_registrations WHERE slot_id = ? ORDER BY created_at', [slotId])
   res.json(rows.map(r => ({
     id: r.id,
     slotId: r.slot_id,
@@ -262,8 +267,8 @@ router.get('/collections/:id/slots/:slotId/registrations', authenticateToken, (r
 // ── Public routes ─────────────────────────────────────────────
 
 // GET /api/signup-slots/public/:slug/slots
-router.get('/public/:slug/slots', optionalAuthenticateToken, (req: Request, res: Response) => {
-  const col = getCollectionBySlug(req.params.slug)
+router.get('/public/:slug/slots', optionalAuthenticateToken, async (req: Request, res: Response) => {
+  const col = await getCollectionBySlug(req.params.slug)
   if (!col || col.collection_type !== 'signup_sheet') {
     res.status(404).json({ error: 'Sign-up sheet not found' })
     return
@@ -275,13 +280,13 @@ router.get('/public/:slug/slots', optionalAuthenticateToken, (req: Request, res:
       return
     }
   }
-  const slots = getSlotsWithCounts(col.id)
+  const slots = await getSlotsWithCounts(col.id)
   res.json(slots.map(toApiSlot))
 })
 
 // GET /api/signup-slots/public/:slug
-router.get('/public/:slug', optionalAuthenticateToken, (req: Request, res: Response) => {
-  const col = getCollectionBySlug(req.params.slug)
+router.get('/public/:slug', optionalAuthenticateToken, async (req: Request, res: Response) => {
+  const col = await getCollectionBySlug(req.params.slug)
   if (!col || col.collection_type !== 'signup_sheet') {
     res.status(404).json({ error: 'Sign-up sheet not found' })
     return
@@ -290,8 +295,12 @@ router.get('/public/:slug', optionalAuthenticateToken, (req: Request, res: Respo
     res.status(404).json({ error: 'Sign-up sheet not found' })
     return
   }
-  const db = getDb()
-  const row = db.prepare('SELECT c.*, u.name AS creator_name, o.name AS organization_name FROM collections c LEFT JOIN users u ON u.id = c.created_by LEFT JOIN organizations o ON o.id = c.organization_id WHERE c.id = ?').get(col.id) as unknown as Record<string, unknown>
+  const db = await getDbAsync()
+  const row = await db.queryOne<Record<string, unknown>>('SELECT c.*, u.name AS creator_name, o.name AS organization_name FROM collections c LEFT JOIN users u ON u.id = c.created_by LEFT JOIN organizations o ON o.id = c.organization_id WHERE c.id = ?', [col.id])
+  if (!row) {
+    res.status(404).json({ error: 'Sign-up sheet not found' })
+    return
+  }
   res.json({
     id: row.id,
     slug: row.slug,
@@ -307,15 +316,15 @@ router.get('/public/:slug', optionalAuthenticateToken, (req: Request, res: Respo
 })
 
 // POST /api/signup-slots/public/:slug/slots/:slotId/register
-router.post('/public/:slug/slots/:slotId/register', (req: Request, res: Response) => {
+router.post('/public/:slug/slots/:slotId/register', async (req: Request, res: Response) => {
   const slotId = parseInt(req.params.slotId, 10)
   if (isNaN(slotId)) {
     res.status(400).json({ error: 'Invalid slot ID' })
     return
   }
 
-  const col = getCollectionBySlug(req.params.slug)
-  if (!col || col.collection_type !== 'signup_sheet' || col.status !== 'published') {
+  const col2 = await getCollectionBySlug(req.params.slug)
+  if (!col2 || col2.collection_type !== 'signup_sheet' || col2.status !== 'published') {
     res.status(404).json({ error: 'Sign-up sheet not found' })
     return
   }
@@ -335,10 +344,11 @@ router.post('/public/:slug/slots/:slotId/register', (req: Request, res: Response
     return
   }
 
-  const db = getDb()
-  const slot = db
-    .prepare('SELECT id, collection_id, max_capacity FROM signup_slots WHERE id = ? AND collection_id = ?')
-    .get(slotId, col.id) as { id: number; collection_id: number; max_capacity: number } | undefined
+  const db = await getDbAsync()
+  const slot = await db.queryOne<{ id: number; collection_id: number; max_capacity: number }>(
+    'SELECT id, collection_id, max_capacity FROM signup_slots WHERE id = ? AND collection_id = ?',
+    [slotId, col2.id]
+  )
 
   if (!slot) {
     res.status(404).json({ error: 'Slot not found' })
@@ -346,18 +356,18 @@ router.post('/public/:slug/slots/:slotId/register', (req: Request, res: Response
   }
 
   // Enforce capacity
-  const { filled_count } = db
-    .prepare('SELECT COUNT(*) AS filled_count FROM signup_registrations WHERE slot_id = ?')
-    .get(slotId) as { filled_count: number }
+  const capacityRow = await db.queryOne<{ filled_count: number }>('SELECT COUNT(*) AS filled_count FROM signup_registrations WHERE slot_id = ?', [slotId])
+  const filled_count = capacityRow?.filled_count ?? 0
 
   if (filled_count >= slot.max_capacity) {
     res.status(409).json({ error: 'This slot is full' })
     return
   }
 
-  const r = db
-    .prepare('INSERT INTO signup_registrations (slot_id, respondent_name, respondent_email, note) VALUES (?, ?, ?, ?)')
-    .run(slotId, body.respondentName.trim(), body.respondentEmail.trim().toLowerCase(), body.note?.trim() ?? null)
+  const r = await db.execute(
+    'INSERT INTO signup_registrations (slot_id, respondent_name, respondent_email, note) VALUES (?, ?, ?, ?)',
+    [slotId, body.respondentName.trim(), body.respondentEmail.trim().toLowerCase(), body.note?.trim() ?? null]
+  )
 
   res.status(201).json({
     id: r.lastInsertRowid,

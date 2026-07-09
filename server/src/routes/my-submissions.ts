@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator } from '../middleware/organizationAccess'
 
@@ -57,27 +57,24 @@ function isEditableNow(editableUntil: string | null): boolean {
  * GET /api/my-submissions
  * Returns all submissions made by the authenticated user (matched by email).
  */
-router.get('/', (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/', async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
 
   try {
-    const db = getDb()
+    const db = await getDbAsync()
 
-    const userRow = db
-      .prepare('SELECT email FROM users WHERE id = ?')
-      .get(context.id) as DbUser | undefined
+    const userRow = await db.queryOne<DbUser>('SELECT email FROM users WHERE id = ?', [context.id])
 
     if (!userRow) {
       res.status(404).json({ error: 'User not found' })
       return
     }
 
-    const rows = db
-      .prepare(
+    const rows = await db.queryAll<DbSubmissionRow>(
         `SELECT
            cr.id          AS response_id,
            c.id           AS collection_id,
@@ -93,9 +90,9 @@ router.get('/', (req: Request, res: Response): void => {
          JOIN collections c ON c.id = cr.collection_id
          LEFT JOIN collection_versions cv ON cv.id = cr.collection_version_id
         WHERE cr.respondent_email = ? ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}
-         ORDER BY cr.submitted_at DESC`
+         ORDER BY cr.submitted_at DESC`,
+        (!isAdministrator(context) && context.organizationId ? [userRow.email, context.organizationId] : [userRow.email])
       )
-      .all(...(!isAdministrator(context) && context.organizationId ? [userRow.email, context.organizationId] : [userRow.email])) as unknown as DbSubmissionRow[]
 
     res.json(
       rows.map(r => ({
@@ -120,8 +117,8 @@ router.get('/', (req: Request, res: Response): void => {
  * GET /api/my-submissions/:responseId
  * Returns the field values for a specific response, verified to belong to the caller.
  */
-router.get('/:responseId', (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:responseId', async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const responseId = parseInt(req.params.responseId, 10)
 
   if (!context || isNaN(responseId)) {
@@ -130,11 +127,9 @@ router.get('/:responseId', (req: Request, res: Response): void => {
   }
 
   try {
-    const db = getDb()
+    const db = await getDbAsync()
 
-    const userRow = db
-      .prepare('SELECT email FROM users WHERE id = ?')
-      .get(context.id) as DbUser | undefined
+    const userRow = await db.queryOne<DbUser>('SELECT email FROM users WHERE id = ?', [context.id])
 
     if (!userRow) {
       res.status(404).json({ error: 'User not found' })
@@ -142,8 +137,7 @@ router.get('/:responseId', (req: Request, res: Response): void => {
     }
 
     // Verify ownership
-    const responseRow = db
-      .prepare(
+    const responseRow = await db.queryOne<DbSubmissionRow>(
       `SELECT cr.id AS response_id, cr.submitted_at, c.id AS collection_id,
                 cr.collection_version_id,
                 c.title AS collection_title, c.slug AS collection_slug, c.category
@@ -151,26 +145,25 @@ router.get('/:responseId', (req: Request, res: Response): void => {
          FROM collection_responses cr
          JOIN collections c ON c.id = cr.collection_id
        LEFT JOIN collection_versions cv ON cv.id = cr.collection_version_id
-        WHERE cr.id = ? AND cr.respondent_email = ? ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}`
+        WHERE cr.id = ? AND cr.respondent_email = ? ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}`,
+        (!isAdministrator(context) && context.organizationId ? [responseId, userRow.email, context.organizationId] : [responseId, userRow.email])
       )
-      .get(...(!isAdministrator(context) && context.organizationId ? [responseId, userRow.email, context.organizationId] : [responseId, userRow.email])) as DbSubmissionRow | undefined
 
     if (!responseRow) {
       res.status(404).json({ error: 'Submission not found' })
       return
     }
 
-    const values = db
-      .prepare(
+    const values = await db.queryAll<DbValueRow>(
         `SELECT crv.field_id, cf.label AS field_label, cf.type AS field_type, cf.options AS field_options,
                 cf.display_style AS field_display_style, crv.value
          FROM collection_response_values crv
          JOIN collection_fields cf ON cf.id = crv.field_id
          WHERE crv.response_id = ?
            AND (cf.staff_only IS NULL OR cf.staff_only = 0)
-         ORDER BY cf.page_number ASC, cf.sort_order ASC`
+         ORDER BY cf.page_number ASC, cf.sort_order ASC`,
+        [responseId]
       )
-      .all(responseId) as unknown as DbValueRow[]
 
     res.json({
       responseId: responseRow.response_id,
@@ -207,8 +200,8 @@ router.get('/:responseId', (req: Request, res: Response): void => {
   }
 })
 
-router.put('/:responseId', (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.put('/:responseId', async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const responseId = parseInt(req.params.responseId, 10)
 
   if (!context || isNaN(responseId)) {
@@ -223,31 +216,28 @@ router.put('/:responseId', (req: Request, res: Response): void => {
   }
 
   try {
-    const db = getDb()
-    const userRow = db
-      .prepare('SELECT email FROM users WHERE id = ?')
-      .get(context.id) as DbUser | undefined
+    const db = await getDbAsync()
+    const userRow = await db.queryOne<DbUser>('SELECT email FROM users WHERE id = ?', [context.id])
 
     if (!userRow) {
       res.status(404).json({ error: 'User not found' })
       return
     }
 
-    const responseRow = db
-      .prepare(
-        `SELECT cr.id AS response_id, cr.collection_id, cr.collection_version_id,
-                cr.editable_until, cr.respondent_email
-         FROM collection_responses cr
-         JOIN collections c ON c.id = cr.collection_id
-         WHERE cr.id = ? AND cr.respondent_email = ? ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}`
-      )
-            .get(...(!isAdministrator(context) && context.organizationId ? [responseId, userRow.email, context.organizationId] : [responseId, userRow.email])) as {
+    const responseRow = await db.queryOne<{
       response_id: number
       collection_id: number
       collection_version_id: number | null
       editable_until: string | null
       respondent_email: string | null
-    } | undefined
+    }>(
+        `SELECT cr.id AS response_id, cr.collection_id, cr.collection_version_id,
+                cr.editable_until, cr.respondent_email
+         FROM collection_responses cr
+         JOIN collections c ON c.id = cr.collection_id
+         WHERE cr.id = ? AND cr.respondent_email = ? ${!isAdministrator(context) && context.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context) ? 'AND 1 = 0' : ''}`,
+        (!isAdministrator(context) && context.organizationId ? [responseId, userRow.email, context.organizationId] : [responseId, userRow.email])
+      )
 
     if (!responseRow) {
       res.status(404).json({ error: 'Submission not found' })
@@ -260,21 +250,18 @@ router.put('/:responseId', (req: Request, res: Response): void => {
     }
 
     const allowedRows = responseRow.collection_version_id
-      ? db
-          .prepare('SELECT id FROM collection_fields WHERE collection_id = ? AND version_id = ?')
-          .all(responseRow.collection_id, responseRow.collection_version_id)
-      : db
-          .prepare(
+      ? await db.queryAll<{ id: number }>('SELECT id FROM collection_fields WHERE collection_id = ? AND version_id = ?', [responseRow.collection_id, responseRow.collection_version_id])
+      : await db.queryAll<{ id: number }>(
             `SELECT cf.id
              FROM collection_fields cf
              JOIN collection_response_values crv ON crv.field_id = cf.id
-             WHERE crv.response_id = ?`
+             WHERE crv.response_id = ?`,
+            [responseId]
           )
-          .all(responseId)
 
     const allowedFieldIds = new Set((allowedRows as Array<{ id: number }>).map(r => r.id))
 
-    const invalid = body.values.find(
+    const invalid = (body.values as IncomingValue[]).find(
       v => !Number.isInteger(v.fieldId) || v.fieldId <= 0 || !allowedFieldIds.has(v.fieldId)
     )
     if (invalid) {
@@ -282,26 +269,21 @@ router.put('/:responseId', (req: Request, res: Response): void => {
       return
     }
 
-    db.exec('BEGIN')
-    try {
-      db.prepare('DELETE FROM collection_response_values WHERE response_id = ?').run(responseId)
+    await db.transaction(async (tx) => {
+      await tx.execute('DELETE FROM collection_response_values WHERE response_id = ?', [responseId])
 
-      const insertValue = db.prepare(
-        `INSERT INTO collection_response_values (response_id, field_id, value)
-         VALUES (?, ?, ?)`
-      )
-      for (const v of body.values) {
+      for (const v of (body.values as IncomingValue[])) {
         const normalized = typeof v.value === 'string' ? v.value : ''
         if (normalized === '') continue
-        insertValue.run(responseId, v.fieldId, normalized)
+        await tx.execute(
+          `INSERT INTO collection_response_values (response_id, field_id, value)
+           VALUES (?, ?, ?)`,
+          [responseId, v.fieldId, normalized]
+        )
       }
 
-      db.prepare("UPDATE collection_responses SET last_edited_at = datetime('now') WHERE id = ?").run(responseId)
-      db.exec('COMMIT')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+      await tx.execute("UPDATE collection_responses SET last_edited_at = datetime('now') WHERE id = ?", [responseId])
+    })
 
     res.json({ updated: true })
   } catch (err) {

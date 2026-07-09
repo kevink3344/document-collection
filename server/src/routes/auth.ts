@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken, JWT_SECRET } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole } from '../lib/userAccess'
@@ -45,23 +45,21 @@ function hashToken(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex')
 }
 
-router.get('/organizations', (_req: Request, res: Response) => {
-  const db = getDb()
+router.get('/organizations', async (_req: Request, res: Response) => {
+  const db = await getDbAsync()
   // Only return orgs that have at least one user (for the login picker)
-  const orgs = db
-    .prepare(
+  const orgs = await db.queryAll<{ id: number; name: string; description: string | null }>(
       `SELECT DISTINCT o.id, o.name, o.description
        FROM organizations o
        INNER JOIN user_organizations uo ON uo.organization_id = o.id
        ORDER BY o.name COLLATE NOCASE ASC`
     )
-    .all() as Array<{ id: number; name: string; description: string | null }>
 
   res.json(orgs)
 })
 
-router.get('/users', (req: Request, res: Response) => {
-  const db = getDb()
+router.get('/users', async (req: Request, res: Response) => {
+  const db = await getDbAsync()
   const { organizationId } = req.query as { organizationId?: string }
 
   let userIds: Array<{ id: number }>
@@ -72,27 +70,23 @@ router.get('/users', (req: Request, res: Response) => {
       res.status(400).json({ error: 'organizationId must be a positive integer' })
       return
     }
-    userIds = db
-      .prepare(
+    userIds = await db.queryAll<{ id: number }>(
         `SELECT u.id FROM users u
          INNER JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = ?
-         ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`
+         ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`,
+        [orgId]
       )
-      .all(orgId) as Array<{ id: number }>
   } else {
-    userIds = db
-      .prepare('SELECT id FROM users ORDER BY name COLLATE NOCASE ASC, id ASC')
-      .all() as Array<{ id: number }>
+    userIds = await db.queryAll<{ id: number }>('SELECT id FROM users ORDER BY name COLLATE NOCASE ASC, id ASC')
   }
 
-  const users = userIds
-    .map(row => loadUserAccessProfile(row.id, null, db))
-    .filter((user): user is UserAccessProfile => Boolean(user))
+  const profiles = await Promise.all(userIds.map(row => loadUserAccessProfile(row.id, null, db)))
+  const users = profiles.filter((user): user is UserAccessProfile => Boolean(user))
 
   res.json(users.map(toApiUser))
 })
 
-router.post('/login', (req: Request, res: Response) => {
+router.post('/login', async (req: Request, res: Response) => {
   const { userId } = req.body as { userId: unknown }
 
   if (typeof userId !== 'number' || !Number.isInteger(userId) || userId < 1) {
@@ -100,7 +94,7 @@ router.post('/login', (req: Request, res: Response) => {
     return
   }
 
-  const user = loadUserAccessProfile(userId)
+  const user = await loadUserAccessProfile(userId)
   if (!user) {
     res.status(404).json({ error: 'User not found' })
     return
@@ -116,8 +110,8 @@ router.post('/logout', (_req: Request, res: Response) => {
   res.json({ message: 'Logged out' })
 })
 
-router.post('/register', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.post('/register', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -160,10 +154,8 @@ router.post('/register', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT id FROM users WHERE email = ?')
-    .get(email.trim()) as { id: number } | undefined
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ?', [email.trim()])
 
   if (existing) {
     res.status(409).json({ error: 'Email already registered' })
@@ -172,30 +164,30 @@ router.post('/register', authenticateToken, (req: Request, res: Response) => {
 
   let organization: { id: number; name: string } | undefined
   if (resolvedOrganizationId !== null) {
-    organization = db
-      .prepare('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1')
-      .get(resolvedOrganizationId) as { id: number; name: string } | undefined
+    organization = await db.queryOne<{ id: number; name: string }>('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1', [resolvedOrganizationId])
     if (!organization) {
       res.status(400).json({ error: 'Selected organization does not exist' })
       return
     }
   }
 
-  const insertedId = db.transaction(() => {
-    const inserted = db
-      .prepare('INSERT INTO users (name, email, role, organization, organization_id) VALUES (?, ?, ?, ?, ?)')
-      .run(name.trim(), email.trim(), userRole, organization?.name ?? null, organization?.id ?? null)
+  const insertedId = await db.transaction(async (tx) => {
+    const inserted = await tx.execute(
+      'INSERT INTO users (name, email, role, organization, organization_id) VALUES (?, ?, ?, ?, ?)',
+      [name.trim(), email.trim(), userRole, organization?.name ?? null, organization?.id ?? null]
+    )
 
     const id = Number(inserted.lastInsertRowid)
     if (organization && isMembershipRole(userRole)) {
-      db.prepare(
-        `INSERT INTO user_organizations (user_id, organization_id, role, is_default) VALUES (?, ?, ?, 1)`
-      ).run(id, organization.id, userRole)
+      await tx.execute(
+        `INSERT INTO user_organizations (user_id, organization_id, role, is_default) VALUES (?, ?, ?, 1)`,
+        [id, organization.id, userRole]
+      )
     }
     return id
-  })()
+  })
 
-  const newUser = loadUserAccessProfile(insertedId)
+  const newUser = await loadUserAccessProfile(insertedId)
   if (!newUser) {
     res.status(500).json({ error: 'Failed to load created user' })
     return
@@ -206,8 +198,8 @@ router.post('/register', authenticateToken, (req: Request, res: Response) => {
   res.status(201).json({ token, user: toApiUser(newUser) })
 })
 
-router.get('/me', authenticateToken, (req: Request, res: Response) => {
-  const user = loadUserAccessProfile(req.user!.sub, req.user?.activeOrganizationId ?? req.user?.organizationId ?? null)
+router.get('/me', authenticateToken, async (req: Request, res: Response) => {
+  const user = await loadUserAccessProfile(req.user!.sub, req.user?.activeOrganizationId ?? req.user?.organizationId ?? null)
   if (!user) {
     res.status(404).json({ error: 'User not found' })
     return
@@ -216,14 +208,14 @@ router.get('/me', authenticateToken, (req: Request, res: Response) => {
   res.json(toApiUser(user))
 })
 
-router.post('/switch-organization', authenticateToken, (req: Request, res: Response) => {
+router.post('/switch-organization', authenticateToken, async (req: Request, res: Response) => {
   const { organizationId } = req.body as { organizationId?: unknown }
   if (typeof organizationId !== 'number' || !Number.isInteger(organizationId) || organizationId < 1) {
     res.status(400).json({ error: 'organizationId must be a positive integer' })
     return
   }
 
-  const user = loadUserAccessProfile(req.user!.sub, organizationId)
+  const user = await loadUserAccessProfile(req.user!.sub, organizationId)
   if (!user) {
     res.status(404).json({ error: 'User not found' })
     return
@@ -239,7 +231,7 @@ router.post('/switch-organization', authenticateToken, (req: Request, res: Respo
   res.json({ token, user: toApiUser(user) })
 })
 
-router.post('/login-with-password', (req: Request, res: Response) => {
+router.post('/login-with-password', async (req: Request, res: Response) => {
   const { email, password } = req.body as { email: unknown; password: unknown }
 
   if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
@@ -247,10 +239,8 @@ router.post('/login-with-password', (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const userRow = db
-    .prepare('SELECT id FROM users WHERE lower(email) = lower(?)')
-    .get(email.trim()) as { id: number } | undefined
+  const db = await getDbAsync()
+  const userRow = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE lower(email) = lower(?)', [email.trim()])
 
   const INVALID = 'Invalid email or password'
   if (!userRow) {
@@ -258,7 +248,7 @@ router.post('/login-with-password', (req: Request, res: Response) => {
     return
   }
 
-  const user = loadUserAccessProfile(userRow.id)
+  const user = await loadUserAccessProfile(userRow.id)
   if (!user) {
     res.status(401).json({ error: INVALID })
     return
@@ -287,11 +277,9 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
+  const db2 = await getDbAsync()
   interface ResetUser { id: number; name: string; password_hash: string | null; invite_token: string | null }
-  const user = db
-    .prepare('SELECT id, name, password_hash, invite_token FROM users WHERE LOWER(email) = LOWER(?)')
-    .get(email.trim()) as ResetUser | undefined
+  const user = await db2.queryOne<ResetUser>('SELECT id, name, password_hash, invite_token FROM users WHERE LOWER(email) = LOWER(?)', [email.trim()])
 
   if (!user || !user.password_hash || user.invite_token) {
     res.json({ message: 'If that email is registered, a reset link has been sent.' })
@@ -302,9 +290,10 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
   const tokenHash = hashToken(rawToken)
   const expiresAt = new Date(Date.now() + RESET_EXPIRY_MS).toISOString()
 
-  db.prepare(
-    `UPDATE users SET reset_token = ?, reset_token_expires_at = ? WHERE id = ?`
-  ).run(tokenHash, expiresAt, user.id)
+  await db2.execute(
+    `UPDATE users SET reset_token = ?, reset_token_expires_at = ? WHERE id = ?`,
+    [tokenHash, expiresAt, user.id]
+  )
 
   const appUrl = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '')
   const resetLink = `${appUrl}/reset-password?token=${rawToken}`
@@ -342,7 +331,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
   res.json(responsePayload)
 })
 
-router.post('/reset-password', (req: Request, res: Response) => {
+router.post('/reset-password', async (req: Request, res: Response) => {
   const { token, newPassword } = req.body as { token: unknown; newPassword: unknown }
 
   if (typeof token !== 'string' || !token.trim()) {
@@ -355,12 +344,10 @@ router.post('/reset-password', (req: Request, res: Response) => {
   }
 
   const tokenHash = hashToken(token.trim())
-  const db = getDb()
+  const db = await getDbAsync()
 
   interface ResetUser { id: number; reset_token: string | null; reset_token_expires_at: string | null }
-  const user = db
-    .prepare('SELECT id, reset_token, reset_token_expires_at FROM users WHERE reset_token = ?')
-    .get(tokenHash) as ResetUser | undefined
+  const user = await db.queryOne<ResetUser>('SELECT id, reset_token, reset_token_expires_at FROM users WHERE reset_token = ?', [tokenHash])
 
   if (!user) {
     res.status(400).json({ error: 'Invalid or expired reset link.' })
@@ -368,15 +355,16 @@ router.post('/reset-password', (req: Request, res: Response) => {
   }
 
   if (!user.reset_token_expires_at || new Date(user.reset_token_expires_at) < new Date()) {
-    db.prepare('UPDATE users SET reset_token = NULL, reset_token_expires_at = NULL WHERE id = ?').run(user.id)
+    await db.execute('UPDATE users SET reset_token = NULL, reset_token_expires_at = NULL WHERE id = ?', [user.id])
     res.status(400).json({ error: 'This reset link has expired. Please request a new one.' })
     return
   }
 
   const passwordHash = hashPassword(newPassword)
-  db.prepare(
-    `UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL WHERE id = ?`
-  ).run(passwordHash, user.id)
+  await db.execute(
+    `UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL WHERE id = ?`,
+    [passwordHash, user.id]
+  )
 
   res.json({ message: 'Password updated successfully.' })
 })

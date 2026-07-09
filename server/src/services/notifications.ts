@@ -1,5 +1,5 @@
-import { getDb } from '../database/db'
-import type { AppDatabase } from '../database/types'
+import { getDbAsync } from '../database/db'
+import type { DbAdapter } from '../database/types'
 import { isEmailDeliveryConfigured, sendNotificationEmail } from './notificationEmail'
 
 export type NotificationType = 'due_soon' | 'overdue' | 'system'
@@ -185,11 +185,8 @@ function resolveType(
   return null
 }
 
-function readSettingInt(db: AppDatabase, key: string, fallback: number): number {
-  const row = db
-    .prepare('SELECT value FROM app_settings WHERE key = ?')
-    .get(key) as unknown as { value: string } | undefined
-
+async function readSettingInt(db: DbAdapter, key: string, fallback: number): Promise<number> {
+  const row = await db.queryOne<{ value: string }>('SELECT value FROM app_settings WHERE key = ?', [key])
   if (!row) return fallback
   const value = parseInt(row.value, 10)
   return Number.isFinite(value) ? value : fallback
@@ -301,30 +298,29 @@ function toApiNotification(row: DbNotificationListRow): NotificationListItem {
   }
 }
 
-export function getNotificationPreferences(userId: number, dbArg?: AppDatabase): NotificationPreferences {
-  const db = dbArg ?? getDb()
-  const row = db
-    .prepare(
+export async function getNotificationPreferences(userId: number, dbArg?: DbAdapter): Promise<NotificationPreferences> {
+  const db = dbArg ?? await getDbAsync()
+  const row = await db.queryOne<DbNotificationPreferenceRow>(
       `SELECT in_app_enabled, email_enabled, due_soon, overdue, collection_updates,
               submission_activity, admin_events
        FROM notification_preferences
        WHERE user_id = ?`,
+      [userId],
     )
-    .get(userId) as unknown as DbNotificationPreferenceRow | undefined
 
   return mapPreferencesRow(row)
 }
 
-export function updateNotificationPreferences(
+export async function updateNotificationPreferences(
   userId: number,
   updates: Partial<NotificationPreferences>,
-  dbArg?: AppDatabase,
-): NotificationPreferences {
-  const db = dbArg ?? getDb()
-  const current = getNotificationPreferences(userId, db)
+  dbArg?: DbAdapter,
+): Promise<NotificationPreferences> {
+  const db = dbArg ?? await getDbAsync()
+  const current = await getNotificationPreferences(userId, db)
   const next: NotificationPreferences = { ...current, ...updates }
 
-  db.prepare(
+  await db.execute(
     `INSERT INTO notification_preferences (
        user_id, in_app_enabled, email_enabled, due_soon, overdue,
        collection_updates, submission_activity, admin_events, updated_at
@@ -338,41 +334,41 @@ export function updateNotificationPreferences(
        submission_activity = excluded.submission_activity,
        admin_events = excluded.admin_events,
        updated_at = datetime('now')`,
-  ).run(
-    userId,
-    next.inAppEnabled ? 1 : 0,
-    next.emailEnabled ? 1 : 0,
-    next.dueSoon ? 1 : 0,
-    next.overdue ? 1 : 0,
-    next.collectionUpdates ? 1 : 0,
-    next.submissionActivity ? 1 : 0,
-    next.adminEvents ? 1 : 0,
+    [
+      userId,
+      next.inAppEnabled ? 1 : 0,
+      next.emailEnabled ? 1 : 0,
+      next.dueSoon ? 1 : 0,
+      next.overdue ? 1 : 0,
+      next.collectionUpdates ? 1 : 0,
+      next.submissionActivity ? 1 : 0,
+      next.adminEvents ? 1 : 0,
+    ]
   )
 
   return next
 }
 
-export function listNotificationEmailCcs(userId: number, dbArg?: AppDatabase): NotificationEmailCc[] {
-  const db = dbArg ?? getDb()
-  const rows = db
-    .prepare(
+export async function listNotificationEmailCcs(userId: number, dbArg?: DbAdapter): Promise<NotificationEmailCc[]> {
+  const db = dbArg ?? await getDbAsync()
+  const rows = await db.queryAll<DbNotificationEmailCcRow>(
       `SELECT id, user_id, cc_email, notification_types, is_active, created_at, updated_at
        FROM notification_email_ccs
        WHERE user_id = ?
        ORDER BY updated_at DESC, id DESC`,
+      [userId],
     )
-    .all(userId) as unknown as DbNotificationEmailCcRow[]
 
   return rows.map(toApiEmailCc)
 }
 
-export function addNotificationEmailCc(
+export async function addNotificationEmailCc(
   userId: number,
   email: string,
   notificationTypes: NotificationType[] | null,
-  dbArg?: AppDatabase,
-): NotificationEmailCc {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<NotificationEmailCc> {
+  const db = dbArg ?? await getDbAsync()
   const normalizedEmail = email.trim().toLowerCase()
   if (!emailLooksValid(normalizedEmail)) {
     throw new Error('A valid email address is required')
@@ -382,76 +378,73 @@ export function addNotificationEmailCc(
     ? JSON.stringify(notificationTypes)
     : null
 
-  db.prepare(
+  await db.execute(
     `INSERT INTO notification_email_ccs (user_id, cc_email, notification_types, is_active, updated_at)
      VALUES (?, ?, ?, 1, datetime('now'))
      ON CONFLICT(user_id, cc_email) DO UPDATE SET
        notification_types = excluded.notification_types,
        is_active = 1,
        updated_at = datetime('now')`,
-  ).run(userId, normalizedEmail, serializedTypes)
+    [userId, normalizedEmail, serializedTypes]
+  )
 
-  const row = db
-    .prepare(
+  const row = await db.queryOne<DbNotificationEmailCcRow>(
       `SELECT id, user_id, cc_email, notification_types, is_active, created_at, updated_at
        FROM notification_email_ccs
        WHERE user_id = ? AND cc_email = ?`,
+      [userId, normalizedEmail]
     )
-    .get(userId, normalizedEmail) as unknown as DbNotificationEmailCcRow
 
-  return toApiEmailCc(row)
+  return toApiEmailCc(row!)
 }
 
-export function deleteNotificationEmailCc(userId: number, ccId: number, dbArg?: AppDatabase): boolean {
-  const db = dbArg ?? getDb()
-  const result = db
-    .prepare('DELETE FROM notification_email_ccs WHERE id = ? AND user_id = ?')
-    .run(ccId, userId)
+export async function deleteNotificationEmailCc(userId: number, ccId: number, dbArg?: DbAdapter): Promise<boolean> {
+  const db = dbArg ?? await getDbAsync()
+  const result = await db.execute(
+    'DELETE FROM notification_email_ccs WHERE id = ? AND user_id = ?',
+    [ccId, userId]
+  )
   return Number(result.changes ?? 0) > 0
 }
 
-export function createNotificationEventWithDeliveries(
+export async function createNotificationEventWithDeliveries(
   event: NotificationEventInput,
   recipients: NotificationRecipientInput[],
-  dbArg?: AppDatabase,
-): number {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<number> {
+  const db = dbArg ?? await getDbAsync()
   if (recipients.length === 0) return 0
 
-  db.exec('BEGIN')
-  try {
+  return db.transaction(async (tx) => {
     let eventId: number | null = null
     if (event.dedupeKey) {
-      const existing = db
-        .prepare('SELECT id FROM notification_events WHERE dedupe_key = ?')
-        .get(event.dedupeKey) as unknown as { id: number } | undefined
+      const existing = await tx.queryOne<{ id: number }>('SELECT id FROM notification_events WHERE dedupe_key = ?', [event.dedupeKey])
       eventId = existing?.id ?? null
     }
 
     if (!eventId) {
-      const inserted = db
-        .prepare(
+      const inserted = await tx.execute(
           `INSERT INTO notification_events (
              organization_id, type, title, message, collection_id, collection_slug,
              due_date, target_type, target_id, action_url, priority, metadata,
              dedupe_key, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`
-        )
-        .run(
-          event.organizationId ?? null,
-          event.type,
-          event.title,
-          event.message,
-          event.collectionId ?? null,
-          event.collectionSlug ?? null,
-          event.dueDate ?? null,
-          event.targetType ?? null,
-          event.targetId ?? null,
-          resolveActionUrl(event),
-          event.priority ?? 'normal',
-          serializeMetadata(event.metadata),
-          event.dedupeKey ?? null,
-          event.createdAt ?? null,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
+          [
+            event.organizationId ?? null,
+            event.type,
+            event.title,
+            event.message,
+            event.collectionId ?? null,
+            event.collectionSlug ?? null,
+            event.dueDate ?? null,
+            event.targetType ?? null,
+            event.targetId ?? null,
+            resolveActionUrl(event),
+            event.priority ?? 'normal',
+            serializeMetadata(event.metadata),
+            event.dedupeKey ?? null,
+            event.createdAt ?? null,
+          ]
         )
       eventId = Number(inserted.lastInsertRowid)
     }
@@ -471,40 +464,37 @@ export function createNotificationEventWithDeliveries(
       const status: NotificationDeliveryStatus = recipient.channel === 'in_app' ? 'sent' : 'pending'
       const sentAt = recipient.channel === 'in_app' ? (event.createdAt ?? new Date().toISOString()) : null
 
-      db.prepare(
-        `INSERT OR IGNORE INTO notification_deliveries (
-           event_id, recipient_user_id, recipient_email, channel, recipient_role,
-           status, sent_at, dedupe_key, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`
-      ).run(
-        eventId,
-        recipient.userId ?? null,
-        normalizedEmail,
-        recipient.channel,
-        role,
-        status,
-        sentAt,
-        dedupeKey,
-        event.createdAt ?? null,
-      )
+      await tx.execute(
+          `INSERT OR IGNORE INTO notification_deliveries (
+             event_id, recipient_user_id, recipient_email, channel, recipient_role,
+             status, sent_at, dedupe_key, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
+          [
+            eventId,
+            recipient.userId ?? null,
+            normalizedEmail,
+            recipient.channel,
+            role,
+            status,
+            sentAt,
+            dedupeKey,
+            event.createdAt ?? null,
+          ]
+        )
     }
 
-    db.exec('COMMIT')
     return eventId
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  })
 }
 
-export function listInAppNotificationsForUser(
+export async function listInAppNotificationsForUser(
   userId: number,
   organizationId: number | null,
   isAdminUser: boolean,
   limit = 100,
-  dbArg?: AppDatabase,
-): NotificationListItem[] {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<NotificationListItem[]> {
+  const db = dbArg ?? await getDbAsync()
   const params: Array<number> = [userId]
   const scopeClause = !isAdminUser && organizationId
     ? 'AND (e.organization_id = ? OR e.organization_id IS NULL)'
@@ -517,8 +507,7 @@ export function listInAppNotificationsForUser(
   }
   params.push(limit)
 
-  const rows = db
-    .prepare(
+  const rows = await db.queryAll<DbNotificationListRow>(
       `SELECT
          d.id AS delivery_id,
          d.event_id,
@@ -544,20 +533,20 @@ export function listInAppNotificationsForUser(
          AND d.status != 'dismissed'
          ${scopeClause}
        ORDER BY CASE WHEN d.status = 'read' THEN 1 ELSE 0 END, d.created_at DESC
-       LIMIT ?`
+       LIMIT ?`,
+      params
     )
-    .all(...params) as unknown as DbNotificationListRow[]
 
   return rows.map(toApiNotification)
 }
 
-export function getUnreadInAppNotificationCount(
+export async function getUnreadInAppNotificationCount(
   userId: number,
   organizationId: number | null,
   isAdminUser: boolean,
-  dbArg?: AppDatabase,
-): number {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<number> {
+  const db = dbArg ?? await getDbAsync()
   const params: Array<number> = [userId]
   const scopeClause = !isAdminUser && organizationId
     ? 'AND (e.organization_id = ? OR e.organization_id IS NULL)'
@@ -569,29 +558,28 @@ export function getUnreadInAppNotificationCount(
     params.push(organizationId!)
   }
 
-  const row = db
-    .prepare(
+  const row = await db.queryOne<{ count: number }>(
       `SELECT COUNT(*) AS count
        FROM notification_deliveries d
        JOIN notification_events e ON e.id = d.event_id
        WHERE d.channel = 'in_app'
          AND d.recipient_user_id = ?
          AND d.status = 'sent'
-         ${scopeClause}`
+         ${scopeClause}`,
+      params
     )
-    .get(...params) as unknown as { count: number }
 
-  return row.count
+  return row?.count ?? 0
 }
 
-export function markInAppNotificationRead(
+export async function markInAppNotificationRead(
   deliveryId: number,
   userId: number,
   organizationId: number | null,
   isAdminUser: boolean,
-  dbArg?: AppDatabase,
-): NotificationListItem | null {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<NotificationListItem | null> {
+  const db = dbArg ?? await getDbAsync()
   const params: Array<number> = [deliveryId, userId]
   const scopeClause = !isAdminUser && organizationId
     ? 'AND (e.organization_id = ? OR e.organization_id IS NULL)'
@@ -603,41 +591,41 @@ export function markInAppNotificationRead(
     params.push(organizationId!)
   }
 
-  const existing = db
-    .prepare(
+  const existing = await db.queryOne<{ delivery_id: number }>(
       `SELECT d.id AS delivery_id
        FROM notification_deliveries d
        JOIN notification_events e ON e.id = d.event_id
        WHERE d.id = ?
          AND d.channel = 'in_app'
          AND d.recipient_user_id = ?
-         ${scopeClause}`
+         ${scopeClause}`,
+      params
     )
-    .get(...params) as unknown as { delivery_id: number } | undefined
 
   if (!existing) {
     return null
   }
 
-  db.prepare(
+  await db.execute(
     `UPDATE notification_deliveries
      SET status = 'read',
          read_at = COALESCE(read_at, datetime('now'))
-     WHERE id = ? AND recipient_user_id = ?`
-  ).run(deliveryId, userId)
+     WHERE id = ? AND recipient_user_id = ?`,
+    [deliveryId, userId]
+  )
 
-  return listInAppNotificationsForUser(userId, organizationId, isAdminUser, 1000, db)
+  return (await listInAppNotificationsForUser(userId, organizationId, isAdminUser, 1000, db))
     .find((item) => item.id === deliveryId) ?? null
 }
 
-export function dismissInAppNotification(
+export async function dismissInAppNotification(
   deliveryId: number,
   userId: number,
   organizationId: number | null,
   isAdminUser: boolean,
-  dbArg?: AppDatabase,
-): NotificationListItem | null {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<NotificationListItem | null> {
+  const db = dbArg ?? await getDbAsync()
   const params: Array<number> = [deliveryId, userId]
   const scopeClause = !isAdminUser && organizationId
     ? 'AND (e.organization_id = ? OR e.organization_id IS NULL)'
@@ -649,39 +637,39 @@ export function dismissInAppNotification(
     params.push(organizationId!)
   }
 
-  const existing = db
-    .prepare(
+  const existing2 = await db.queryOne<{ delivery_id: number }>(
       `SELECT d.id AS delivery_id
        FROM notification_deliveries d
        JOIN notification_events e ON e.id = d.event_id
        WHERE d.id = ?
          AND d.channel = 'in_app'
          AND d.recipient_user_id = ?
-         ${scopeClause}`
+         ${scopeClause}`,
+      params
     )
-    .get(...params) as unknown as { delivery_id: number } | undefined
 
-  if (!existing) {
+  if (!existing2) {
     return null
   }
 
-  db.prepare(
+  await db.execute(
     `UPDATE notification_deliveries
      SET status = 'dismissed', read_at = COALESCE(read_at, datetime('now'))
-     WHERE id = ? AND recipient_user_id = ?`
-  ).run(deliveryId, userId)
+     WHERE id = ? AND recipient_user_id = ?`,
+    [deliveryId, userId]
+  )
 
-  return listInAppNotificationsForUser(userId, organizationId, isAdminUser, 1000, db)
+  return (await listInAppNotificationsForUser(userId, organizationId, isAdminUser, 1000, db))
     .find((item) => item.id === deliveryId) ?? null
 }
 
-export function markAllInAppNotificationsRead(
+export async function markAllInAppNotificationsRead(
   userId: number,
   organizationId: number | null,
   isAdminUser: boolean,
-  dbArg?: AppDatabase,
-): number {
-  const db = dbArg ?? getDb()
+  dbArg?: DbAdapter,
+): Promise<number> {
+  const db = dbArg ?? await getDbAsync()
   const params: Array<number> = [userId]
   const scopeClause = !isAdminUser && organizationId
     ? 'AND (e.organization_id = ? OR e.organization_id IS NULL)'
@@ -693,43 +681,47 @@ export function markAllInAppNotificationsRead(
     params.push(organizationId!)
   }
 
-  const ids = db
-    .prepare(
+  const ids = await db.queryAll<{ id: number }>(
       `SELECT d.id
        FROM notification_deliveries d
        JOIN notification_events e ON e.id = d.event_id
        WHERE d.channel = 'in_app'
          AND d.recipient_user_id = ?
          AND d.status = 'sent'
-         ${scopeClause}`
+         ${scopeClause}`,
+      params
     )
-    .all(...params) as Array<{ id: number }>
 
   if (ids.length === 0) {
     return 0
   }
 
   const placeholders = ids.map(() => '?').join(',')
-  const result = db
-    .prepare(
+  const result = await db.execute(
       `UPDATE notification_deliveries
        SET status = 'read',
            read_at = COALESCE(read_at, datetime('now'))
-       WHERE id IN (${placeholders})`
+       WHERE id IN (${placeholders})`,
+      ids.map((row) => row.id)
     )
-    .run(...ids.map((row) => row.id))
 
   return Number(result.changes ?? 0)
 }
 
-export function dispatchPendingEmailNotifications(dbArg?: AppDatabase): void {
+export async function dispatchPendingEmailNotifications(dbArg?: DbAdapter): Promise<void> {
   if (!isEmailDeliveryConfigured()) {
     return
   }
 
-  const db = dbArg ?? getDb()
-  const rows = db
-    .prepare(
+  const db = dbArg ?? await getDbAsync()
+  const rows = await db.queryAll<{
+      id: number
+      recipient_email: string
+      recipient_role: NotificationRecipientRole
+      title: string
+      message: string
+      action_url: string | null
+    }>(
       `SELECT d.id, d.recipient_email, d.recipient_role, e.title, e.message, e.action_url
        FROM notification_deliveries d
        JOIN notification_events e ON e.id = d.event_id
@@ -739,14 +731,6 @@ export function dispatchPendingEmailNotifications(dbArg?: AppDatabase): void {
        ORDER BY d.created_at ASC
        LIMIT 50`
     )
-    .all() as Array<{
-      id: number
-      recipient_email: string
-      recipient_role: NotificationRecipientRole
-      title: string
-      message: string
-      action_url: string | null
-    }>
 
   for (const row of rows) {
     try {
@@ -756,47 +740,45 @@ export function dispatchPendingEmailNotifications(dbArg?: AppDatabase): void {
         text: row.action_url ? `${row.message}\n\nOpen: ${row.action_url}` : row.message,
       })
 
-      db.prepare(
+      await db.execute(
         `UPDATE notification_deliveries
          SET status = 'sent',
              sent_at = datetime('now'),
              failed_at = NULL,
              failure_reason = NULL
-         WHERE id = ?`
-      ).run(row.id)
+         WHERE id = ?`,
+        [row.id]
+      )
     } catch (err) {
-      db.prepare(
+      await db.execute(
         `UPDATE notification_deliveries
          SET status = 'failed',
              failed_at = datetime('now'),
              failure_reason = ?
-         WHERE id = ?`
-      ).run(err instanceof Error ? err.message : 'Email delivery failed', row.id)
+         WHERE id = ?`,
+        [err instanceof Error ? err.message : 'Email delivery failed', row.id]
+      )
     }
   }
 }
 
-export function generateDueDateNotifications(dbArg?: AppDatabase): void {
-  const db = dbArg ?? getDb()
+export async function generateDueDateNotifications(dbArg?: DbAdapter): Promise<void> {
+  const db = dbArg ?? await getDbAsync()
   const now = new Date()
-  const reminderOffsetDays = readSettingInt(db, 'notification_reminder_days', -3)
-  const lateOffsetDays = readSettingInt(db, 'notification_late_days', 1)
+  const reminderOffsetDays = await readSettingInt(db, 'notification_reminder_days', -3)
+  const lateOffsetDays = await readSettingInt(db, 'notification_late_days', 1)
 
-  const users = db
-    .prepare(`SELECT id, email, organization_id FROM users WHERE role = 'user'`)
-    .all() as unknown as DbUser[]
+  const users = await db.queryAll<DbUser>(`SELECT id, email, organization_id FROM users WHERE role = 'user'`)
 
   if (users.length === 0) return
 
-  const collections = db
-    .prepare(
+  const collections = await db.queryAll<DbCollectionDue>(
       `SELECT id, slug, title, date_due, organization_id
        FROM collections
        WHERE status = 'published'
          AND date_due IS NOT NULL
          AND trim(date_due) <> ''`
     )
-    .all() as unknown as DbCollectionDue[]
 
   for (const collection of collections) {
     const dueAt = parseDueDate(collection.date_due)
@@ -810,7 +792,7 @@ export function generateDueDateNotifications(dbArg?: AppDatabase): void {
         continue
       }
 
-      const preferences = getNotificationPreferences(user.id, db)
+      const preferences = await getNotificationPreferences(user.id, db)
       if (!shouldSendType(preferences, type)) {
         continue
       }
@@ -826,14 +808,14 @@ export function generateDueDateNotifications(dbArg?: AppDatabase): void {
         recipients.push({ userId: user.id, email: user.email.trim(), channel: 'email', role: 'primary' })
       }
 
-      const ccRecipients = listNotificationEmailCcs(user.id, db)
+      const ccRecipients = (await listNotificationEmailCcs(user.id, db))
         .filter((cc) => cc.isActive && matchesTypeFilter(cc.notificationTypes, type))
 
       for (const cc of ccRecipients) {
         recipients.push({ email: cc.email, channel: 'email', role: 'cc' })
       }
 
-      createNotificationEventWithDeliveries(
+      await createNotificationEventWithDeliveries(
         {
           organizationId: collection.organization_id,
           type,
@@ -854,5 +836,5 @@ export function generateDueDateNotifications(dbArg?: AppDatabase): void {
     }
   }
 
-  dispatchPendingEmailNotifications(db)
+  await dispatchPendingEmailNotifications(db)
 }

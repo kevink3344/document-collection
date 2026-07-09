@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 import multer from 'multer'
 import { randomUUID } from 'crypto'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { isAdminOrSuperAdmin, loadRequestUserContext, resolveManagedOrganizationId } from '../middleware/organizationAccess'
 import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
@@ -69,8 +69,8 @@ function toApiGalleryAsset(row: DbGalleryAssetRow) {
   }
 }
 
-router.get('/', authenticateToken, (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -89,9 +89,9 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
     Number.isInteger(requestedOrganizationId) ? requestedOrganizationId : null,
   )
 
-  const db = getDb()
+  const db = await getDbAsync()
   const rows = organizationId
-    ? db.prepare(`
+    ? await db.queryAll<DbGalleryAssetRow>(`
         SELECT
           ga.*,
           o.name AS organization_name,
@@ -100,8 +100,8 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
         JOIN organizations o ON o.id = ga.organization_id
         WHERE ga.organization_id = ?
         ORDER BY ga.created_at DESC, ga.id DESC
-      `).all(organizationId) as DbGalleryAssetRow[]
-    : db.prepare(`
+      `, [organizationId])
+    : await db.queryAll<DbGalleryAssetRow>(`
         SELECT
           ga.*,
           o.name AS organization_name,
@@ -109,13 +109,13 @@ router.get('/', authenticateToken, (req: Request, res: Response) => {
         FROM gallery_assets ga
         JOIN organizations o ON o.id = ga.organization_id
         ORDER BY ga.created_at DESC, ga.id DESC
-      `).all() as DbGalleryAssetRow[]
+      `)
 
   res.json(rows.map(toApiGalleryAsset))
 })
 
 router.post('/', authenticateToken, upload.single('file'), async (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -155,14 +155,14 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
 
   if (!isGoogleDriveConfigured()) {
     // ── Local DB storage fallback ──────────────────────────────────────────
     const localId = `local:${randomUUID()}`
     const fileDataBase64 = req.file.buffer.toString('base64')
 
-    const result = db.prepare(`
+    const result = await db.execute(`
       INSERT INTO gallery_assets (
         organization_id,
         name,
@@ -175,7 +175,7 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
         created_by_user_id,
         updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(
+    `, [
       organizationId,
       name,
       String(req.body.altText ?? '').trim() || null,
@@ -185,14 +185,14 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
       localId,
       fileDataBase64,
       context.id,
-    )
+    ])
 
-    const row = db.prepare(`
+    const row = await db.queryOne<DbGalleryAssetRow>(`
       SELECT ga.*, o.name AS organization_name, 0 AS usage_count
       FROM gallery_assets ga
       JOIN organizations o ON o.id = ga.organization_id
       WHERE ga.id = ?
-    `).get(Number(result.lastInsertRowid)) as DbGalleryAssetRow | undefined
+    `, [Number(result.lastInsertRowid)])
 
     if (!row) {
       res.status(500).json({ error: 'Failed to load uploaded gallery asset' })
@@ -210,7 +210,7 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
       buffer: req.file.buffer,
     })
 
-    const result = db.prepare(`
+    const result = await db.execute(`
       INSERT INTO gallery_assets (
         organization_id,
         name,
@@ -224,7 +224,7 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
         created_by_user_id,
         updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(
+    `, [
       organizationId,
       name,
       String(req.body.altText ?? '').trim() || null,
@@ -235,14 +235,14 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
       uploaded.webViewUrl,
       uploaded.webContentUrl,
       context.id,
-    )
+    ])
 
-    const row = db.prepare(`
+    const row = await db.queryOne<DbGalleryAssetRow>(`
       SELECT ga.*, o.name AS organization_name, 0 AS usage_count
       FROM gallery_assets ga
       JOIN organizations o ON o.id = ga.organization_id
       WHERE ga.id = ?
-    `).get(Number(result.lastInsertRowid)) as DbGalleryAssetRow | undefined
+    `, [Number(result.lastInsertRowid)])
 
     if (!row) {
       res.status(500).json({ error: 'Failed to load uploaded gallery asset' })
@@ -256,7 +256,7 @@ router.post('/', authenticateToken, upload.single('file'), async (req: Request, 
 })
 
 router.get('/:id/file', authenticateToken, async (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -273,12 +273,12 @@ router.get('/:id/file', authenticateToken, async (req: Request, res: Response) =
     return
   }
 
-  const db = getDb()
-  const row = db.prepare(`
+  const db = await getDbAsync()
+  const row = await db.queryOne<{ id: number; organization_id: number; drive_file_id: string; file_data: string | null; mime_type: string; name: string }>(`
     SELECT id, organization_id, drive_file_id, file_data, mime_type, name
     FROM gallery_assets
     WHERE id = ?
-  `).get(id) as { id: number; organization_id: number; drive_file_id: string; file_data: string | null; mime_type: string; name: string } | undefined
+  `, [id])
 
   if (!row || (context.role !== 'super_admin' && row.organization_id !== context.organizationId)) {
     res.status(404).json({ error: 'Gallery asset not found' })
@@ -309,7 +309,7 @@ router.get('/:id/file', authenticateToken, async (req: Request, res: Response) =
 })
 
 router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
-  const context = loadRequestUserContext(req)
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -326,25 +326,25 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
     return
   }
 
-  const db = getDb()
-  const asset = db.prepare(`
+  const db = await getDbAsync()
+  const asset = await db.queryOne<{ id: number; organization_id: number; drive_file_id: string }>(`
     SELECT id, organization_id, drive_file_id
     FROM gallery_assets
     WHERE id = ?
-  `).get(id) as { id: number; organization_id: number; drive_file_id: string } | undefined
+  `, [id])
 
   if (!asset || (context.role !== 'super_admin' && asset.organization_id !== context.organizationId)) {
     res.status(404).json({ error: 'Gallery asset not found' })
     return
   }
 
-  const usage = db.prepare('SELECT COUNT(*) AS count FROM collections WHERE cover_photo_asset_id = ?').get(id) as { count: number }
-  if ((usage.count ?? 0) > 0) {
-    res.status(409).json({ error: `This image is currently used by ${usage.count} collection${usage.count === 1 ? '' : 's'}` })
+  const usage = await db.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM collections WHERE cover_photo_asset_id = ?', [id])
+  if ((usage?.count ?? 0) > 0) {
+    res.status(409).json({ error: `This image is currently used by ${usage?.count ?? 0} collection${(usage?.count ?? 0) === 1 ? '' : 's'}` })
     return
   }
 
-  db.prepare('DELETE FROM gallery_assets WHERE id = ?').run(id)
+  await db.execute('DELETE FROM gallery_assets WHERE id = ?', [id])
 
   // Only attempt Drive deletion for non-local assets
   if (!asset.drive_file_id.startsWith('local:')) {

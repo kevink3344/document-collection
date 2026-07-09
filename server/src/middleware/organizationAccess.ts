@@ -28,13 +28,13 @@ export function canViewAllResponses(context: RequestUserContext): boolean {
   return context.role === 'super_admin' || context.role === 'administrator' || context.role === 'team_manager'
 }
 
-export function loadRequestUserContext(req: Request): RequestUserContext | null {
+export async function loadRequestUserContext(req: Request): Promise<RequestUserContext | null> {
   const userId = req.user?.sub
   if (!userId) {
     return null
   }
 
-  const profile = loadUserAccessProfile(userId, req.user?.activeOrganizationId ?? req.user?.organizationId ?? null)
+  const profile = await loadUserAccessProfile(userId, req.user?.activeOrganizationId ?? req.user?.organizationId ?? null)
   if (!profile) {
     return null
   }

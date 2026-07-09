@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator, type RequestUserContext } from '../middleware/organizationAccess'
 
@@ -90,15 +90,15 @@ function buildTemplateScope(
   return { clause: 'WHERE tt.organization_id = ?', params: [context.organizationId] }
 }
 
-function fetchAccessibleTemplate(
+async function fetchAccessibleTemplate(
   templateId: number,
   context: RequestUserContext,
   options: { forceOrganizationScope?: boolean } = {},
-): DbTicketTemplate | undefined {
-  const db = getDb()
+): Promise<DbTicketTemplate | undefined> {
+  const db = await getDbAsync()
   const scope = buildTemplateScope(context, options)
   const whereClause = scope.clause ? `${scope.clause} AND tt.id = ?` : 'WHERE tt.id = ?'
-  return db.prepare(`
+  return db.queryOne<DbTicketTemplate>(`
     SELECT
       tt.*, 
       o.name AS organization_name,
@@ -108,7 +108,7 @@ function fetchAccessibleTemplate(
     LEFT JOIN organizations o ON o.id = tt.organization_id
     ${whereClause}
     LIMIT 1
-  `).get(...scope.params, templateId) as DbTicketTemplate | undefined
+  `, [...scope.params, templateId])
 }
 
 function toApiTemplate(row: DbTicketTemplate) {
@@ -127,18 +127,18 @@ function toApiTemplate(row: DbTicketTemplate) {
   }
 }
 
-router.get('/', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   if (!context || !canManageTicketTemplates(context)) {
     res.status(403).json({ error: 'Manager access required' })
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
   const scope = buildTemplateScope(context, {
     forceOrganizationScope: shouldUseOrganizationTemplateScope(req),
   })
-  const rows = db.prepare(`
+  const rows = await db.queryAll<DbTicketTemplate>(`
     SELECT
       tt.*, 
       o.name AS organization_name,
@@ -148,13 +148,13 @@ router.get('/', authenticateToken, (req: Request, res: Response): void => {
     LEFT JOIN organizations o ON o.id = tt.organization_id
     ${scope.clause}
     ORDER BY lower(tt.title) ASC, tt.id ASC
-  `).all(...scope.params) as DbTicketTemplate[]
+  `, scope.params)
 
   res.json(rows.map(toApiTemplate))
 })
 
-router.post('/', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.post('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   if (!context || !canManageTicketTemplates(context)) {
     res.status(403).json({ error: 'Manager access required' })
     return
@@ -174,18 +174,18 @@ router.post('/', authenticateToken, (req: Request, res: Response): void => {
     return
   }
 
-  const db = getDb()
-  const inserted = db.prepare(`
+  const db = await getDbAsync()
+  const inserted = await db.execute(`
     INSERT INTO ticket_templates (organization_id, title, description, created_by)
     VALUES (?, ?, ?, ?)
-  `).run(
+  `, [
     organizationOnly ? context.organizationId : (isAdministrator(context) ? null : context.organizationId),
     title,
     description || null,
     context.id,
-  )
+  ])
 
-  const created = fetchAccessibleTemplate(Number(inserted.lastInsertRowid), context, {
+  const created = await fetchAccessibleTemplate(Number(inserted.lastInsertRowid), context, {
     forceOrganizationScope: organizationOnly,
   })
   if (!created) {
@@ -196,15 +196,15 @@ router.post('/', authenticateToken, (req: Request, res: Response): void => {
   res.status(201).json(toApiTemplate(created))
 })
 
-router.patch('/:id', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.patch('/:id', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = Number(req.params.id)
   if (!context || !canManageTicketTemplates(context) || !Number.isInteger(id)) {
     res.status(400).json({ error: 'Invalid request' })
     return
   }
 
-  const existing = fetchAccessibleTemplate(id, context)
+  const existing = await fetchAccessibleTemplate(id, context)
   if (!existing) {
     res.status(404).json({ error: 'Ticket template not found' })
     return
@@ -222,14 +222,14 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response): void => {
     return
   }
 
-  const db = getDb()
-  db.prepare(`
+  const db = await getDbAsync()
+  await db.execute(`
     UPDATE ticket_templates
     SET title = ?, description = ?, is_active = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).run(title, description, isActive, id)
+  `, [title, description, isActive, id])
 
-  const updated = fetchAccessibleTemplate(id, context)
+  const updated = await fetchAccessibleTemplate(id, context)
   if (!updated) {
     res.status(500).json({ error: 'Failed to update template' })
     return
@@ -238,26 +238,22 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response): void => {
   res.json(toApiTemplate(updated))
 })
 
-router.get('/:id/fields', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/:id/fields', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = Number(req.params.id)
   if (!context || !canManageTicketTemplates(context) || !Number.isInteger(id)) {
     res.status(400).json({ error: 'Invalid request' })
     return
   }
 
-  const template = fetchAccessibleTemplate(id, context)
+  const template = await fetchAccessibleTemplate(id, context)
   if (!template) {
     res.status(404).json({ error: 'Ticket template not found' })
     return
   }
 
-  const db = getDb()
-  const fields = db.prepare(`
-    SELECT * FROM ticket_fields
-    WHERE ticket_template_id = ?
-    ORDER BY page_number ASC, sort_order ASC, id ASC
-  `).all(id) as Array<{
+  const db = await getDbAsync()
+  const fields = await db.queryAll<{
     id: number
     field_key: string | null
     type: string
@@ -268,22 +264,26 @@ router.get('/:id/fields', authenticateToken, (req: Request, res: Response): void
     options: string | null
     display_style: string
     sort_order: number
-  }>
+  }>(`
+    SELECT * FROM ticket_fields
+    WHERE ticket_template_id = ?
+    ORDER BY page_number ASC, sort_order ASC, id ASC
+  `, [id])
 
   const fieldIds = fields.map(field => field.id)
   const cols = fieldIds.length > 0
-    ? db.prepare(`
-        SELECT * FROM ticket_table_columns
-        WHERE ticket_field_id IN (${fieldIds.map(() => '?').join(',')})
-        ORDER BY sort_order ASC, id ASC
-      `).all(...fieldIds) as Array<{
+    ? await db.queryAll<{
         id: number
         ticket_field_id: number
         name: string
         col_type: string
         list_options: string | null
         sort_order: number
-      }>
+      }>(`
+        SELECT * FROM ticket_table_columns
+        WHERE ticket_field_id IN (${fieldIds.map(() => '?').join(',')})
+        ORDER BY sort_order ASC, id ASC
+      `, fieldIds)
     : []
 
   const colsByField = new Map<number, typeof cols>()
@@ -316,15 +316,15 @@ router.get('/:id/fields', authenticateToken, (req: Request, res: Response): void
   })))
 })
 
-router.put('/:id/fields', authenticateToken, (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.put('/:id/fields', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   const id = Number(req.params.id)
   if (!context || !canManageTicketTemplates(context) || !Number.isInteger(id)) {
     res.status(400).json({ error: 'Invalid request' })
     return
   }
 
-  const template = fetchAccessibleTemplate(id, context)
+  const template = await fetchAccessibleTemplate(id, context)
   if (!template) {
     res.status(404).json({ error: 'Ticket template not found' })
     return
@@ -332,21 +332,21 @@ router.put('/:id/fields', authenticateToken, (req: Request, res: Response): void
 
   const body = req.body as { fields?: FieldInput[] }
   const fields = Array.isArray(body.fields) ? body.fields : []
-  const db = getDb()
-  const existingFields = db.prepare(`
+  const db = await getDbAsync()
+  const existingFields = await db.queryAll<{ id: number; field_key: string | null }>(`
     SELECT id, field_key FROM ticket_fields WHERE ticket_template_id = ?
-  `).all(id) as Array<{ id: number; field_key: string | null }>
+  `, [id])
   const oldFieldIds = existingFields.map(field => field.id)
   const existingFieldKeyById = new Map(existingFields.map(field => [field.id, field.field_key?.trim() || `tf-${field.id}`]))
 
-  try { db.exec('PRAGMA foreign_keys = OFF') } catch { /* Turso */ }
+  try { await db.execute('PRAGMA foreign_keys = OFF') } catch { /* SQL Server */ }
 
-  db.prepare('DELETE FROM ticket_fields WHERE ticket_template_id = ?').run(id)
+  await db.execute('DELETE FROM ticket_fields WHERE ticket_template_id = ?', [id])
 
   const newFieldIdByKey = new Map<string, number>()
-  fields.forEach((field, index) => {
+  for (const [index, field] of fields.entries()) {
     const normalizedFieldKey = field.fieldKey?.trim() || crypto.randomUUID()
-    const inserted = db.prepare(`
+    const inserted = await db.execute(`
       INSERT INTO ticket_fields (
         collection_id,
         ticket_template_id,
@@ -360,7 +360,7 @@ router.put('/:id/fields', authenticateToken, (req: Request, res: Response): void
         display_style,
         sort_order
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       null,
       id,
       normalizedFieldKey,
@@ -372,17 +372,17 @@ router.put('/:id/fields', authenticateToken, (req: Request, res: Response): void
       field.options?.length ? JSON.stringify(field.options) : null,
       resolveFieldDisplayStyle(field.type, field.displayStyle),
       field.sortOrder ?? index,
-    )
+    ])
 
     const fieldId = Number(inserted.lastInsertRowid)
     newFieldIdByKey.set(normalizedFieldKey, fieldId)
 
     if (field.type === 'custom_table' && field.tableColumns?.length) {
-      field.tableColumns.forEach((column, columnIndex) => {
-        db.prepare(`
+      for (const [columnIndex, column] of (field.tableColumns ?? []).entries()) {
+        await db.execute(`
           INSERT INTO ticket_table_columns (ticket_field_id, name, col_type, list_options, sort_order)
           VALUES (?, ?, ?, ?, ?)
-        `).run(
+        `, [
           fieldId,
           column.name,
           column.colType,
@@ -390,31 +390,24 @@ router.put('/:id/fields', authenticateToken, (req: Request, res: Response): void
             ? JSON.stringify((column.listOptions ?? []).map(option => option.trim()).filter(Boolean))
             : null,
           column.sortOrder ?? columnIndex,
-        )
-      })
-    }
-  })
-
-  if (oldFieldIds.length > 0) {
-    const remapValueField = db.prepare('UPDATE ticket_response_values SET ticket_field_id = ? WHERE ticket_field_id = ?')
-    const obsoleteFieldIds: number[] = []
-
-    oldFieldIds.forEach(oldFieldId => {
-      const fieldKey = existingFieldKeyById.get(oldFieldId)
-      const replacementFieldId = fieldKey ? newFieldIdByKey.get(fieldKey) : undefined
-      if (replacementFieldId) {
-        remapValueField.run(replacementFieldId, oldFieldId)
-      } else {
-        obsoleteFieldIds.push(oldFieldId)
+        ])
       }
-    })
-
-    if (obsoleteFieldIds.length > 0) {
-      db.prepare(`DELETE FROM ticket_response_values WHERE ticket_field_id IN (${obsoleteFieldIds.map(() => '?').join(',')})`).run(...obsoleteFieldIds)
     }
   }
 
-  try { db.exec('PRAGMA foreign_keys = ON') } catch { /* Turso */ }
+  if (oldFieldIds.length > 0) {
+    for (const oldFieldId of oldFieldIds) {
+      const fieldKey = existingFieldKeyById.get(oldFieldId)
+      const replacementFieldId = fieldKey ? newFieldIdByKey.get(fieldKey) : undefined
+      if (replacementFieldId) {
+        await db.execute('UPDATE ticket_response_values SET ticket_field_id = ? WHERE ticket_field_id = ?', [replacementFieldId, oldFieldId])
+      } else {
+        await db.execute(`DELETE FROM ticket_response_values WHERE ticket_field_id = ?`, [oldFieldId])
+      }
+    }
+  }
+
+  try { await db.execute('PRAGMA foreign_keys = ON') } catch { /* SQL Server */ }
   res.json({ ok: true })
 })
 

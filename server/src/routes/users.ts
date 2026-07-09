@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
-import { loadRequestUserContext } from '../middleware/organizationAccess'
+import { loadRequestUserContext, type RequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole, type UserOrganizationMembership } from '../lib/userAccess'
 
 const router = Router()
@@ -45,7 +45,7 @@ function normalizeMemberships(inputs: MembershipInput[]): MembershipInput[] {
   })
 }
 
-function sanitizeProfileForContext(profile: UserAccessProfile, viewer: ReturnType<typeof loadRequestUserContext>): UserAccessProfile | null {
+function sanitizeProfileForContext(profile: UserAccessProfile, viewer: RequestUserContext | null): UserAccessProfile | null {
   if (!viewer) {
     return null
   }
@@ -78,7 +78,7 @@ function sanitizeProfileForContext(profile: UserAccessProfile, viewer: ReturnTyp
 
 function parseMembershipPayload(
   body: { role?: unknown; organizationId?: unknown; memberships?: unknown },
-  currentUser: NonNullable<ReturnType<typeof loadRequestUserContext>>,
+  currentUser: RequestUserContext,
 ): { systemRole: UserRole; memberships: MembershipInput[] } | { error: string } {
   const requestedRole = typeof body.role === 'string' ? body.role : 'user'
   const validRoles: UserRole[] = ['super_admin', 'administrator', 'team_manager', 'reviewer', 'user']
@@ -145,11 +145,11 @@ function parseMembershipPayload(
   }
 }
 
-function loadAccessibleUserProfile(
+async function loadAccessibleUserProfile(
   id: number,
-  currentUser: NonNullable<ReturnType<typeof loadRequestUserContext>>,
-): UserAccessProfile | null {
-  const profile = loadUserAccessProfile(id)
+  currentUser: RequestUserContext,
+): Promise<UserAccessProfile | null> {
+  const profile = await loadUserAccessProfile(id)
   if (!profile) {
     return null
   }
@@ -157,36 +157,38 @@ function loadAccessibleUserProfile(
   return sanitizeProfileForContext(profile, currentUser)
 }
 
-function persistMemberships(
+async function persistMemberships(
   userId: number,
   systemRole: UserRole,
   memberships: MembershipInput[],
-): void {
-  const db = getDb()
+): Promise<void> {
+  const db = await getDbAsync()
   const defaultMembership = memberships.find(item => item.isDefault) ?? memberships[0] ?? null
 
   const defaultOrganization = defaultMembership
-    ? db.prepare('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1').get(defaultMembership.organizationId) as { id: number; name: string } | undefined
+    ? await db.queryOne<{ id: number; name: string }>('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1', [defaultMembership.organizationId])
     : undefined
 
-  db.transaction(() => {
-    db.prepare(
-      `UPDATE users SET role = ?, organization = ?, organization_id = ? WHERE id = ?`
-    ).run(
-      systemRole === 'super_admin' ? 'super_admin' : (defaultMembership?.role ?? 'user'),
-      defaultOrganization?.name ?? null,
-      defaultOrganization?.id ?? null,
-      userId,
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      `UPDATE users SET role = ?, organization = ?, organization_id = ? WHERE id = ?`,
+      [
+        systemRole === 'super_admin' ? 'super_admin' : (defaultMembership?.role ?? 'user'),
+        defaultOrganization?.name ?? null,
+        defaultOrganization?.id ?? null,
+        userId,
+      ]
     )
 
-    db.prepare('DELETE FROM user_organizations WHERE user_id = ?').run(userId)
-    memberships.forEach(membership => {
-      db.prepare(
+    await tx.execute('DELETE FROM user_organizations WHERE user_id = ?', [userId])
+    for (const membership of memberships) {
+      await tx.execute(
         `INSERT INTO user_organizations (user_id, organization_id, role, is_default, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'))`
-      ).run(userId, membership.organizationId, membership.role, membership.isDefault ? 1 : 0)
-    })
-  })()
+         VALUES (?, ?, ?, ?, datetime('now'))`,
+        [userId, membership.organizationId, membership.role, membership.isDefault ? 1 : 0]
+      )
+    }
+  })
 }
 
 /**
@@ -203,29 +205,25 @@ function persistMemberships(
  *       401:
  *         description: Unauthorized
  */
-router.get('/', authenticateToken, (_req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(_req)
+router.get('/', authenticateToken, async (_req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(_req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
   const userIds = currentUser.role === 'super_admin'
-    ? db
-        .prepare('SELECT id FROM users ORDER BY id')
-        .all() as Array<{ id: number }>
-    : db
-        .prepare(
-          `SELECT DISTINCT user_id AS id
+    ? await db.queryAll<{ id: number }>('SELECT id FROM users ORDER BY id')
+    : await db.queryAll<{ id: number }>(
+        `SELECT DISTINCT user_id AS id
            FROM user_organizations
            WHERE organization_id = ?
-           ORDER BY user_id`
-        )
-        .all(currentUser.organizationId) as Array<{ id: number }>
+           ORDER BY user_id`,
+        [currentUser.organizationId]
+      )
 
-  const users = userIds
-    .map(row => loadAccessibleUserProfile(row.id, currentUser))
+  const users = (await Promise.all(userIds.map(row => loadAccessibleUserProfile(row.id, currentUser))))
     .filter((user): user is UserAccessProfile => Boolean(user))
 
   res.json(users.map(toApiUser))
@@ -255,8 +253,8 @@ router.get('/', authenticateToken, (_req: Request, res: Response) => {
  *       404:
  *         description: User not found
  */
-router.get('/:id', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -268,7 +266,7 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const user = loadAccessibleUserProfile(id, currentUser)
+  const user = await loadAccessibleUserProfile(id, currentUser)
 
   if (!user) {
     res.status(404).json({ error: 'User not found' })
@@ -278,8 +276,8 @@ router.get('/:id', authenticateToken, (req: Request, res: Response) => {
   res.json(toApiUser(user))
 })
 
-router.post('/', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -309,10 +307,8 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const existingEmail = db
-    .prepare('SELECT id FROM users WHERE email = ?')
-    .get(email.trim()) as unknown as { id: number } | undefined
+  const db = await getDbAsync()
+  const existingEmail = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ?', [email.trim()])
 
   if (existingEmail) {
     res.status(409).json({ error: 'Email already registered' })
@@ -320,23 +316,19 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   }
 
   for (const membership of parsedPayload.memberships) {
-    const organization = db
-      .prepare('SELECT id FROM organizations WHERE id = ? AND is_active = 1')
-      .get(membership.organizationId) as { id: number } | undefined
+    const organization = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ? AND is_active = 1', [membership.organizationId])
     if (!organization) {
       res.status(400).json({ error: 'Selected organization does not exist' })
       return
     }
   }
 
-  const inserted = db
-    .prepare('INSERT INTO users (name, email, role) VALUES (?, ?, ?)')
-    .run(name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user')
+  const inserted = await db.execute('INSERT INTO users (name, email, role) VALUES (?, ?, ?)', [name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user'])
 
   const createdUserId = Number(inserted.lastInsertRowid)
-  persistMemberships(createdUserId, parsedPayload.systemRole, parsedPayload.memberships)
+  await persistMemberships(createdUserId, parsedPayload.systemRole, parsedPayload.memberships)
 
-  const created = loadAccessibleUserProfile(createdUserId, currentUser)
+  const created = await loadAccessibleUserProfile(createdUserId, currentUser)
   if (!created) {
     res.status(500).json({ error: 'Failed to load created user' })
     return
@@ -345,8 +337,8 @@ router.post('/', authenticateToken, (req: Request, res: Response) => {
   res.status(201).json(toApiUser(created))
 })
 
-router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Forbidden' })
     return
@@ -382,9 +374,9 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
+  const db = await getDbAsync()
 
-  const existingUser = loadUserAccessProfile(id)
+  const existingUser = await loadUserAccessProfile(id)
   if (!existingUser) {
     res.status(404).json({ error: 'User not found' })
     return
@@ -395,9 +387,7 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const existingEmail = db
-    .prepare('SELECT id FROM users WHERE email = ? AND id != ?')
-    .get(email.trim(), id) as unknown as { id: number } | undefined
+  const existingEmail = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ? AND id != ?', [email.trim(), id])
 
   if (existingEmail) {
     res.status(409).json({ error: 'Email already registered' })
@@ -405,19 +395,17 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
   }
 
   for (const membership of parsedPayload.memberships) {
-    const organization = db
-      .prepare('SELECT id FROM organizations WHERE id = ? AND is_active = 1')
-      .get(membership.organizationId) as { id: number } | undefined
+    const organization = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ? AND is_active = 1', [membership.organizationId])
     if (!organization) {
       res.status(400).json({ error: 'Selected organization does not exist' })
       return
     }
   }
 
-  db.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name.trim(), email.trim(), id)
-  persistMemberships(id, parsedPayload.systemRole, parsedPayload.memberships)
+  await db.execute('UPDATE users SET name = ?, email = ? WHERE id = ?', [name.trim(), email.trim(), id])
+  await persistMemberships(id, parsedPayload.systemRole, parsedPayload.memberships)
 
-  const updated = loadAccessibleUserProfile(id, currentUser)
+  const updated = await loadAccessibleUserProfile(id, currentUser)
   if (!updated) {
     res.status(500).json({ error: 'Failed to load updated user' })
     return
@@ -426,8 +414,8 @@ router.patch('/:id', authenticateToken, (req: Request, res: Response) => {
   res.json(toApiUser(updated))
 })
 
-router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Forbidden' })
     return
@@ -445,8 +433,8 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  const db = getDb()
-  const user = loadUserAccessProfile(id)
+  const db = await getDbAsync()
+  const user = await loadUserAccessProfile(id)
   if (!user) {
     res.status(404).json({ error: 'User not found' })
     return
@@ -457,14 +445,14 @@ router.delete('/:id', authenticateToken, (req: Request, res: Response) => {
     return
   }
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(id)
+  await db.execute('DELETE FROM users WHERE id = ?', [id])
   res.status(204).end()
 })
 
-// ── User location assignment ──────────────────────────────────
+// ── User location assignment ────────────────────────────────────────────
 
-router.get('/:id/locations', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.get('/:id/locations', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -476,21 +464,20 @@ router.get('/:id/locations', authenticateToken, (req: Request, res: Response) =>
     return
   }
 
-  const db = getDb()
-  const locations = db
-    .prepare(
+  const db = await getDbAsync()
+  const locations = await db.queryAll<{ id: number; name: string }>(
       `SELECT l.id, l.name FROM user_locations ul
        JOIN locations l ON l.id = ul.location_id
        WHERE ul.user_id = ?
-       ORDER BY lower(l.name)`
+       ORDER BY lower(l.name)`,
+      [id]
     )
-    .all(id) as unknown as Array<{ id: number; name: string }>
 
   res.json(locations)
 })
 
-router.put('/:id/locations', authenticateToken, (req: Request, res: Response) => {
-  const currentUser = loadRequestUserContext(req)
+router.put('/:id/locations', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -508,8 +495,8 @@ router.put('/:id/locations', authenticateToken, (req: Request, res: Response) =>
     return
   }
 
-  const db = getDb()
-  const user = loadUserAccessProfile(id)
+  const db = await getDbAsync()
+  const user = await loadUserAccessProfile(id)
   if (!user) {
     res.status(404).json({ error: 'User not found' })
     return
@@ -521,9 +508,9 @@ router.put('/:id/locations', authenticateToken, (req: Request, res: Response) =>
   }
 
   try {
-    db.prepare('DELETE FROM user_locations WHERE user_id = ?').run(id)
+    await db.execute('DELETE FROM user_locations WHERE user_id = ?', [id])
     for (const locId of locationIds as number[]) {
-      db.prepare('INSERT OR IGNORE INTO user_locations (user_id, location_id) VALUES (?, ?)').run(id, locId)
+      await db.execute('INSERT OR IGNORE INTO user_locations (user_id, location_id) VALUES (?, ?)', [id, locId])
     }
     res.status(204).end()
   } catch (err) {

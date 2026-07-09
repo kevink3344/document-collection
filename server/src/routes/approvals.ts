@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express'
-import { getDb } from '../database/db'
+import { getDbAsync } from '../database/db'
+import type { DbAdapter } from '../database/types'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
@@ -35,8 +36,8 @@ export interface PendingApprovalItem {
  * GET /api/approvals/pending
  * Returns all responses where the authenticated user has a pending approver assignment.
  */
-router.get('/pending', (req: Request, res: Response): void => {
-  const context = loadRequestUserContext(req)
+router.get('/pending', async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
     return
@@ -48,10 +49,9 @@ router.get('/pending', (req: Request, res: Response): void => {
   }
 
   try {
-    const db = getDb()
+    const db = await getDbAsync()
 
-    const rows = db
-      .prepare(
+    const rows = await db.queryAll<DbPendingApprovalRow>(
         `
         SELECT
           cr.id          AS response_id,
@@ -74,8 +74,7 @@ router.get('/pending', (req: Request, res: Response): void => {
           AND wi.status  = 'pending'
         ORDER BY cr.submitted_at DESC
         `,
-      )
-      .all(context.id) as DbPendingApprovalRow[]
+      [context.id])
 
     const items: PendingApprovalItem[] = rows.map(row => ({
       responseId: row.response_id,
