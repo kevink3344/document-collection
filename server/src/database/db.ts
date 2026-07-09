@@ -815,7 +815,13 @@ export async function getDbAsync(): Promise<DbAdapter> {
           },
         }
         const pool = new sql.ConnectionPool(config)
-        await pool.connect()
+        try {
+          await pool.connect()
+        } catch (err) {
+          // Reset so the next request can try again
+          mssqlPoolConnecting = null
+          throw err
+        }
         mssqlPool = pool
         mssqlPoolConnecting = null
         console.log('[db] SQL Server connection pool ready')
@@ -823,8 +829,13 @@ export async function getDbAsync(): Promise<DbAdapter> {
       })()
     }
 
-    const pool = await mssqlPoolConnecting!
-    return new MssqlAdapter(pool)
+    try {
+      const pool = await mssqlPoolConnecting!
+      return new MssqlAdapter(pool)
+    } catch (err) {
+      mssqlPoolConnecting = null
+      throw err
+    }
   }
 
   // turso / sqlite — wrap libsql in LibsqlAdapter
