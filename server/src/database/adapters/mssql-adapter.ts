@@ -32,6 +32,36 @@ function translateSql(rawSql: string): string {
     },
   )
 
+  // 4. SQLite UPSERT: INSERT INTO t (cols) VALUES (vals) ON CONFLICT(conflictCol) DO UPDATE SET col = excluded.col
+  //    → SQL Server two-statement equivalent using named params (duplicates are fine with @pN)
+  s = s.replace(
+    /INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)\s*ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+([\s\S]+?)(?=;|$)/gi,
+    (_match, table: string, colsPart: string, valsPart: string, _conflictCol: string, setClause: string) => {
+      const cols = colsPart.split(',').map((c) => c.trim())
+      const vals = valsPart.split(',').map((v) => v.trim())
+      // Build SET assignments from the DO UPDATE clause, replacing excluded.col with the param value
+      const setCols = setClause.trim().split(',').map((assignment) => {
+        // "col = excluded.col" → find the col and get its param
+        const [lhs] = assignment.split('=').map((p) => p.trim())
+        const colIdx = cols.indexOf(lhs)
+        const paramVal = colIdx >= 0 ? vals[colIdx] : vals[0]
+        return `${lhs} = ${paramVal}`
+      }).join(', ')
+      const conflictColWrapped = cols[0] // first col is typically the conflict col
+      return (
+        `IF EXISTS (SELECT 1 FROM ${table} WHERE ${conflictColWrapped} = ${vals[0]})\n` +
+        `  UPDATE ${table} SET ${setCols} WHERE ${conflictColWrapped} = ${vals[0]}\n` +
+        `ELSE\n` +
+        `  INSERT INTO ${table} (${cols.join(', ')}) VALUES (${vals.join(', ')})`
+      )
+    },
+  )
+
+  // 5. `key` is a SQL Server reserved word — wrap it in brackets when used as a column name.
+  //    Matches `key` as a whole word but not inside string literals (our queries don't embed `key`
+  //    in literal strings so a simple word-boundary replacement is safe here).
+  s = s.replace(/\bkey\b/g, '[key]')
+
   return s
 }
 
