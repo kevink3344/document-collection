@@ -19,6 +19,7 @@ const ALLOWED_KEYS = new Set([
   'ai_summary_enabled',
   'about_message',
   'database_mode',
+  'login_mode',
 ])
 
 interface DbSetting {
@@ -68,6 +69,13 @@ router.get('/:key', (req: Request, res: Response) => {
     .get(key) as unknown as DbSetting | undefined
 
   if (!row) {
+    // Return sensible defaults for keys that haven't been persisted yet
+    const defaults: Record<string, string> = { login_mode: 'select' }
+    const defaultValue = defaults[key]
+    if (defaultValue !== undefined) {
+      res.json({ key, value: defaultValue })
+      return
+    }
     res.status(404).json({ error: 'Setting not found' })
     return
   }

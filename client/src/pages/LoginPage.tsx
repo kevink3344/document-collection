@@ -69,6 +69,7 @@ export default function LoginPage() {
   )
   const [loginSubtitle, setLoginSubtitle] = useState('Enterprise Staff Support')
   const [publicStats, setPublicStats] = useState<PublicSummaryStats>(DEFAULT_PUBLIC_STATS)
+  const [loginMode, setLoginMode] = useState<'select' | 'password' | null>(null)
 
   // Fetch global stats once on mount (not scoped to selected org)
   useEffect(() => {
@@ -109,6 +110,9 @@ export default function LoginPage() {
     getPublicSetting('login_subtitle')
       .then(setLoginSubtitle)
       .catch(() => { /* keep default */ })
+    getPublicSetting('login_mode')
+      .then(val => setLoginMode(val === 'password' ? 'password' : 'select'))
+      .catch(() => setLoginMode('select'))
 
     // Load organizations for the picker
     setLoadingOrgs(true)
@@ -237,6 +241,8 @@ export default function LoginPage() {
           )}
 
           {/* ── Select existing user ──────────────────── */}
+          {(loginMode === 'select' || loginMode === null) && (
+            <>
           <p className="text-[10px] font-semibold tracking-[0.2em] text-[#64748B] dark:text-[#475569] uppercase mb-3">
             Authentication
           </p>
@@ -311,15 +317,15 @@ export default function LoginPage() {
           >
             {signingIn ? 'Signing in…' : 'Sign In as Selected User'}
           </button>
-
-          {/* Divider */}
-          <div className="border-t border-[#E2E8F0] dark:border-[#1E293B] mb-8" />
+            </>
+          )}
 
           {/* ── Email + Password login ────────────────── */}
-          <p className="text-[10px] font-semibold tracking-[0.2em] text-[#64748B] dark:text-[#475569] uppercase mb-4">
-            Sign In with Password
-          </p>
+          {(loginMode === 'password' || loginMode === null) && (
           <form onSubmit={e => void handlePasswordSignIn(e)} className="space-y-3 mb-8">
+            <p className="text-[10px] font-semibold tracking-[0.2em] text-[#64748B] dark:text-[#475569] uppercase mb-4">
+              Sign In with Password
+            </p>
             {pwError && (
               <div className="px-3 py-2.5 border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 text-sm">
                 {pwError}
@@ -354,6 +360,7 @@ export default function LoginPage() {
               <a href="/forgot-password" className="text-[#2563EB] hover:underline">Forgot password?</a>
             </p>
           </form>
+          )}
 
 
         </div>

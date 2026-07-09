@@ -460,6 +460,10 @@ export default function SettingsPage() {
   const [notificationWindowError, setNotificationWindowError] = useState<string | null>(null)
   const [notificationWindowSaved, setNotificationWindowSaved] = useState(false)
   const [qrCodeEnabled, setQrCodeEnabled] = useState(false)
+  const [loginMode, setLoginMode] = useState<'select' | 'password'>('select')
+  const [loginModeSaving, setLoginModeSaving] = useState(false)
+  const [loginModeError, setLoginModeError] = useState<string | null>(null)
+  const [loginModeSaved, setLoginModeSaved] = useState(false)
   const [databaseMode, setDatabaseMode] = useState('turso')
   const [databaseModeSaving, setDatabaseModeSaving] = useState(false)
   const [databaseModeError, setDatabaseModeError] = useState<string | null>(null)
@@ -527,6 +531,9 @@ export default function SettingsPage() {
     getPublicSetting('qr_code_enabled')
       .then(val => setQrCodeEnabled(val === 'true'))
       .catch(() => setQrCodeEnabled(false))
+    getPublicSetting('login_mode')
+      .then(val => setLoginMode(val === 'password' ? 'password' : 'select'))
+      .catch(() => setLoginMode('select'))
     getPublicSetting('ai_summary_enabled')
       .then(val => setAiSummaryEnabled(val !== 'false'))
       .catch(() => setAiSummaryEnabled(true))
@@ -1006,6 +1013,22 @@ export default function SettingsPage() {
       setSeedError((err as Error).message)
     } finally {
       setSeedSaving(false)
+    }
+  }
+
+  async function handleLoginModeToggle(nextMode: 'select' | 'password') {
+    setLoginMode(nextMode)
+    setLoginModeSaving(true)
+    setLoginModeError(null)
+    setLoginModeSaved(false)
+    try {
+      await updateSetting('login_mode', nextMode)
+      setLoginModeSaved(true)
+    } catch (err) {
+      setLoginMode(nextMode === 'select' ? 'password' : 'select')
+      setLoginModeError((err as Error).message)
+    } finally {
+      setLoginModeSaving(false)
     }
   }
 
@@ -3173,6 +3196,46 @@ export default function SettingsPage() {
 
           {usersExpanded && (
             <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-6">
+
+              {/* ── Login Mode ──────────────────────────────── */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <UserCheck size={15} className="text-[#2563EB]" />
+                  <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Login Mode</h3>
+                </div>
+                <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
+                  Controls which sign-in method is shown on the login page. Use <strong>Select User</strong> for test environments and <strong>Password</strong> for production.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleLoginModeToggle('select')}
+                    disabled={loginModeSaving}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-[2px] border transition-colors ${
+                      loginMode === 'select'
+                        ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                        : 'bg-white dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:border-[#2563EB]'
+                    }`}
+                  >
+                    Select User (Test)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleLoginModeToggle('password')}
+                    disabled={loginModeSaving}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-[2px] border transition-colors ${
+                      loginMode === 'password'
+                        ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                        : 'bg-white dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:border-[#2563EB]'
+                    }`}
+                  >
+                    Password (Production)
+                  </button>
+                </div>
+                {loginModeError && <p className="text-xs text-red-500">{loginModeError}</p>}
+                {loginModeSaving && <p className="text-xs text-[#64748B]">Saving…</p>}
+                {loginModeSaved && <p className="text-xs text-green-600 dark:text-green-400">Saved!</p>}
+              </div>
 
               {/* ── Invite User ─────────────────────────────── */}
               <div className="space-y-3">

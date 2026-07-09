@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
-import { setupDatabase, resetDbIfStreamError } from './database/db'
+import { setupDatabase, resetDbIfStreamError, getDb } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
@@ -68,6 +68,32 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // ── Database ─────────────────────────────────────────────────
 setupDatabase()
+
+// ── Super Admin bootstrap ────────────────────────────────────
+function syncSuperAdmin() {
+  const email = process.env.SUPER_ADMIN_EMAIL?.trim()
+  const password = process.env.SUPER_ADMIN_PASSWORD?.trim()
+  if (!email || !password) return
+  try {
+    const salt = crypto.randomBytes(16).toString('hex')
+    const derived = crypto.scryptSync(password, salt, 32).toString('hex')
+    const hash = `${salt}:${derived}`
+    const db = getDb()
+    // Upsert: if user exists update their hash; if not, insert as super_admin
+    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email) as { id: number } | undefined
+    if (existing) {
+      db.prepare('UPDATE users SET password_hash = ?, invite_token = NULL WHERE lower(email) = lower(?)').run(hash, email)
+    } else {
+      db.prepare(
+        `INSERT INTO users (name, email, role, password_hash, invite_token) VALUES (?, ?, 'super_admin', ?, NULL)`
+      ).run('Super Admin', email, hash)
+    }
+    console.log(`[server] Super admin synced: ${email}`)
+  } catch (err) {
+    console.warn('[server] Could not sync super admin:', (err as Error).message)
+  }
+}
+syncSuperAdmin()
 
 function runNotificationSweep() {
   try {
