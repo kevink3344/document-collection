@@ -31,7 +31,12 @@ CREATE TABLE collection_response_values (
 GO
 
 -- response_attachments
-IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'response_attachments') AND type = 'U')
+IF OBJECT_ID(N'uq_response_attachments_drive_file_id', 'UQ') IS NOT NULL
+  ALTER TABLE response_attachments DROP CONSTRAINT uq_response_attachments_drive_file_id;
+GO
+IF EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'response_attachments') AND type = 'U')
+  DROP TABLE response_attachments;
+GO
 CREATE TABLE response_attachments (
   id                  BIGINT IDENTITY(1,1) PRIMARY KEY,
   collection_id       BIGINT NOT NULL REFERENCES collections(id) ON DELETE NO ACTION,
@@ -226,7 +231,12 @@ CREATE TABLE signup_registrations (
 GO
 
 -- notification_events
-IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'notification_events') AND type = 'U')
+IF OBJECT_ID(N'uq_notification_events_dedupe_key', 'UQ') IS NOT NULL
+  ALTER TABLE notification_events DROP CONSTRAINT uq_notification_events_dedupe_key;
+GO
+IF EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'notification_events') AND type = 'U')
+  DROP TABLE notification_events;
+GO
 CREATE TABLE notification_events (
   id              BIGINT IDENTITY(1,1) PRIMARY KEY,
   organization_id BIGINT REFERENCES organizations(id) ON DELETE SET NULL,
@@ -251,7 +261,12 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'uq_notification_events_de
 GO
 
 -- notification_deliveries
-IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'notification_deliveries') AND type = 'U')
+IF OBJECT_ID(N'uq_notification_deliveries_dedupe_key', 'UQ') IS NOT NULL
+  ALTER TABLE notification_deliveries DROP CONSTRAINT uq_notification_deliveries_dedupe_key;
+GO
+IF EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'notification_deliveries') AND type = 'U')
+  DROP TABLE notification_deliveries;
+GO
 CREATE TABLE notification_deliveries (
   id                BIGINT IDENTITY(1,1) PRIMARY KEY,
   event_id          BIGINT NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
