@@ -2,6 +2,40 @@ import sql from 'mssql'
 import type { DbAdapter } from '../adapter'
 
 /**
+ * Translates SQLite-specific SQL constructs to their SQL Server equivalents.
+ * Applied to every query before execution.
+ */
+function translateSql(rawSql: string): string {
+  let s = rawSql
+
+  // 1. datetime('now') → GETUTCDATE()
+  s = s.replace(/datetime\s*\(\s*'now'\s*\)/gi, 'GETUTCDATE()')
+
+  // 2. COLLATE NOCASE → remove (SQL Server default collation is case-insensitive)
+  s = s.replace(/\s+COLLATE\s+NOCASE\b/gi, '')
+
+  // 3. INSERT OR IGNORE INTO table (cols) VALUES (vals) →
+  //    INSERT INTO table (cols) SELECT vals WHERE NOT EXISTS (SELECT 1 FROM table WHERE cols=vals)
+  //    Works AFTER placeholder conversion so named @p params can be reused in the WHERE clause.
+  s = s.replace(
+    /INSERT\s+OR\s+IGNORE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/gi,
+    (_match, table: string, colsPart: string, valsPart: string) => {
+      const cols = colsPart.split(',').map((c) => c.trim())
+      const vals = valsPart.split(',').map((v) => v.trim())
+      const colList = cols.join(', ')
+      const valList = vals.join(', ')
+      const whereClauses = cols.map((col, i) => `${col} = ${vals[i]}`).join(' AND ')
+      return (
+        `INSERT INTO ${table} (${colList}) ` +
+        `SELECT ${valList} WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${whereClauses})`
+      )
+    },
+  )
+
+  return s
+}
+
+/**
  * Converts a SQL string using `?` positional placeholders into the named
  * `@p0, @p1, ...` placeholders that mssql expects, and returns both the
  * converted SQL and the ordered parameter values.
@@ -45,7 +79,7 @@ class MssqlTransactionAdapter implements DbAdapter {
   constructor(private readonly tx: sql.Transaction) {}
 
   async queryAll<T = Record<string, unknown>>(rawSql: string, params: unknown[] = []): Promise<T[]> {
-    const { sql: converted, values } = convertPlaceholders(rawSql, params)
+    const { sql: converted, values } = convertPlaceholders(translateSql(rawSql), params)
     const request = buildRequest(this.tx, converted, values)
     const result = await request.query<T>(converted)
     return result.recordset
@@ -57,8 +91,9 @@ class MssqlTransactionAdapter implements DbAdapter {
   }
 
   async execute(rawSql: string, params: unknown[] = []): Promise<{ lastInsertRowid?: number | bigint; changes?: number }> {
-    const isInsert = /^\s*INSERT\b/i.test(rawSql)
-    const wrappedSql = isInsert ? `${rawSql}; SELECT SCOPE_IDENTITY() AS _last_id` : rawSql
+    const translated = translateSql(rawSql)
+    const isInsert = /^\s*INSERT\b/i.test(translated)
+    const wrappedSql = isInsert ? `${translated}; SELECT SCOPE_IDENTITY() AS _last_id` : translated
     const { sql: converted, values } = convertPlaceholders(wrappedSql, params)
     const request = buildRequest(this.tx, converted, values)
     const result = await request.query(converted)
@@ -86,7 +121,7 @@ export class MssqlAdapter implements DbAdapter {
   constructor(private readonly pool: sql.ConnectionPool) {}
 
   async queryAll<T = Record<string, unknown>>(rawSql: string, params: unknown[] = []): Promise<T[]> {
-    const { sql: converted, values } = convertPlaceholders(rawSql, params)
+    const { sql: converted, values } = convertPlaceholders(translateSql(rawSql), params)
     const request = buildRequest(this.pool, converted, values)
     const result = await request.query<T>(converted)
     return result.recordset
@@ -98,8 +133,9 @@ export class MssqlAdapter implements DbAdapter {
   }
 
   async execute(rawSql: string, params: unknown[] = []): Promise<{ lastInsertRowid?: number | bigint; changes?: number }> {
-    const isInsert = /^\s*INSERT\b/i.test(rawSql)
-    const wrappedSql = isInsert ? `${rawSql}; SELECT SCOPE_IDENTITY() AS _last_id` : rawSql
+    const translated = translateSql(rawSql)
+    const isInsert = /^\s*INSERT\b/i.test(translated)
+    const wrappedSql = isInsert ? `${translated}; SELECT SCOPE_IDENTITY() AS _last_id` : translated
     const { sql: converted, values } = convertPlaceholders(wrappedSql, params)
     const request = buildRequest(this.pool, converted, values)
     const result = await request.query(converted)
