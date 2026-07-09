@@ -23,7 +23,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'collectio
 CREATE TABLE collection_response_values (
   id                    BIGINT IDENTITY(1,1) PRIMARY KEY,
   response_id           BIGINT NOT NULL REFERENCES collection_responses(id) ON DELETE CASCADE,
-  field_id              BIGINT NOT NULL REFERENCES collection_fields(id),
+  field_id              BIGINT NOT NULL,
   value                 NVARCHAR(MAX),
   staff_updated_by_name NVARCHAR(MAX),
   staff_updated_at      NVARCHAR(MAX)
@@ -42,7 +42,7 @@ CREATE TABLE response_attachments (
   file_name           NVARCHAR(MAX) NOT NULL,
   mime_type           NVARCHAR(MAX) NOT NULL,
   size_bytes          BIGINT NOT NULL DEFAULT 0,
-  drive_file_id       NVARCHAR(MAX) NOT NULL,
+  drive_file_id       NVARCHAR(500) NOT NULL,
   drive_web_view_url  NVARCHAR(MAX),
   drive_download_url  NVARCHAR(MAX),
   file_data           NVARCHAR(MAX),
@@ -241,7 +241,7 @@ CREATE TABLE notification_events (
   action_url      NVARCHAR(MAX),
   priority        NVARCHAR(50) NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high')),
   metadata        NVARCHAR(MAX),
-  dedupe_key      NVARCHAR(MAX),
+  dedupe_key      NVARCHAR(500),
   created_at      NVARCHAR(MAX) NOT NULL DEFAULT (CONVERT(NVARCHAR, GETUTCDATE(), 120))
 );
 GO
@@ -265,7 +265,7 @@ CREATE TABLE notification_deliveries (
   read_at           NVARCHAR(MAX),
   failed_at         NVARCHAR(MAX),
   failure_reason    NVARCHAR(MAX),
-  dedupe_key        NVARCHAR(MAX),
+  dedupe_key        NVARCHAR(500),
   created_at        NVARCHAR(MAX) NOT NULL DEFAULT (CONVERT(NVARCHAR, GETUTCDATE(), 120))
 );
 GO
@@ -306,7 +306,7 @@ GO
 IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'user_preferences') AND type = 'U')
 CREATE TABLE user_preferences (
   user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  [key]      NVARCHAR(MAX) NOT NULL,
+  [key]      NVARCHAR(500) NOT NULL,
   value      NVARCHAR(MAX) NOT NULL,
   updated_at NVARCHAR(MAX) NOT NULL DEFAULT (CONVERT(NVARCHAR, GETUTCDATE(), 120)),
   CONSTRAINT pk_user_preferences PRIMARY KEY (user_id, [key])
