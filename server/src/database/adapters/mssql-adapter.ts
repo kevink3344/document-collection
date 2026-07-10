@@ -62,6 +62,23 @@ function translateSql(rawSql: string): string {
   //    in literal strings so a simple word-boundary replacement is safe here).
   s = s.replace(/\bkey\b/g, '[key]')
 
+  // 6. LIMIT n → TOP n  (SQL Server uses TOP, not LIMIT)
+  //    Moves TOP n to immediately after the SELECT keyword.
+  s = s.replace(
+    /\bSELECT(\s+DISTINCT)?(\s+)([\s\S]*?)\s+LIMIT\s+(\d+)\b/gi,
+    (_match, distinct, space, body, n) =>
+      `SELECT${distinct ?? ''}${space}TOP ${n} ${body}`,
+  )
+
+  // 7. datetime('now', '-N days') → DATEADD(day, -N, GETUTCDATE())
+  s = s.replace(
+    /datetime\s*\(\s*'now'\s*,\s*'-(\d+)\s+days?'\s*\)/gi,
+    (_m, n: string) => `DATEADD(day, -${n}, GETUTCDATE())`,
+  )
+
+  // 8. date(col) → CAST(col AS DATE)  (SQLite date extraction function)
+  s = s.replace(/\bdate\s*\(([^)]+)\)/gi, 'CAST($1 AS DATE)')
+
   return s
 }
 

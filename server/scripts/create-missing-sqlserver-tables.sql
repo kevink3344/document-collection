@@ -4,7 +4,28 @@
 -- All statements are idempotent (IF NOT EXISTS checks).
 -- ============================================================
 
--- collection_responses
+-- collection_fields (may be missing if migration failed for this table)
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'collection_fields') AND type = 'U')
+CREATE TABLE collection_fields (
+  id            BIGINT IDENTITY(1,1) PRIMARY KEY,
+  collection_id BIGINT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+  version_id    BIGINT REFERENCES collection_versions(id) ON DELETE NO ACTION,
+  field_key     NVARCHAR(MAX),
+  [type]        NVARCHAR(100) NOT NULL,
+  label         NVARCHAR(MAX) NOT NULL,
+  subtitle      NVARCHAR(MAX),
+  page_number   INT NOT NULL DEFAULT 1,
+  required      INT NOT NULL DEFAULT 0,
+  options       NVARCHAR(MAX),
+  display_style NVARCHAR(100) NOT NULL DEFAULT 'radio',
+  branch_rules  NVARCHAR(MAX),
+  staff_only    INT NOT NULL DEFAULT 0,
+  sort_order    INT NOT NULL DEFAULT 0,
+  location_filter_enabled INT NOT NULL DEFAULT 0
+);
+GO
+
+
 IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'collection_responses') AND type = 'U')
 CREATE TABLE collection_responses (
   id                    BIGINT IDENTITY(1,1) PRIMARY KEY,
