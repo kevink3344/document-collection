@@ -70,12 +70,17 @@ export default function LoginPage() {
   const [loginSubtitle, setLoginSubtitle] = useState('Enterprise Staff Support')
   const [publicStats, setPublicStats] = useState<PublicSummaryStats>(DEFAULT_PUBLIC_STATS)
   const [loginMode, setLoginMode] = useState<'select' | 'password' | null>(null)
+  const [appInfo, setAppInfo] = useState<{ version: string; dbMode: string } | null>(null)
 
   // Fetch global stats once on mount (not scoped to selected org)
   useEffect(() => {
     getPublicSummaryStats()
       .then(setPublicStats)
       .catch(() => { /* keep default counts */ })
+    fetch('/api/info')
+      .then(r => r.json() as Promise<{ version: string; dbMode: string }>)
+      .then(setAppInfo)
+      .catch(() => { /* keep null */ })
   }, [])
 
   const loadUsers = async (orgId: string) => {
@@ -198,7 +203,7 @@ export default function LoginPage() {
           </div>
 
           <span className="inline-flex items-center px-2.5 py-0.5 border border-white/40 text-[10px] font-semibold tracking-[0.2em] text-white/80 uppercase rounded-[2px] mb-4">
-            {loginSubtitle}
+            {appInfo ? `${appInfo.version} - ${appInfo.dbMode}` : loginSubtitle}
           </span>
           <h1 className="text-3xl md:text-[2.5rem] font-bold leading-tight mb-5">
             Sign in to Data Collection Pro

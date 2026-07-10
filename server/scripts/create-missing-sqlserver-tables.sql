@@ -4,6 +4,106 @@
 -- All statements are idempotent (IF NOT EXISTS checks).
 -- ============================================================
 
+-- ---------------------------------------------------------------
+-- FIX: Ensure categories.id has IDENTITY (auto-increment).
+-- If the column was created without IDENTITY, recreate the table.
+-- ---------------------------------------------------------------
+IF EXISTS (
+  SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'categories') AND type = 'U'
+) AND NOT EXISTS (
+  SELECT 1 FROM sys.identity_columns
+  WHERE object_id = OBJECT_ID(N'categories') AND name = 'id'
+)
+BEGIN
+  -- Rename existing table, recreate with IDENTITY, copy data, drop old.
+  EXEC sp_rename 'categories', 'categories_old';
+
+  CREATE TABLE [dbo].[categories] (
+    [id]              INT IDENTITY(1,1) PRIMARY KEY,
+    [name]            NVARCHAR(255) NOT NULL,
+    [sort_order]      INT NOT NULL DEFAULT 0,
+    [organization_id] BIGINT NULL REFERENCES [dbo].[organizations]([id]),
+    [created_at]      DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    [updated_at]      DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+  );
+
+  SET IDENTITY_INSERT [dbo].[categories] ON;
+  INSERT INTO [dbo].[categories] (id, name, sort_order, organization_id, created_at, updated_at)
+  SELECT id, name, sort_order, organization_id,
+    ISNULL(TRY_CAST(created_at AS DATETIME2), GETUTCDATE()),
+    GETUTCDATE()
+  FROM [dbo].[categories_old];
+  SET IDENTITY_INSERT [dbo].[categories] OFF;
+
+  DROP TABLE [dbo].[categories_old];
+END
+GO
+
+-- Ensure table exists at all (first-time setup)
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'categories') AND type = 'U')
+CREATE TABLE [dbo].[categories] (
+  [id]              INT IDENTITY(1,1) PRIMARY KEY,
+  [name]            NVARCHAR(255) NOT NULL,
+  [sort_order]      INT NOT NULL DEFAULT 0,
+  [organization_id] BIGINT NULL REFERENCES [dbo].[organizations]([id]),
+  [created_at]      DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+  [updated_at]      DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+);
+GO
+
+-- ---------------------------------------------------------------
+-- FIX: Ensure locations.id has IDENTITY (auto-increment).
+-- ---------------------------------------------------------------
+IF EXISTS (
+  SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'locations') AND type = 'U'
+) AND NOT EXISTS (
+  SELECT 1 FROM sys.identity_columns
+  WHERE object_id = OBJECT_ID(N'locations') AND name = 'id'
+)
+BEGIN
+  -- Drop dependent tables that FK-reference locations so we can swap the table.
+  IF OBJECT_ID(N'dbo.user_locations', 'U') IS NOT NULL
+    DROP TABLE [dbo].[user_locations];
+
+  EXEC sp_rename 'locations', 'locations_old';
+
+  CREATE TABLE [dbo].[locations] (
+    [id]              BIGINT IDENTITY(1,1) PRIMARY KEY,
+    [name]            NVARCHAR(255) NOT NULL,
+    [organization_id] BIGINT NOT NULL REFERENCES [dbo].[organizations]([id]) ON DELETE CASCADE,
+    [created_at]      NVARCHAR(MAX) NOT NULL DEFAULT (CONVERT(NVARCHAR, GETUTCDATE(), 120)),
+    CONSTRAINT uq_locations_name_org UNIQUE ([name], [organization_id])
+  );
+
+  SET IDENTITY_INSERT [dbo].[locations] ON;
+  INSERT INTO [dbo].[locations] (id, name, organization_id, created_at)
+  SELECT id, name, organization_id,
+    ISNULL(TRY_CAST(created_at AS NVARCHAR(MAX)), CONVERT(NVARCHAR, GETUTCDATE(), 120))
+  FROM [dbo].[locations_old];
+  SET IDENTITY_INSERT [dbo].[locations] OFF;
+
+  DROP TABLE [dbo].[locations_old];
+
+  -- Recreate user_locations referencing the new locations table.
+  CREATE TABLE [dbo].[user_locations] (
+    [user_id]     BIGINT NOT NULL REFERENCES [dbo].[users]([id]) ON DELETE CASCADE,
+    [location_id] BIGINT NOT NULL REFERENCES [dbo].[locations]([id]) ON DELETE CASCADE,
+    CONSTRAINT pk_user_locations PRIMARY KEY ([user_id], [location_id])
+  );
+END
+GO
+
+-- Ensure locations table exists at all (first-time setup)
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'locations') AND type = 'U')
+CREATE TABLE [dbo].[locations] (
+  [id]              BIGINT IDENTITY(1,1) PRIMARY KEY,
+  [name]            NVARCHAR(255) NOT NULL,
+  [organization_id] BIGINT NOT NULL REFERENCES [dbo].[organizations]([id]) ON DELETE CASCADE,
+  [created_at]      NVARCHAR(MAX) NOT NULL DEFAULT (CONVERT(NVARCHAR, GETUTCDATE(), 120)),
+  CONSTRAINT uq_locations_name_org UNIQUE ([name], [organization_id])
+);
+GO
+
 -- collection_fields (may be missing if migration failed for this table)
 IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'collection_fields') AND type = 'U')
 CREATE TABLE collection_fields (

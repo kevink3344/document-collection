@@ -705,6 +705,9 @@ export function getDb(): AppDatabase {
       for (const url of urlsToTry) {
         try {
           const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
+          for (const suffix of ['-wal', '-shm', '-info']) {
+            try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
+          }
           const candidate = new Database(replicaPath, { syncUrl: url, authToken: target.authToken } as Database.Options)
           candidate.sync()
           console.log(`[db] Reconnected to Turso via embedded replica`)
@@ -733,19 +736,54 @@ export function getDb(): AppDatabase {
       // Use embedded replica: libsql syncs from Turso into a local file.
       // This avoids the hrana protocol 502 issues with the native binary.
       const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
+
+      // Always remove stale WAL/SHM sidecars before opening; they are safe to
+      // delete because the replica can be fully re-synced from Turso.
+      for (const suffix of ['-wal', '-shm']) {
+        try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present — fine */ }
+      }
+
+      const tryOpenReplica = (): AppDatabase => {
+        const candidate = new Database(replicaPath, { syncUrl: target.url, authToken: target.authToken } as Database.Options)
+        candidate.sync()
+        return candidate
+      }
+
       try {
         console.log(`[db] Connecting to Turso via embedded replica: ${target.url}`)
-        db = new Database(replicaPath, { syncUrl: target.url, authToken: target.authToken } as Database.Options)
-        db.sync()
+        db = tryOpenReplica()
         dbConnectedMode = 'turso'
         dbLastVerifiedAt = Date.now()
         dbTursoLastFailedAt = 0
         console.log('[db] Turso embedded replica ready')
         return db
       } catch (err) {
-        console.warn('[db] Turso embedded replica failed, falling back to local SQLite:', (err as Error).message)
-        try { db?.close() } catch { /* ignore */ }
-        db = null
+        const msg = (err as Error).message ?? ''
+        const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists')
+        if (isCorrupted) {
+          console.warn('[db] Turso replica corrupted, wiping and retrying:', msg)
+          try { db?.close() } catch { /* ignore */ }
+          db = null
+          for (const suffix of ['', '-wal', '-shm', '-info']) {
+            try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
+          }
+          try {
+            db = tryOpenReplica()
+            dbConnectedMode = 'turso'
+            dbLastVerifiedAt = Date.now()
+            dbTursoLastFailedAt = 0
+            console.log('[db] Turso embedded replica ready (after wipe)')
+            return db
+          } catch (retryErr) {
+            console.warn('[db] Turso retry also failed, falling back to local SQLite:', (retryErr as Error).message)
+            try { db?.close() } catch { /* ignore */ }
+            db = null
+          }
+        } else {
+          console.warn('[db] Turso embedded replica failed, falling back to local SQLite:', msg)
+          try { db?.close() } catch { /* ignore */ }
+          db = null
+        }
         dbTursoLastFailedAt = Date.now()
       }
     }

@@ -1,4 +1,7 @@
 import { Router, type Request, type Response } from 'express'
+import { getConfiguredDatabaseMode } from '../database/db'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pkg = require('../../package.json') as { version: string }
 
 const router = Router()
 
@@ -30,6 +33,10 @@ const router = Router()
  */
 router.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+router.get('/info', (_req: Request, res: Response) => {
+  res.json({ version: pkg.version, dbMode: getConfiguredDatabaseMode() })
 })
 
 export default router

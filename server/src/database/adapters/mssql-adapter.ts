@@ -119,6 +119,76 @@ function normalizeRows<T>(rows: T[]): T[] {
   return rows.map(normalizeRow)
 }
 
+/**
+ * Shared execute logic used by both MssqlAdapter and MssqlTransactionAdapter.
+ *
+ * If a plain INSERT fails with "Cannot insert the value NULL into column 'id'"
+ * (i.e. the table was created without IDENTITY on its PK), this automatically
+ * retries by fetching MAX(id)+1 and injecting it as a literal into the INSERT.
+ * This is a safety net — run create-missing-sqlserver-tables.sql to add
+ * IDENTITY permanently so the retry path is never needed.
+ */
+async function executeStatement(
+  conn: sql.ConnectionPool | sql.Transaction,
+  rawSql: string,
+  params: unknown[],
+): Promise<{ lastInsertRowid?: number | bigint; changes?: number }> {
+  const isInsert = /^\s*INSERT\b/i.test(rawSql)
+  const { sql: withNamedParams, values } = convertPlaceholders(rawSql, params)
+  const translated = translateSql(withNamedParams)
+  const finalSql = isInsert ? `${translated}; SELECT SCOPE_IDENTITY() AS _last_id` : translated
+
+  let result: sql.IResult<unknown>
+  try {
+    const request = buildRequest(conn, finalSql, values)
+    result = await request.query(finalSql)
+  } catch (err) {
+    // If the table's id column lacks IDENTITY, inject MAX(id)+1 and retry once.
+    if (isInsert && /Cannot insert the value NULL into column 'id'/i.test((err as Error).message ?? '')) {
+      return retryInsertWithExplicitId(conn, rawSql, params)
+    }
+    throw err
+  }
+
+  if (isInsert) {
+    const lastId = (result.recordsets as Array<Array<{ _last_id?: number }>>)?.[1]?.[0]?._last_id
+      ?? (result.recordset as Array<{ _last_id?: number }>)?.[0]?._last_id
+    return { lastInsertRowid: lastId != null ? Number(lastId) : undefined }
+  }
+  return { changes: result.rowsAffected?.[0] }
+}
+
+/**
+ * Called when an INSERT fails because `id` has no IDENTITY.
+ * Queries MAX(id)+1 from the target table and injects it as a literal
+ * into the column list, then re-executes.
+ */
+async function retryInsertWithExplicitId(
+  conn: sql.ConnectionPool | sql.Transaction,
+  rawSql: string,
+  params: unknown[],
+): Promise<{ lastInsertRowid?: number | bigint; changes?: number }> {
+  const tableMatch = rawSql.match(/INSERT\s+(?:OR\s+IGNORE\s+)?INTO\s+(\w+)\s*\(/i)
+  if (!tableMatch) throw new Error('[mssql] retryInsertWithExplicitId: could not parse table name')
+  const table = tableMatch[1]
+
+  const maxSql = `SELECT ISNULL(MAX(id), 0) + 1 AS nextId FROM ${table}`
+  const maxResult = await buildRequest(conn, maxSql, []).query<{ nextId: number }>(maxSql)
+  const nextId: number = maxResult.recordset[0]?.nextId ?? 1
+
+  // Inject `id` into the column list and the literal nextId into VALUES
+  const modifiedSql = rawSql.replace(
+    /(INSERT\s+(?:OR\s+IGNORE\s+)?INTO\s+\w+\s*\()([^)]+)(\)\s*VALUES\s*\()([^)]+)(\))/i,
+    (_m, pre: string, cols: string, mid: string, vals: string, post: string) =>
+      `${pre}id, ${cols}${mid}${nextId}, ${vals}${post}`,
+  )
+
+  const { sql: withNamedParams, values } = convertPlaceholders(modifiedSql, params)
+  const translated = translateSql(withNamedParams)
+  await buildRequest(conn, translated, values).query(translated)
+  return { lastInsertRowid: nextId }
+}
+
 function buildRequest(pool: sql.ConnectionPool | sql.Transaction, convertedSql: string, values: unknown[]): sql.Request {
   const request = pool instanceof sql.Transaction
     ? new sql.Request(pool)
@@ -164,17 +234,7 @@ class MssqlTransactionAdapter implements DbAdapter {
   }
 
   async execute(rawSql: string, params: unknown[] = []): Promise<{ lastInsertRowid?: number | bigint; changes?: number }> {
-    const translated = translateSql(rawSql)
-    const isInsert = /^\s*INSERT\b/i.test(translated)
-    const wrappedSql = isInsert ? `${translated}; SELECT SCOPE_IDENTITY() AS _last_id` : translated
-    const { sql: converted, values } = convertPlaceholders(wrappedSql, params)
-    const request = buildRequest(this.tx, converted, values)
-    const result = await request.query(converted)
-    if (isInsert) {
-      const lastId = result.recordset?.[0]?._last_id
-      return { lastInsertRowid: lastId != null ? Number(lastId) : undefined }
-    }
-    return { changes: result.rowsAffected?.[0] }
+    return executeStatement(this.tx, rawSql, params)
   }
 
   async transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
@@ -206,18 +266,7 @@ export class MssqlAdapter implements DbAdapter {
   }
 
   async execute(rawSql: string, params: unknown[] = []): Promise<{ lastInsertRowid?: number | bigint; changes?: number }> {
-    const translated = translateSql(rawSql)
-    const isInsert = /^\s*INSERT\b/i.test(translated)
-    const wrappedSql = isInsert ? `${translated}; SELECT SCOPE_IDENTITY() AS _last_id` : translated
-    const { sql: converted, values } = convertPlaceholders(wrappedSql, params)
-    const request = buildRequest(this.pool, converted, values)
-    const result = await request.query(converted)
-    if (isInsert) {
-      const lastId = (result.recordsets as Array<Array<{ _last_id?: number }>>)?.[1]?.[0]?._last_id
-        ?? (result.recordset as Array<{ _last_id?: number }>)?.[0]?._last_id
-      return { lastInsertRowid: lastId != null ? Number(lastId) : undefined }
-    }
-    return { changes: result.rowsAffected?.[0] }
+    return executeStatement(this.pool, rawSql, params)
   }
 
   async transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {

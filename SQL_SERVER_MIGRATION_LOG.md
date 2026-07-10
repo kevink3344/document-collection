@@ -142,10 +142,70 @@ Key changes per file:
 
 ---
 
-## Key Decisions
+## Hotfix — SQL Dialect Translation (post-deploy) ✅
 
-- No ORM introduced — adapter wraps raw SQL to minimize rewrite scope
-- `?` → `@p0, @p1` conversion is inside `MssqlAdapter` — route SQL is unchanged
-- Migrations are completely skipped for SQL Server (data already migrated via script)
-- Turso remains the local dev/test database
-- `getDb()` is replaced by `getDbAsync()` — all callers use `await`
+**Issue:** `DB_MODE=sqlserver` returned "No organizations available" on login.
+
+**Root cause:** Route queries contained SQLite-specific SQL that SQL Server rejects:
+- `ORDER BY name COLLATE NOCASE` — not valid SQL Server syntax
+- `datetime('now')` — SQLite function, SQL Server uses `GETUTCDATE()`
+- `INSERT OR IGNORE INTO ...` — SQLite-only, SQL Server has no equivalent keyword
+
+**Fix:** Added `translateSql()` function inside `MssqlAdapter` (applied automatically before every query):
+- `COLLATE NOCASE` → removed (SQL Server default collation `SQL_Latin1_General_CP1_CI_AS` is already case-insensitive)
+- `datetime('now')` → `GETUTCDATE()`
+- `INSERT OR IGNORE INTO t (cols) VALUES (vals)` → `INSERT INTO t (cols) SELECT vals WHERE NOT EXISTS (SELECT 1 FROM t WHERE cols = vals)`
+
+No route files were changed — translation is transparent to all callers.
+
+**Commit:** `fix: translate SQLite SQL to SQL Server in MssqlAdapter`
+
+---
+
+## All Post-Deploy Fixes ✅
+
+All applied transparently in `MssqlAdapter.translateSql()` — no route files changed:
+
+| Issue | SQLite | SQL Server |
+|-------|--------|------------|
+| Case-insensitive sort | `COLLATE NOCASE` | Removed (SQL Server collation is CI) |
+| Current timestamp | `datetime('now')` | `GETUTCDATE()` |
+| Timestamp offset | `datetime('now', '-N days')` | `DATEADD(day, -N, GETUTCDATE())` |
+| Date extraction | `date(col)` | `CAST(col AS DATE)` |
+| Row limit | `LIMIT n` | `SELECT TOP n ...` |
+| Upsert | `ON CONFLICT(...) DO UPDATE SET` | `IF EXISTS UPDATE / ELSE INSERT` |
+| Ignore duplicates | `INSERT OR IGNORE` | `INSERT ... WHERE NOT EXISTS` |
+| Reserved word | `key` | `[key]` |
+| BIT columns | returned as `1`/`0` | normalized from `true`/`false` |
+| BIGINT columns | returned as `number` | normalized from JS string `"123"` |
+
+Other fixes:
+- `express-async-errors` added — prevents unhandled async rejections from crashing Express 4
+- `runNotificationSweep()` made async — startup sweep errors no longer crash the server
+- `mssqlPoolConnecting` reset on failure — pool reconnects cleanly after errors
+
+## Missing Tables ✅
+
+Script: `server/scripts/create-missing-sqlserver-tables.sql`
+
+All tables created: `collection_fields`, `collection_responses`, `collection_response_values`, `response_attachments`, `submission_comments`, `ticket_responses`, `ticket_response_values`, `ticket_history`, `approval_workflow_*`, `signup_slots`, `signup_registrations`, `notification_*`, `user_preferences`
+
+## collection_fields Data ✅
+
+Script: `server/scripts/seed-collection-fields-sqlserver.sql`
+
+Uses `SET IDENTITY_INSERT ON` + `DBCC CHECKIDENT RESEED` pattern. Identity reseeded to 8515.
+
+## Current Status
+
+| Feature | Status |
+|---------|--------|
+| Login | ✅ Working |
+| Organizations / Users | ✅ Working |
+| Collections | ✅ Working |
+| Tickets | ✅ Working |
+| Reports | ✅ Working |
+| Login page stats | ✅ Working |
+| Server stability | ✅ Stable |
+| DB_MODE=sqlserver (Azure) | ✅ Active |
+| DB_MODE=turso (local dev) | ✅ Active |
