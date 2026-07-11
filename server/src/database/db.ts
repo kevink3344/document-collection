@@ -894,9 +894,10 @@ export async function closeMssqlPool(): Promise<void> {
  * Reads a SQL file containing GO-separated batches and executes each batch
  * against the SQL Server connection pool. No-op in non-sqlserver modes.
  *
- * All batches are executed on a SINGLE dedicated connection so that
- * session-scoped settings like SET IDENTITY_INSERT persist across GO
- * batch boundaries.
+ * Batches that contain only SET IDENTITY_INSERT are merged with the
+ * immediately following batch so the setting stays active — mssql's
+ * connection pool calls sp_reset_connection between requests, which
+ * would otherwise reset IDENTITY_INSERT before the INSERT runs.
  */
 export async function runSqlServerSeedFile(filePath: string): Promise<void> {
   if (getConfiguredDatabaseMode() !== 'sqlserver') {
@@ -908,25 +909,34 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
   const rawSql = fs.readFileSync(filePath, 'utf-8')
 
   // Split on GO batch separators (case-insensitive, on its own line)
-  const batches = rawSql
+  const raw = rawSql
     .split(/^\s*GO\s*$/im)
     .map((b) => b.trim())
     .filter((b) => b.length > 0)
+
+  // Merge SET IDENTITY_INSERT batches with the next batch so they run
+  // in the same request (avoids sp_reset_connection clearing the setting).
+  const batches: string[] = []
+  for (let i = 0; i < raw.length; i++) {
+    if (/^\s*SET\s+IDENTITY_INSERT\b/i.test(raw[i]) && i + 1 < raw.length) {
+      batches.push(raw[i] + '\n' + raw[++i])
+    } else {
+      batches.push(raw[i])
+    }
+  }
 
   const target = resolveDbTarget()
   if (target.mode !== 'sqlserver') {
     throw new Error('[db] runSqlServerSeedFile: unexpected non-sqlserver target')
   }
 
-  // Create a dedicated pool with max:1 so every batch reuses the same
-  // underlying TCP connection and session-level settings persist.
   const seedPool = new sql.ConnectionPool({
     server: target.server,
     database: target.database,
     user: target.user,
     password: target.password,
     options: { encrypt: true, trustServerCertificate: false },
-    pool: { max: 1, min: 0, idleTimeoutMillis: 60000 },
+    pool: { max: 10, min: 0, idleTimeoutMillis: 60000 },
   })
   await seedPool.connect()
 
@@ -938,7 +948,7 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
       try {
         await seedPool.request().query(batch)
       } catch (err) {
-        console.error(`[db] Seed batch ${i} failed:\n${batch.slice(0, 200)}\nError: ${(err as Error).message}`)
+        console.error(`[db] Seed batch ${i} failed:\n${batch.slice(0, 300)}\nError: ${(err as Error).message}`)
         throw err
       }
     }
