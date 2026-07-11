@@ -20,6 +20,7 @@ const ALLOWED_KEYS = new Set([
   'about_message',
   'database_mode',
   'login_mode',
+  'maintenance_message',
 ])
 
 interface DbSetting {
@@ -135,8 +136,8 @@ router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const value = ((req.body as { value?: unknown }).value ?? '').toString().trim()
-  if (!value) {
+  const value = ((req.body as { value?: unknown }).value ?? '').toString()
+  if (!value.trim() && key !== 'maintenance_message') {
     res.status(400).json({ error: 'value is required' })
     return
   }

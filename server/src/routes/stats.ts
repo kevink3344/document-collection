@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
+import { getDialect } from '../database/sql'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator } from '../middleware/organizationAccess'
 import { callGroq, checkRateLimit, GROQ_MAX_TOKENS, GROQ_MAX_DATE_RANGE_DAYS } from '../services/groq'
@@ -95,14 +96,21 @@ router.get('/trend', authenticateToken, async (req: Request, res: Response): Pro
       dates.push(d.toISOString().slice(0, 10))
     }
 
+    const trendDateExpr = getDialect() === 'sqlserver'
+      ? `DATEADD(day, -${TREND_DAYS - 1}, GETUTCDATE())`
+      : `date('now', '-${TREND_DAYS - 1} days')`
+    const trendDateToStr = getDialect() === 'sqlserver'
+      ? (col: string) => `CONVERT(varchar(10), ${col}, 120)`
+      : (col: string) => `date(${col})`
+
     const rows = await db.queryAll<{ date: string; category: string; count: number }>(
-        `SELECT date(cr.submitted_at) AS date,
+        `SELECT ${trendDateToStr('cr.submitted_at')} AS date,
                 COALESCE(c.category, 'Uncategorised') AS category,
                 COUNT(*) AS count
          FROM collection_responses cr
          JOIN collections c ON c.id = cr.collection_id
-         WHERE cr.submitted_at >= date('now', '-${TREND_DAYS - 1} days') ${collectionScopeAnd}
-         GROUP BY date(cr.submitted_at), COALESCE(c.category, 'Uncategorised')
+         WHERE cr.submitted_at >= ${trendDateExpr} ${collectionScopeAnd}
+         GROUP BY ${trendDateToStr('cr.submitted_at')}, COALESCE(c.category, 'Uncategorised')
          ORDER BY date ASC`,
         scopeParam
       )
@@ -156,7 +164,7 @@ router.get('/', authenticateToken, async (req: Request, res: Response): Promise<
          FROM collections
          WHERE status = 'published'
            AND date_due IS NOT NULL
-           AND date_due < date('now')${collectionFilter}`,
+           AND date_due < ${getDialect() === 'sqlserver' ? 'CAST(GETUTCDATE() AS DATE)' : "date('now')"}${collectionFilter}`,
         collectionParams
       )
     const overdueCount = overdueRow?.overdueCount ?? 0
@@ -168,7 +176,7 @@ router.get('/', authenticateToken, async (req: Request, res: Response): Promise<
         `SELECT COUNT(*) AS submissionsThisWeek
          FROM collection_responses cr
          ${submissionJoin}
-         WHERE cr.submitted_at >= datetime('now', '-7 days')`,
+         WHERE cr.submitted_at >= ${getDialect() === 'sqlserver' ? 'DATEADD(day, -7, GETUTCDATE())' : "datetime('now', '-7 days')"}`,
         collectionParams
       )
     const submissionsThisWeek = weekRow?.submissionsThisWeek ?? 0
@@ -211,7 +219,15 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
       : VALID_DAYS.has(Number(daysRaw)) ? Number(daysRaw)
       : 30
 
-    const dateThreshold = days ? `datetime('now', '-${days} days')` : null
+    const isSqlServer = getDialect() === 'sqlserver'
+    const dateThreshold = days
+      ? isSqlServer
+        ? `DATEADD(day, -${days}, GETUTCDATE())`
+        : `datetime('now', '-${days} days')`
+      : null
+    const dateToStr = isSqlServer
+      ? (col: string) => `CONVERT(varchar(10), ${col}, 120)`
+      : (col: string) => `date(${col})`
 
     // ── KPI ─────────────────────────────────────────────────
     const subWhere = dateThreshold
@@ -240,11 +256,11 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
 
     // ── Submissions over time ────────────────────────────────
     const submissionsOverTime = await db.queryAll<{ date: string; count: number }>(
-        `SELECT date(submitted_at) AS date, COUNT(*) AS count
+        `SELECT ${dateToStr('submitted_at')} AS date, COUNT(*) AS count
           FROM collection_responses cr
           JOIN collections c ON c.id = cr.collection_id
          ${subWhere}
-          GROUP BY date(cr.submitted_at)
+          GROUP BY ${dateToStr('cr.submitted_at')}
          ORDER BY date ASC`,
         scopeParam
       )
@@ -268,7 +284,7 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
          FROM collections c
          LEFT JOIN collection_responses cr ${crJoinCond}
         ${collectionScope}
-         GROUP BY c.id
+         GROUP BY c.id, c.title, c.category, c.status
          ORDER BY submissionCount DESC, c.title ASC`,
         scopeParam
       )
@@ -298,7 +314,7 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
                       MAX(cr.submitted_at) AS lastActive
                FROM users u
                LEFT JOIN collection_responses cr ${crUserJoinCond}
-               GROUP BY u.id
+               GROUP BY u.id, u.name, u.role, u.organization
                ORDER BY submissionCount DESC, u.name ASC`
           )
         : []
@@ -371,7 +387,11 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
   try {
     const db = await getDbAsync()
     const scopeParam = !isAdministrator(context!) && context?.organizationId ? [context.organizationId] : []
-    const dateThreshold = days ? `datetime('now', '-${days} days')` : null
+    const dateThreshold = days
+      ? getDialect() === 'sqlserver'
+        ? `DATEADD(day, -${days}, GETUTCDATE())`
+        : `datetime('now', '-${days} days')`
+      : null
     const selectedCollection = collectionId
       ? await db.queryOne<{ id: number; title: string; category: string | null; status: string }>(
           `SELECT id, title, category, status FROM collections ${!isAdministrator(context!) && context?.organizationId ? 'WHERE id = ? AND organization_id = ?' : !isAdministrator(context!) ? 'WHERE 1 = 0' : 'WHERE id = ?'}`,
@@ -431,10 +451,14 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
         ? Math.round((totalSubmissions / activeCollections) * 10) / 10
         : 0
 
+    const aiDateToStr = getDialect() === 'sqlserver'
+      ? (col: string) => `CONVERT(varchar(10), ${col}, 120)`
+      : (col: string) => `date(${col})`
+
     const submissionsOverTime2 = await db.queryAll<{ date: string; count: number }>(
-        `SELECT date(submitted_at) AS date, COUNT(*) AS count
+        `SELECT ${aiDateToStr('submitted_at')} AS date, COUNT(*) AS count
           FROM collection_responses cr JOIN collections c ON c.id = cr.collection_id ${subWhere}
-         GROUP BY date(submitted_at) ORDER BY date ASC`,
+         GROUP BY ${aiDateToStr('submitted_at')} ORDER BY date ASC`,
         responseParams
       )
 
@@ -446,7 +470,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
              LEFT JOIN collection_responses cr
                ON cr.collection_id = c.id ${dateThreshold ? `AND cr.submitted_at >= ${dateThreshold}` : ''}
              WHERE c.id = ? ${!isAdministrator(context!) && context?.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context!) ? 'AND 1 = 0' : ''}
-             GROUP BY c.id`,
+             GROUP BY c.id, c.title, c.category, c.status`,
             (!isAdministrator(context!) && context?.organizationId ? [collectionId, context.organizationId] : [collectionId])
           )].filter(Boolean) as { id: number; title: string; category: string | null; status: string; submissionCount: number; lastActivity: string | null }[])
       : (await db.queryAll<{ id: number; title: string; category: string | null; status: string; submissionCount: number; lastActivity: string | null }>(
@@ -457,7 +481,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
                ? `ON cr.collection_id = c.id AND cr.submitted_at >= ${dateThreshold}`
                : `ON cr.collection_id = c.id`}
              ${!isAdministrator(context!) && context?.organizationId ? 'WHERE c.organization_id = ?' : !isAdministrator(context!) ? 'WHERE 1 = 0' : ''}
-             GROUP BY c.id ORDER BY submissionCount DESC, c.title ASC`,
+             GROUP BY c.id, c.title, c.category, c.status ORDER BY submissionCount DESC, c.title ASC`,
           scopeParam
         ))
 
@@ -493,7 +517,7 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
                       COUNT(cr.id) AS submissionCount, MAX(cr.submitted_at) AS lastActive
                FROM users u
                LEFT JOIN collection_responses cr ${crUserJoinCond}
-               GROUP BY u.id ORDER BY submissionCount DESC, u.name ASC`,
+               GROUP BY u.id, u.name, u.role, u.organization ORDER BY submissionCount DESC, u.name ASC`,
             userActivityParams
           )
         : []

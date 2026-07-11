@@ -88,7 +88,10 @@ export async function getGlobalStats(): Promise<GlobalStats> {
 export async function getReportsData(days: ReportsDatePreset = 30): Promise<ReportsData> {
   const res = await fetch(`/api/stats/reports?days=${days}`, { headers: authHeaders() })
   handleUnauthorizedResponse(res)
-  if (!res.ok) throw new Error('Failed to load reports data')
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.error ?? `Failed to load reports data (${res.status})`)
+  }
   return res.json() as Promise<ReportsData>
 }
 

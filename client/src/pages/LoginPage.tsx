@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { getPublicSetting } from '../api/settings'
@@ -44,10 +44,13 @@ function formatOrgLabel(org: LoginOrg): string {
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const { signIn } = useAuth()
   const redirectTo = typeof (location.state as { redirectTo?: unknown } | null)?.redirectTo === 'string'
     ? (location.state as { redirectTo: string }).redirectTo
     : '/'
+  // Super admin backdoor: /login?admin=1 bypasses maintenance mode
+  const adminOverride = searchParams.get('admin') === '1'
 
   const [organizations, setOrganizations] = useState<LoginOrg[]>([])
   const [loadingOrgs, setLoadingOrgs] = useState(true)
@@ -69,7 +72,8 @@ export default function LoginPage() {
   )
   const [loginSubtitle, setLoginSubtitle] = useState('Enterprise Staff Support')
   const [publicStats, setPublicStats] = useState<PublicSummaryStats>(DEFAULT_PUBLIC_STATS)
-  const [loginMode, setLoginMode] = useState<'select' | 'password' | null>(null)
+  const [loginMode, setLoginMode] = useState<'select' | 'password' | 'maintenance' | null>(null)
+  const [maintenanceMessage, setMaintenanceMessage] = useState('System is currently undergoing maintenance. Please check back later.')
   const [appInfo, setAppInfo] = useState<{ version: string; dbMode: string } | null>(null)
 
   // Fetch global stats once on mount (not scoped to selected org)
@@ -116,8 +120,11 @@ export default function LoginPage() {
       .then(setLoginSubtitle)
       .catch(() => { /* keep default */ })
     getPublicSetting('login_mode')
-      .then(val => setLoginMode(val === 'password' ? 'password' : 'select'))
+      .then(val => setLoginMode(val === 'password' ? 'password' : val === 'maintenance' ? 'maintenance' : 'select'))
       .catch(() => setLoginMode('select'))
+    getPublicSetting('maintenance_message')
+      .then(val => { if (val) setMaintenanceMessage(val) })
+      .catch(() => {})
 
     // Load organizations for the picker
     setLoadingOrgs(true)
@@ -245,6 +252,19 @@ export default function LoginPage() {
             </div>
           )}
 
+          {/* ── System Maintenance ────────────────────── */}
+          {loginMode === 'maintenance' && !adminOverride && (
+            <div className="flex flex-col items-center text-center gap-5 py-8">
+              <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-[#1E293B] dark:text-[#F1F5F9] mb-2">System Maintenance</h2>
+                <p className="text-sm text-[#64748B] dark:text-[#94A3B8] leading-relaxed max-w-sm">{maintenanceMessage}</p>
+              </div>
+            </div>
+          )}
+
           {/* ── Select existing user ──────────────────── */}
           {(loginMode === 'select' || loginMode === null) && (
             <>
@@ -326,7 +346,7 @@ export default function LoginPage() {
           )}
 
           {/* ── Email + Password login ────────────────── */}
-          {(loginMode === 'password' || loginMode === null) && (
+          {(loginMode === 'password' || loginMode === null || (loginMode === 'maintenance' && adminOverride)) && (
           <form onSubmit={e => void handlePasswordSignIn(e)} className="space-y-3 mb-8">
             <p className="text-[10px] font-semibold tracking-[0.2em] text-[#64748B] dark:text-[#475569] uppercase mb-4">
               Sign In with Password

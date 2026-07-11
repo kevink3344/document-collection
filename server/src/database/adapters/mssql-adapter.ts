@@ -97,15 +97,31 @@ function convertPlaceholders(rawSql: string, params: unknown[]): { sql: string; 
  * SQL Server (via tedious) returns:
  *  - BIT columns as JS booleans (true/false) — code expects 1/0
  *  - BIGINT columns as JS strings ("1") — code and JWT expect numbers
- * Normalize both so existing comparisons and JWT payloads work correctly.
+ *  - datetime/smalldatetime columns as JS Date objects — convert to ISO string
+ *  - NVARCHAR columns with DEFAULT GETDATE() store SQL Server locale date strings
+ *    like "Jul 11 2026  8:26PM" — convert to ISO string so the client can parse them.
+ * Normalize all so existing comparisons and JWT payloads work correctly.
  */
+// Matches SQL Server's implicit datetime→varchar format: "Mon DD YYYY HH:MMAM/PM"
+const MSSQL_DATE_STRING_RE = /^[A-Za-z]{3}\s+\d{1,2}\s+\d{4}\s+\d{1,2}:\d{2}[AP]M$/
+
 function normalizeRow<T>(row: T): T {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
     if (typeof v === 'boolean') {
       out[k] = v ? 1 : 0
-    } else if (typeof v === 'string' && /^-?\d+$/.test(v)) {
-      // BIGINT returned as string — convert to number if it fits safely
+    } else if (v instanceof Date) {
+      // datetime/datetime2 columns come back as JS Date objects
+      out[k] = v.toISOString().replace('T', ' ').slice(0, 19)
+    } else if (typeof v === 'string' && MSSQL_DATE_STRING_RE.test(v.trim())) {
+      // NVARCHAR column with DEFAULT GETDATE() — convert to ISO format
+      // Insert space before AM/PM so JS Date can parse it: "Jul 11 2026 12:37AM" → "Jul 11 2026 12:37 AM"
+      const cleaned = v.trim().replace(/([AP]M)$/, ' $1')
+      const d = new Date(cleaned)
+      out[k] = isNaN(d.getTime()) ? v : d.toISOString().replace('T', ' ').slice(0, 19)
+    } else if (typeof v === 'string' && /^\d+$/.test(v) && /^id$|_id$|^count$|Count$|_count$/.test(k)) {
+      // BIGINT returned as string — only convert columns that are IDs or counts.
+      // Generic string columns (e.g. app_settings.value) must not be coerced.
       const n = Number(v)
       out[k] = Number.isSafeInteger(n) ? n : v
     } else {

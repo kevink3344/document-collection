@@ -32,20 +32,20 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
   if (context.role === 'super_admin' && !context.organizationId) {
     // super_admin without org scope — return all groups
     rows = await db.queryAll(`
-      SELECT g.*, COUNT(gm.user_id) AS member_count
+      SELECT g.id, g.organization_id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(gm.user_id) AS member_count
       FROM groups g
       LEFT JOIN group_members gm ON gm.group_id = g.id
-      GROUP BY g.id
+      GROUP BY g.id, g.organization_id, g.name, g.description, g.created_by, g.created_at, g.updated_at
       ORDER BY lower(g.name)
     `) as typeof rows
   } else {
     const orgId = context.organizationId
     rows = await db.queryAll(`
-      SELECT g.*, COUNT(gm.user_id) AS member_count
+      SELECT g.id, g.organization_id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(gm.user_id) AS member_count
       FROM groups g
       LEFT JOIN group_members gm ON gm.group_id = g.id
       WHERE g.organization_id = ?
-      GROUP BY g.id
+      GROUP BY g.id, g.organization_id, g.name, g.description, g.created_by, g.created_at, g.updated_at
       ORDER BY lower(g.name)
     `, [orgId]) as typeof rows
   }
@@ -142,10 +142,10 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
       id: number; organization_id: number; name: string; description: string | null
       created_by: number | null; created_at: string; updated_at: string; member_count: number
     }>(`
-      SELECT g.*, COUNT(gm.user_id) AS member_count
+      SELECT g.id, g.organization_id, g.name, g.description, g.created_by, g.created_at, g.updated_at, COUNT(gm.user_id) AS member_count
       FROM groups g LEFT JOIN group_members gm ON gm.group_id = g.id
       WHERE g.id = ?
-      GROUP BY g.id
+      GROUP BY g.id, g.organization_id, g.name, g.description, g.created_by, g.created_at, g.updated_at
     `, [groupId])
 
     if (!row) {

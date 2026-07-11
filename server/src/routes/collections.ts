@@ -1612,7 +1612,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
       ? col.submission_edit_window_hours
       : null
     const editableUntil = editWindowHours && col.anonymous !== 1
-      ? (await db.queryOne<{ ts: string }>(`SELECT datetime('now', '+' || ? || ' hours') AS ts`, [editWindowHours]))?.ts ?? null
+      ? new Date(Date.now() + editWindowHours * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 19)
       : null
 
     const r = await db.execute(
@@ -1716,7 +1716,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
       })
     }
 
-    await db.execute('COMMIT')
+    // (no explicit transaction needed — each INSERT is auto-committed)
 
     // Send confirmation email if the feature is enabled and the respondent provided an email
     const respondentEmail = authenticatedRespondent?.email ?? body.respondentEmail?.trim()

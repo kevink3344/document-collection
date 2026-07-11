@@ -460,10 +460,15 @@ export default function SettingsPage() {
   const [notificationWindowError, setNotificationWindowError] = useState<string | null>(null)
   const [notificationWindowSaved, setNotificationWindowSaved] = useState(false)
   const [qrCodeEnabled, setQrCodeEnabled] = useState(false)
-  const [loginMode, setLoginMode] = useState<'select' | 'password'>('select')
+  const [loginMode, setLoginMode] = useState<'select' | 'password' | 'maintenance'>('select')
   const [loginModeSaving, setLoginModeSaving] = useState(false)
   const [loginModeError, setLoginModeError] = useState<string | null>(null)
   const [loginModeSaved, setLoginModeSaved] = useState(false)
+  const [maintenanceMessage, setMaintenanceMessage] = useState('System is currently undergoing maintenance. Please check back later.')
+  const [maintenanceMessageDraft, setMaintenanceMessageDraft] = useState('System is currently undergoing maintenance. Please check back later.')
+  const [maintenanceMessageSaving, setMaintenanceMessageSaving] = useState(false)
+  const [maintenanceMessageError, setMaintenanceMessageError] = useState<string | null>(null)
+  const [maintenanceMessageSaved, setMaintenanceMessageSaved] = useState(false)
   const [databaseMode, setDatabaseMode] = useState('turso')
   const [databaseModeSaving, setDatabaseModeSaving] = useState(false)
   const [databaseModeError, setDatabaseModeError] = useState<string | null>(null)
@@ -532,8 +537,11 @@ export default function SettingsPage() {
       .then(val => setQrCodeEnabled(val === 'true'))
       .catch(() => setQrCodeEnabled(false))
     getPublicSetting('login_mode')
-      .then(val => setLoginMode(val === 'password' ? 'password' : 'select'))
+      .then(val => setLoginMode(val === 'password' ? 'password' : val === 'maintenance' ? 'maintenance' : 'select'))
       .catch(() => setLoginMode('select'))
+    getPublicSetting('maintenance_message')
+      .then(val => { setMaintenanceMessage(val); setMaintenanceMessageDraft(val) })
+      .catch(() => {})
     getPublicSetting('ai_summary_enabled')
       .then(val => setAiSummaryEnabled(val !== 'false'))
       .catch(() => setAiSummaryEnabled(true))
@@ -1016,7 +1024,8 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleLoginModeToggle(nextMode: 'select' | 'password') {
+  async function handleLoginModeToggle(nextMode: 'select' | 'password' | 'maintenance') {
+    const prevMode = loginMode
     setLoginMode(nextMode)
     setLoginModeSaving(true)
     setLoginModeError(null)
@@ -1025,10 +1034,25 @@ export default function SettingsPage() {
       await updateSetting('login_mode', nextMode)
       setLoginModeSaved(true)
     } catch (err) {
-      setLoginMode(nextMode === 'select' ? 'password' : 'select')
+      setLoginMode(prevMode)
       setLoginModeError((err as Error).message)
     } finally {
       setLoginModeSaving(false)
+    }
+  }
+
+  async function handleMaintenanceMessageSave() {
+    setMaintenanceMessageSaving(true)
+    setMaintenanceMessageError(null)
+    setMaintenanceMessageSaved(false)
+    try {
+      await updateSetting('maintenance_message', maintenanceMessageDraft.trim())
+      setMaintenanceMessage(maintenanceMessageDraft.trim())
+      setMaintenanceMessageSaved(true)
+    } catch (err) {
+      setMaintenanceMessageError((err as Error).message)
+    } finally {
+      setMaintenanceMessageSaving(false)
     }
   }
 
@@ -3206,7 +3230,7 @@ export default function SettingsPage() {
                 <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
                   Controls which sign-in method is shown on the login page. Use <strong>Select User</strong> for test environments and <strong>Password</strong> for production.
                 </p>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <button
                     type="button"
                     onClick={() => void handleLoginModeToggle('select')}
@@ -3231,10 +3255,47 @@ export default function SettingsPage() {
                   >
                     Password (Production)
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleLoginModeToggle('maintenance')}
+                    disabled={loginModeSaving}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-[2px] border transition-colors ${
+                      loginMode === 'maintenance'
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-white dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:border-amber-400'
+                    }`}
+                  >
+                    System Maintenance
+                  </button>
                 </div>
                 {loginModeError && <p className="text-xs text-red-500">{loginModeError}</p>}
                 {loginModeSaving && <p className="text-xs text-[#64748B]">Saving…</p>}
                 {loginModeSaved && <p className="text-xs text-green-600 dark:text-green-400">Saved!</p>}
+
+                {loginMode === 'maintenance' && (
+                  <div className="mt-3 space-y-2 border-t border-[#E2E8F0] dark:border-[#334155] pt-3">
+                    <label className="text-xs font-medium text-[#475569] dark:text-[#94A3B8]">Maintenance Message</label>
+                    <textarea
+                      rows={3}
+                      value={maintenanceMessageDraft}
+                      onChange={e => { setMaintenanceMessageDraft(e.target.value); setMaintenanceMessageSaved(false) }}
+                      className="w-full text-sm border border-[#E2E8F0] dark:border-[#334155] rounded px-3 py-2 bg-white dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] resize-none focus:outline-none focus:ring-1 focus:ring-[#2563EB]"
+                    />
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleMaintenanceMessageSave()}
+                        disabled={maintenanceMessageSaving || maintenanceMessageDraft.trim() === maintenanceMessage}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-[2px] bg-[#2563EB] text-white disabled:opacity-40"
+                      >
+                        Save Message
+                      </button>
+                      {maintenanceMessageSaving && <span className="text-xs text-[#64748B]">Saving…</span>}
+                      {maintenanceMessageSaved && <span className="text-xs text-green-600 dark:text-green-400">Saved!</span>}
+                      {maintenanceMessageError && <span className="text-xs text-red-500">{maintenanceMessageError}</span>}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ── Invite User ─────────────────────────────── */}
