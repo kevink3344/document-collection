@@ -54,6 +54,7 @@ export default function LoginPage() {
 
   const [organizations, setOrganizations] = useState<LoginOrg[]>([])
   const [loadingOrgs, setLoadingOrgs] = useState(true)
+  const [serverStarting, setServerStarting] = useState(false)
   const [selectedOrgId, setSelectedOrgId] = useState<string>('')
 
   const [existingUsers, setExistingUsers] = useState<User[]>([])
@@ -126,21 +127,41 @@ export default function LoginPage() {
       .then(val => { if (val) setMaintenanceMessage(val) })
       .catch(() => {})
 
-    // Load organizations for the picker
+    // Load organizations for the picker — retry every 5 s while the server
+    // is warming up (Azure spins down idle App Service instances).
     setLoadingOrgs(true)
-    fetch('/api/auth/organizations')
-      .then(r => r.json() as Promise<LoginOrg[]>)
-      .then(orgs => {
-        if (!Array.isArray(orgs)) return
-        setOrganizations(orgs)
-        if (orgs.length > 0) {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const fetchOrgs = () => {
+      fetch('/api/auth/organizations')
+        .then(r => r.json() as Promise<LoginOrg[]>)
+        .then(orgs => {
+          if (!Array.isArray(orgs)) return
+          if (orgs.length === 0) {
+            // Server may still be warming up — show banner and retry
+            setServerStarting(true)
+            retryTimer = setTimeout(fetchOrgs, 5000)
+            return
+          }
+          setServerStarting(false)
+          setOrganizations(orgs)
+          setLoadingOrgs(false)
           const firstOrgId = String(orgs[0].id)
           setSelectedOrgId(firstOrgId)
           void loadUsers(firstOrgId)
-        }
-      })
-      .catch(() => { /* keep empty */ })
-      .finally(() => setLoadingOrgs(false))
+        })
+        .catch(() => {
+          // Network error — server not up yet
+          setServerStarting(true)
+          retryTimer = setTimeout(fetchOrgs, 5000)
+        })
+    }
+
+    fetchOrgs()
+
+    return () => {
+      if (retryTimer !== null) clearTimeout(retryTimer)
+    }
   }, [])
 
   const [error, setError] = useState<string | null>(null)
@@ -244,6 +265,16 @@ export default function LoginPage() {
       {/* ── Right panel ────────────────────────────────────── */}
       <div className="flex-1 flex flex-col justify-center bg-white dark:bg-[#0F172A] p-8 md:p-12 lg:p-16">
         <div className="w-full max-w-md mx-auto">
+
+          {/* Server starting banner */}
+          {serverStarting && (
+            <div className="mb-6 flex items-center gap-3 px-4 py-3 border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 text-sm rounded-[2px]">
+              <svg className="shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+              <span>Server is starting up. Please wait…</span>
+            </div>
+          )}
 
           {/* Error banner */}
           {error && (
