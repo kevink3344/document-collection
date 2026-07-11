@@ -914,11 +914,13 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
     .map((b) => b.trim())
     .filter((b) => b.length > 0)
 
-  // Merge SET IDENTITY_INSERT batches with the next batch so they run
-  // in the same request (avoids sp_reset_connection clearing the setting).
+  // Merge any batch that ends with SET IDENTITY_INSERT ... ON with the
+  // next batch so they run in the same request — mssql's connection pool
+  // calls sp_reset_connection between requests, which would otherwise
+  // reset IDENTITY_INSERT before the INSERT runs.
   const batches: string[] = []
   for (let i = 0; i < raw.length; i++) {
-    if (/^\s*SET\s+IDENTITY_INSERT\b/i.test(raw[i]) && i + 1 < raw.length) {
+    if (/\bSET\s+IDENTITY_INSERT\b[^;]*\bON\b\s*;?\s*$/i.test(raw[i]) && i + 1 < raw.length) {
       batches.push(raw[i] + '\n' + raw[++i])
     } else {
       batches.push(raw[i])
