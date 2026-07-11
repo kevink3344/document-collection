@@ -893,6 +893,9 @@ export async function closeMssqlPool(): Promise<void> {
 /**
  * Reads a SQL file containing GO-separated batches and executes each batch
  * against the SQL Server connection pool. No-op in non-sqlserver modes.
+ *
+ * All batches are executed on a SINGLE connection so that session-scoped
+ * settings like SET IDENTITY_INSERT persist across GO batch boundaries.
  */
 export async function runSqlServerSeedFile(filePath: string): Promise<void> {
   if (getConfiguredDatabaseMode() !== 'sqlserver') {
@@ -910,25 +913,32 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
     .filter((b) => b.length > 0)
 
   // Ensure pool is connected
-  const adapter = await getDbAsync()
+  await getDbAsync()
   const pool = mssqlPool
   if (!pool) {
     throw new Error('[db] runSqlServerSeedFile: SQL Server pool is not available')
   }
 
+  // Acquire a single connection from the pool so session-level settings
+  // (e.g. SET IDENTITY_INSERT) persist across all batches.
+  const conn = await pool.connect()
+
   console.log(`[db] Running seed file: ${filePath} (${batches.length} batches)`)
   let i = 0
-  for (const batch of batches) {
-    i++
-    try {
-      await pool.request().query(batch)
-    } catch (err) {
-      console.error(`[db] Seed batch ${i} failed:\n${batch.slice(0, 200)}\nError: ${(err as Error).message}`)
-      throw err
+  try {
+    for (const batch of batches) {
+      i++
+      try {
+        await conn.request().query(batch)
+      } catch (err) {
+        console.error(`[db] Seed batch ${i} failed:\n${batch.slice(0, 200)}\nError: ${(err as Error).message}`)
+        throw err
+      }
     }
+  } finally {
+    conn.release()
   }
   console.log(`[db] Seed file complete: ${batches.length} batches executed`)
-  void adapter // suppress unused warning
 }
 
 export function setupDatabase(): void {
