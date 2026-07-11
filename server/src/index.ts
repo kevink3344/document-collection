@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
-import { setupDatabase, resetDbIfStreamError, getDbAsync } from './database/db'
+import { setupDatabase, resetDbIfStreamError, getDbAsync, runSqlServerSeedFile } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
@@ -96,6 +96,20 @@ async function syncSuperAdmin() {
   }
 }
 void syncSuperAdmin()
+
+// ── SQL Server data seed ─────────────────────────────────────
+// Set SEED_SQL_ON_START=true in Azure App Settings to run the seed file once on startup.
+// Remove or set to false after the first successful deploy to avoid re-running it.
+async function runStartupSeed() {
+  if (process.env.SEED_SQL_ON_START !== 'true') return
+  const seedPath = path.join(__dirname, '../../scripts/data-export-v1.sql')
+  try {
+    await runSqlServerSeedFile(seedPath)
+  } catch (err) {
+    console.error('[server] Startup seed failed:', (err as Error).message)
+  }
+}
+void runStartupSeed()
 
 async function runNotificationSweep() {
   try {

@@ -890,6 +890,47 @@ export async function closeMssqlPool(): Promise<void> {
   }
 }
 
+/**
+ * Reads a SQL file containing GO-separated batches and executes each batch
+ * against the SQL Server connection pool. No-op in non-sqlserver modes.
+ */
+export async function runSqlServerSeedFile(filePath: string): Promise<void> {
+  if (getConfiguredDatabaseMode() !== 'sqlserver') {
+    console.log('[db] runSqlServerSeedFile: skipped (not in sqlserver mode)')
+    return
+  }
+
+  const fs = await import('fs')
+  const rawSql = fs.readFileSync(filePath, 'utf-8')
+
+  // Split on GO batch separators (case-insensitive, on its own line)
+  const batches = rawSql
+    .split(/^\s*GO\s*$/im)
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0)
+
+  // Ensure pool is connected
+  const adapter = await getDbAsync()
+  const pool = mssqlPool
+  if (!pool) {
+    throw new Error('[db] runSqlServerSeedFile: SQL Server pool is not available')
+  }
+
+  console.log(`[db] Running seed file: ${filePath} (${batches.length} batches)`)
+  let i = 0
+  for (const batch of batches) {
+    i++
+    try {
+      await pool.request().query(batch)
+    } catch (err) {
+      console.error(`[db] Seed batch ${i} failed:\n${batch.slice(0, 200)}\nError: ${(err as Error).message}`)
+      throw err
+    }
+  }
+  console.log(`[db] Seed file complete: ${batches.length} batches executed`)
+  void adapter // suppress unused warning
+}
+
 export function setupDatabase(): void {
   // SQL Server: schema and data already exist — skip all migrations.
   if (getConfiguredDatabaseMode() === 'sqlserver') {
