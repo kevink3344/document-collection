@@ -894,8 +894,9 @@ export async function closeMssqlPool(): Promise<void> {
  * Reads a SQL file containing GO-separated batches and executes each batch
  * against the SQL Server connection pool. No-op in non-sqlserver modes.
  *
- * All batches are executed on a SINGLE connection so that session-scoped
- * settings like SET IDENTITY_INSERT persist across GO batch boundaries.
+ * All batches are executed on a SINGLE dedicated connection so that
+ * session-scoped settings like SET IDENTITY_INSERT persist across GO
+ * batch boundaries.
  */
 export async function runSqlServerSeedFile(filePath: string): Promise<void> {
   if (getConfiguredDatabaseMode() !== 'sqlserver') {
@@ -912,16 +913,22 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
     .map((b) => b.trim())
     .filter((b) => b.length > 0)
 
-  // Ensure pool is connected
-  await getDbAsync()
-  const pool = mssqlPool
-  if (!pool) {
-    throw new Error('[db] runSqlServerSeedFile: SQL Server pool is not available')
+  const target = resolveDbTarget()
+  if (target.mode !== 'sqlserver') {
+    throw new Error('[db] runSqlServerSeedFile: unexpected non-sqlserver target')
   }
 
-  // Acquire a single connection from the pool so session-level settings
-  // (e.g. SET IDENTITY_INSERT) persist across all batches.
-  const conn = await pool.connect()
+  // Create a dedicated pool with max:1 so every batch reuses the same
+  // underlying TCP connection and session-level settings persist.
+  const seedPool = new sql.ConnectionPool({
+    server: target.server,
+    database: target.database,
+    user: target.user,
+    password: target.password,
+    options: { encrypt: true, trustServerCertificate: false },
+    pool: { max: 1, min: 0, idleTimeoutMillis: 60000 },
+  })
+  await seedPool.connect()
 
   console.log(`[db] Running seed file: ${filePath} (${batches.length} batches)`)
   let i = 0
@@ -929,14 +936,14 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
     for (const batch of batches) {
       i++
       try {
-        await conn.request().query(batch)
+        await seedPool.request().query(batch)
       } catch (err) {
         console.error(`[db] Seed batch ${i} failed:\n${batch.slice(0, 200)}\nError: ${(err as Error).message}`)
         throw err
       }
     }
   } finally {
-    conn.release()
+    await seedPool.close()
   }
   console.log(`[db] Seed file complete: ${batches.length} batches executed`)
 }
