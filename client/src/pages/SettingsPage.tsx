@@ -3743,7 +3743,6 @@ export default function SettingsPage() {
                                   unarchiveCollection(col.id)
                                     .then(() => {
                                       setArchivedCollections(prev => prev.filter(c => c.id !== col.id))
-                                      showToast('Collection restored to draft', 'success')
                                     })
                                     .catch(err => setArchivedError((err as Error).message))
                                 }}
