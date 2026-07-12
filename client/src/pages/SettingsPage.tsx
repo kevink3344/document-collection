@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Upload, Users, UserCheck, X } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Upload, Users, UserCheck, X } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -36,7 +36,7 @@ import {
 import { listCollections, seedCollectionData } from '../api/collections'
 import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../api/galleryAssets'
 import { getPublicSetting, updateSetting } from '../api/settings'
-import { listUsers, createUser, deleteUser, updateUser, sendInvite, resetUserPassword, type AppUser } from '../api/users'
+import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type AppUser } from '../api/users'
 import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson } from '../api/locations'
 import { listGroups, createGroup, updateGroup, deleteGroup, listGroupMembers, addGroupMember, removeGroupMember } from '../api/groups'
 import { LocationTypeahead } from '../components/common/LocationTypeahead'
@@ -420,14 +420,6 @@ export default function SettingsPage() {
   const [userCreateError, setUserCreateError] = useState<string | null>(null)
   const [userCreateSuccess, setUserCreateSuccess] = useState<number | null>(null)
   const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
-  // Invite user
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteName, setInviteName] = useState('')
-  const [inviteRole, setInviteRole] = useState<'user' | 'reviewer' | 'team_manager' | 'administrator'>('user')
-  const [inviteSaving, setInviteSaving] = useState(false)
-  const [inviteError, setInviteError] = useState<string | null>(null)
-  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null)
-  const [inviteLink, setInviteLink] = useState<string | null>(null)
   const [editingUserId, setEditingUserId] = useState<number | null>(null)
   const [editingUserName, setEditingUserName] = useState('')
   const [editingUserEmail, setEditingUserEmail] = useState('')
@@ -654,28 +646,6 @@ export default function SettingsPage() {
       })
       .catch(err => setSeedError((err as Error).message))
       .finally(() => setSeedCollectionsLoading(false))
-  }
-
-  async function handleSendInvite() {
-    const email = inviteEmail.trim()
-    const name = inviteName.trim()
-    if (!email || !name) return
-    setInviteSaving(true)
-    setInviteError(null)
-    setInviteSuccess(null)
-    setInviteLink(null)
-    try {
-      const result = await sendInvite({ email, name, role: inviteRole })
-      setInviteSuccess(result.message)
-      setInviteLink(result.inviteLink ?? null)
-      setInviteEmail('')
-      setInviteName('')
-      setInviteRole('user')
-    } catch (err) {
-      setInviteError((err as Error).message)
-    } finally {
-      setInviteSaving(false)
-    }
   }
 
   async function handleCreateUser() {
