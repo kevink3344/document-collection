@@ -777,6 +777,9 @@ export function getDb(): AppDatabase {
           db = null
         }
         dbTursoLastFailedAt = Date.now()
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error(`[db] Turso connection failed in production: ${msg}. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.`)
+        }
       }
     }
 
@@ -953,9 +956,10 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
 }
 
 export function setupDatabase(): void {
-  // SQL Server: schema and data already exist — skip all migrations.
-  if (getConfiguredDatabaseMode() === 'sqlserver') {
-    console.log('[db] SQL Server mode \u2014 skipping local schema/migration setup')
+  // SQL Server and Turso: schema already exists remotely — skip local migrations.
+  const mode = getConfiguredDatabaseMode()
+  if (mode === 'sqlserver' || mode === 'turso') {
+    console.log(`[db] ${mode} mode — skipping local schema/migration setup`)
     return
   }
 
