@@ -5,6 +5,13 @@ import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { isAdminOrSuperAdmin, loadRequestUserContext, resolveManagedOrganizationId } from '../middleware/organizationAccess'
 import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
+import { getConfiguredDatabaseMode } from '../database/db'
+
+function resolveStorageLocation(driveFileId: string): 'google_drive' | 'turso_db' | 'sql_server' {
+  if (!driveFileId.startsWith('local:')) return 'google_drive'
+  const mode = getConfiguredDatabaseMode()
+  return mode === 'sqlserver' ? 'sql_server' : 'turso_db'
+}
 
 const router = Router()
 
@@ -63,6 +70,7 @@ function toApiGalleryAsset(row: DbGalleryAssetRow) {
     sizeBytes: row.size_bytes,
     usageCount: row.usage_count ?? 0,
     fileUrl: `/api/gallery-assets/${row.id}/file`,
+    storageLocation: resolveStorageLocation(row.drive_file_id),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

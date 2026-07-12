@@ -233,6 +233,7 @@ export interface GalleryAsset {
   sizeBytes: number
   usageCount: number
   fileUrl: string
+  storageLocation?: 'google_drive' | 'turso_db' | 'sql_server'
   createdByUserId: number | null
   createdAt: string
   updatedAt: string

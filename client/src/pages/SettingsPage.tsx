@@ -3153,6 +3153,12 @@ export default function SettingsPage() {
                       <div className="space-y-2 p-4">
                         <div>
                           <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{asset.name}</h3>
+                          <p className="mt-0.5 text-[11px] text-[#94A3B8]">
+                            {asset.storageLocation === 'google_drive' && '📁 Google Drive'}
+                            {asset.storageLocation === 'sql_server' && '🗄️ SQL Server'}
+                            {asset.storageLocation === 'turso_db' && '⚡ Turso DB'}
+                            {!asset.storageLocation && '—'}
+                          </p>
                           <p className="mt-1 text-xs text-[#64748B]">Used by {asset.usageCount} collection{asset.usageCount === 1 ? '' : 's'}</p>
                         </div>
                         {asset.tags.length > 0 && (
