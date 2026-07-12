@@ -266,7 +266,7 @@ router.post('/login-with-password', async (req: Request, res: Response) => {
 
   const token = signUserToken(user)
   setAuthCookie(res, token)
-  res.json({ token, user: toApiUser(user), mustChangePassword: user.mustChangePassword === 1 })
+  res.json({ token, user: toApiUser(user), mustChangePassword: user.mustChangePassword })
 })
 
 /**
