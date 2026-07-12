@@ -576,8 +576,16 @@ function resolveDbTarget(): DbTarget {
     return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
   }
 
-  // ── SQLite local fallback ─────────────────────────────────────────────────
-  console.warn('[db] No SQL Server or Turso credentials found — falling back to local SQLite.')
+  // ── No valid database configured ─────────────────────────────────────────
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[db] No database configured. Set AZURE_SQL_* credentials for SQL Server or ' +
+      'TURSO_DATABASE_URL + TURSO_AUTH_TOKEN for Turso. Local SQLite is not available in production.'
+    )
+  }
+
+  // Development-only SQLite fallback
+  console.warn('[db] No SQL Server or Turso credentials found — falling back to local SQLite (development only).')
   return { mode: 'sqlite', dbPath: resolveDbPath() }
 }
 
