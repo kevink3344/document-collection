@@ -544,56 +544,40 @@ function resolveDbPath(): string {
 }
 
 function resolveDbTarget(): DbTarget {
-  const databaseUrl = process.env.DATABASE_URL?.trim()
-  const databaseAuthToken = process.env.DATABASE_AUTH_TOKEN?.trim()
-  const tursoUrl = process.env.TURSO_DATABASE_URL?.trim()
-  const tursoToken = process.env.TURSO_AUTH_TOKEN?.trim()
   const configuredMode = getConfiguredDatabaseMode()
 
+  // ── Explicit DB_MODE=sqlserver override ──────────────────────────────────
   if (configuredMode === 'sqlserver') {
-    const sqlServer = process.env.AZURE_SQL_SERVER?.trim()
+    const sqlServer   = process.env.AZURE_SQL_SERVER?.trim()
     const sqlDatabase = process.env.AZURE_SQL_DATABASE?.trim()
-    const sqlUser = process.env.AZURE_SQL_USER?.trim()
+    const sqlUser     = process.env.AZURE_SQL_USER?.trim()
     const sqlPassword = process.env.AZURE_SQL_PASSWORD?.trim()
     if (sqlServer && sqlDatabase && sqlUser && sqlPassword) {
       return { mode: 'sqlserver', server: sqlServer, database: sqlDatabase, user: sqlUser, password: sqlPassword }
     }
-
-    console.warn('[db] SQL Server mode requested but the required environment variables are missing; falling back to local SQLite.')
+    console.warn('[db] DB_MODE=sqlserver set but AZURE_SQL_* credentials are missing — checking Turso/SQLite fallbacks.')
   }
 
-  if (configuredMode === 'turso') {
-    if (looksLikeValidTursoConnection(databaseUrl, databaseAuthToken ?? tursoToken)) {
-      return {
-        mode: 'turso',
-        url: databaseUrl!,
-        authToken: databaseAuthToken ?? tursoToken!,
-      }
-    }
-
-    if (looksLikeValidTursoConnection(tursoUrl, tursoToken)) {
-      return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
-    }
-
-    console.warn('[db] Turso mode requested but the configured URL/token is missing or invalid; falling back to local SQLite.')
-  }
-
-  if (looksLikeValidTursoConnection(databaseUrl, databaseAuthToken ?? tursoToken)) {
-    return {
-      mode: 'turso',
-      url: databaseUrl!,
-      authToken: databaseAuthToken ?? tursoToken!,
+  // ── Auto-detect: SQL Server credentials present (no DB_MODE needed) ──────
+  if (configuredMode !== 'turso' && configuredMode !== 'sqlite') {
+    const sqlServer   = process.env.AZURE_SQL_SERVER?.trim()
+    const sqlDatabase = process.env.AZURE_SQL_DATABASE?.trim()
+    const sqlUser     = process.env.AZURE_SQL_USER?.trim()
+    const sqlPassword = process.env.AZURE_SQL_PASSWORD?.trim()
+    if (sqlServer && sqlDatabase && sqlUser && sqlPassword) {
+      return { mode: 'sqlserver', server: sqlServer, database: sqlDatabase, user: sqlUser, password: sqlPassword }
     }
   }
 
-  if (databaseUrl?.startsWith('sqlite://')) {
-    return { mode: 'sqlite', dbPath: resolveDbPath() }
-  }
-
+  // ── Turso: check all known credential variable names ─────────────────────
+  const tursoUrl   = (process.env.DATABASE_URL ?? process.env.TURSO_DATABASE_URL)?.trim()
+  const tursoToken = (process.env.DATABASE_AUTH_TOKEN ?? process.env.TURSO_AUTH_TOKEN)?.trim()
   if (looksLikeValidTursoConnection(tursoUrl, tursoToken)) {
     return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
   }
 
+  // ── SQLite local fallback ─────────────────────────────────────────────────
+  console.warn('[db] No SQL Server or Turso credentials found — falling back to local SQLite.')
   return { mode: 'sqlite', dbPath: resolveDbPath() }
 }
 
