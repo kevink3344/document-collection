@@ -413,7 +413,7 @@ export default function LoginPage() {
               {pwSigningIn ? 'Signing in…' : 'Sign In'}
             </button>
             <p className="text-center text-sm text-[#64748B] dark:text-[#94A3B8]">
-              <a href="/forgot-password" className="text-[#2563EB] hover:underline">Forgot password?</a>
+              <span className="text-[#94A3B8] dark:text-[#475569] text-sm">Forgot your password? Contact your organization administrator.</span>
             </p>
           </form>
           )}

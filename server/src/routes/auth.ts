@@ -254,8 +254,8 @@ router.post('/login-with-password', async (req: Request, res: Response) => {
     return
   }
 
-  if (user.inviteToken || !user.passwordHash) {
-    res.status(401).json({ error: 'Your account is not yet activated. Please use the invite link sent to your email.' })
+  if (!user.passwordHash) {
+    res.status(401).json({ error: 'This account does not have a password. Please contact your administrator.' })
     return
   }
 
@@ -266,7 +266,55 @@ router.post('/login-with-password', async (req: Request, res: Response) => {
 
   const token = signUserToken(user)
   setAuthCookie(res, token)
-  res.json({ token, user: toApiUser(user) })
+  res.json({ token, user: toApiUser(user), mustChangePassword: user.mustChangePassword === 1 })
+})
+
+/**
+ * POST /api/auth/change-password
+ * Authenticated user changes their own password (required on first login).
+ */
+router.post('/change-password', authenticateToken, async (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = req.body as { currentPassword: unknown; newPassword: unknown }
+
+  if (typeof currentPassword !== 'string' || !currentPassword) {
+    res.status(400).json({ error: 'currentPassword is required' })
+    return
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    res.status(400).json({ error: 'New password must be at least 8 characters' })
+    return
+  }
+
+  const db = await getDbAsync()
+  const row = await db.queryOne<{ id: number; password_hash: string }>(
+    'SELECT id, password_hash FROM users WHERE id = ?',
+    [req.user!.sub]
+  )
+  if (!row || !row.password_hash) {
+    res.status(400).json({ error: 'Account does not have a password set' })
+    return
+  }
+
+  if (!verifyPassword(currentPassword, row.password_hash)) {
+    res.status(401).json({ error: 'Current password is incorrect' })
+    return
+  }
+
+  const newHash = hashPassword(newPassword)
+  await db.execute(
+    'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
+    [newHash, row.id]
+  )
+
+  // Re-issue cookie with updated token so mustChangePassword is cleared
+  const updatedUser = await loadUserAccessProfile(row.id)
+  if (updatedUser) {
+    const token = signUserToken(updatedUser)
+    setAuthCookie(res, token)
+    res.json({ message: 'Password changed successfully.', user: toApiUser(updatedUser) })
+  } else {
+    res.json({ message: 'Password changed successfully.' })
+  }
 })
 
 router.post('/forgot-password', async (req: Request, res: Response) => {

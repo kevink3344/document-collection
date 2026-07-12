@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, LayoutList, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Upload, Users, UserCheck, X } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, Mail, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Upload, Users, UserCheck, X } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -36,7 +36,7 @@ import {
 import { listCollections, seedCollectionData } from '../api/collections'
 import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../api/galleryAssets'
 import { getPublicSetting, updateSetting } from '../api/settings'
-import { listUsers, createUser, deleteUser, updateUser, sendInvite, type AppUser } from '../api/users'
+import { listUsers, createUser, deleteUser, updateUser, sendInvite, resetUserPassword, type AppUser } from '../api/users'
 import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson } from '../api/locations'
 import { listGroups, createGroup, updateGroup, deleteGroup, listGroupMembers, addGroupMember, removeGroupMember } from '../api/groups'
 import { LocationTypeahead } from '../components/common/LocationTypeahead'
@@ -728,6 +728,21 @@ export default function SettingsPage() {
       }
     } catch (err) {
       setUserDeleteError((err as Error).message)
+    }
+  }
+
+  const [resetPasswordSuccess, setResetPasswordSuccess] = useState<number | null>(null)
+  const [resetPasswordError, setResetPasswordError] = useState<string | null>(null)
+
+  async function handleResetPassword(id: number) {
+    setResetPasswordSuccess(null)
+    setResetPasswordError(null)
+    try {
+      await resetUserPassword(id)
+      setResetPasswordSuccess(id)
+      setTimeout(() => setResetPasswordSuccess(null), 3000)
+    } catch (err) {
+      setResetPasswordError((err as Error).message)
     }
   }
 
@@ -3504,6 +3519,17 @@ export default function SettingsPage() {
                                   <Pencil size={12} />
                                   {isEditing ? 'Editing' : 'Edit'}
                                 </button>
+                                {u.id !== user?.id && !isEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleResetPassword(u.id)}
+                                    className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium transition-colors ${resetPasswordSuccess === u.id ? 'border-green-400 bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]'}`}
+                                    title={`Reset ${u.name}'s password to default`}
+                                  >
+                                    <KeyRound size={12} />
+                                    {resetPasswordSuccess === u.id ? 'Reset!' : 'Reset PW'}
+                                  </button>
+                                )}
                                 {u.id !== user?.id && !isEditing && (
                                   <button
                                     type="button"

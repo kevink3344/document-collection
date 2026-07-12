@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import type { UserRole } from './types'
+import ChangePasswordModal from './components/common/ChangePasswordModal'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import CollectionsPage from './pages/CollectionsPage'
@@ -36,7 +37,7 @@ function RequireRole({ allowed, fallback = '/dashboard' }: { allowed: UserRole[]
 }
 
 export default function App() {
-  const { user } = useAuth()
+  const { user, clearMustChangePassword } = useAuth()
   const defaultAuthenticatedRoute = user?.role === 'user'
     ? '/dashboard'
     : user?.role === 'reviewer'
@@ -44,6 +45,11 @@ export default function App() {
       : '/collections'
 
   return (
+    <>
+      {/* Force-change password modal — shown over everything until resolved */}
+      {user?.mustChangePassword && (
+        <ChangePasswordModal onSuccess={clearMustChangePassword} />
+      )}
     <Routes>
       {/* Public */}
       <Route
@@ -91,5 +97,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to={user ? defaultAuthenticatedRoute : '/login'} replace />} />
     </Routes>
+    </>
   )
 }

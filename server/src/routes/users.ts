@@ -414,6 +414,52 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
   res.json(toApiUser(updated))
 })
 
+/**
+ * POST /api/users/:id/reset-password
+ * Admin resets a user's password back to DEFAULT_USER_PASSWORD and flags must_change_password.
+ */
+router.post('/:id/reset-password', authenticateToken, async (req: Request, res: Response) => {
+  const currentUser = await loadRequestUserContext(req)
+  if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid user ID' })
+    return
+  }
+
+  const defaultPw = process.env.DEFAULT_USER_PASSWORD
+  if (!defaultPw) {
+    res.status(500).json({ error: 'DEFAULT_USER_PASSWORD is not set in environment variables' })
+    return
+  }
+
+  const { hashPassword } = await import('./invitations')
+  const db = await getDbAsync()
+
+  const target = await loadUserAccessProfile(id)
+  if (!target) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+
+  if (currentUser.role === 'administrator' && !target.organizations.some(org => org.organizationId === currentUser.organizationId)) {
+    res.status(403).json({ error: 'You can only reset passwords for users within your own organization' })
+    return
+  }
+
+  const newHash = hashPassword(defaultPw)
+  await db.execute(
+    'UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?',
+    [newHash, id]
+  )
+
+  res.json({ message: 'Password reset to default. User will be prompted to change it on next login.' })
+})
+
 router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {

@@ -68,6 +68,18 @@ export async function deleteUser(id: number): Promise<void> {
   }
 }
 
+export async function resetUserPassword(id: number): Promise<void> {
+  const res = await fetch(`/api/users/${id}/reset-password`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  handleUnauthorizedResponse(res)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error ?? `Request failed: ${res.status}`)
+  }
+}
+
 export async function sendInvite(payload: {
   email: string
   name: string

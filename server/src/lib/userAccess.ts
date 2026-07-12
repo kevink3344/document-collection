@@ -166,5 +166,6 @@ export function toApiUser(profile: UserAccessProfile) {
     ...(profile.organization ? { organization: profile.organization } : {}),
     createdAt: profile.createdAt,
     organizations: profile.organizations,
+    mustChangePassword: profile.mustChangePassword,
   }
 }

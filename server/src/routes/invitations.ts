@@ -3,14 +3,19 @@ import crypto from 'crypto'
 import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
-import { sendNotificationEmail, isEmailDeliveryConfigured } from '../services/notificationEmail'
 
 const router = Router()
 
-const INVITE_EXPIRY_MS = 72 * 60 * 60 * 1000 // 72 hours
-
 function hashToken(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex')
+}
+
+function getDefaultPasswordHash(): string {
+  const defaultPw = process.env.DEFAULT_USER_PASSWORD
+  if (!defaultPw) {
+    throw new Error('DEFAULT_USER_PASSWORD is not set in environment variables')
+  }
+  return hashPassword(defaultPw)
 }
 
 export function hashPassword(plain: string): string {
@@ -66,27 +71,32 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
 
   const db = await getDbAsync()
 
-  interface PendingUser { id: number; invite_token: string | null; password_hash: string | null }
-  const existing = await db.queryOne<PendingUser>('SELECT id, invite_token, password_hash FROM users WHERE email = ?', [email.trim()])
+  interface PendingUser { id: number; invite_token: string | null; password_hash: string | null; must_change_password: number }
+  const existing = await db.queryOne<PendingUser>('SELECT id, invite_token, password_hash, must_change_password FROM users WHERE email = ?', [email.trim()])
 
-  if (existing && existing.password_hash && !existing.invite_token) {
-    // Fully active user — already registered with a password
-    res.status(409).json({ error: 'A user with this email is already active.' })
+  if (existing && existing.password_hash && !existing.must_change_password) {
+    // Fully active user with a set password — cannot re-invite without an admin reset first
+    res.status(409).json({ error: 'A user with this email is already active. Use Reset Password to grant them access.' })
     return
   }
 
-  const rawToken = crypto.randomBytes(32).toString('hex')
-  const tokenHash = hashToken(rawToken)
-  const expiresAt = new Date(Date.now() + INVITE_EXPIRY_MS).toISOString()
+  let passwordHash: string
+  try {
+    passwordHash = getDefaultPasswordHash()
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+    return
+  }
 
   if (existing) {
-    // Resend: refresh token + name
+    // Re-invite: reset to default password and force change on next login
     await db.transaction(async (tx) => {
       await tx.execute(
         `UPDATE users
-         SET name = ?, role = ?, organization_id = ?, invite_token = ?, invite_token_expires_at = ?
+         SET name = ?, role = ?, organization_id = ?, password_hash = ?,
+             must_change_password = 1, invite_token = NULL, invite_token_expires_at = NULL
          WHERE id = ?`,
-        [name.trim(), userRole, organizationId, tokenHash, expiresAt, existing.id]
+        [name.trim(), userRole, organizationId, passwordHash, existing.id]
       )
       await tx.execute('DELETE FROM user_organizations WHERE user_id = ?', [existing.id])
       await tx.execute(
@@ -96,12 +106,12 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
       )
     })
   } else {
-    // Create pending user (no password yet)
+    // Create new user with default password — must change on first login
     await db.transaction(async (tx) => {
       const inserted = await tx.execute(
-        `INSERT INTO users (name, email, role, organization_id, must_change_password, invite_token, invite_token_expires_at)
-         VALUES (?, ?, ?, ?, 1, ?, ?)`,
-        [name.trim(), email.trim(), userRole, organizationId, tokenHash, expiresAt]
+        `INSERT INTO users (name, email, role, organization_id, password_hash, must_change_password, invite_token, invite_token_expires_at)
+         VALUES (?, ?, ?, ?, ?, 1, NULL, NULL)`,
+        [name.trim(), email.trim(), userRole, organizationId, passwordHash]
       )
       await tx.execute(
         `INSERT INTO user_organizations (user_id, organization_id, role, is_default)
@@ -111,41 +121,8 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
     })
   }
 
-  const appUrl = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '')
-  const inviteLink = `${appUrl}/accept-invite?token=${rawToken}`
-
-  if (isEmailDeliveryConfigured()) {
-    try {
-      await sendNotificationEmail({
-        to: email.trim(),
-        subject: 'You\'ve been invited to Data Collection Pro',
-        text: [
-          `Hi ${name.trim()},`,
-          '',
-          'You have been invited to join Data Collection Pro.',
-          '',
-          'Click the link below to set your password and activate your account:',
-          '',
-          inviteLink,
-          '',
-          'This link expires in 72 hours.',
-          '',
-          'If you did not expect this invitation, you can safely ignore this email.',
-        ].join('\n'),
-      })
-    } catch (err) {
-      console.error('[invitations] Failed to send invite email:', (err as Error).message)
-      res.status(500).json({ error: 'User created but invite email could not be sent. Check SMTP configuration.' })
-      return
-    }
-  }
-
   res.status(201).json({
-    message: isEmailDeliveryConfigured()
-      ? `Invite sent to ${email.trim()}`
-      : `User created. Email delivery is not configured — share this link manually.`,
-    // Expose link in non-production so admins can copy it during local testing
-    inviteLink: process.env.NODE_ENV !== 'production' ? inviteLink : undefined,
+    message: `User created. They can log in with the default password and will be prompted to change it.`,
   })
 })
 
