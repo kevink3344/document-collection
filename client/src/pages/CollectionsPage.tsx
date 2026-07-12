@@ -111,7 +111,6 @@ function reorderCollectionsWithinCategory(
 
 interface CollectionCardProps {
   collection: Collection
-  deleting: number | null
   archiving: number | null
   canManage: boolean
   canArchive: boolean
@@ -123,7 +122,6 @@ interface CollectionCardProps {
 
 function SortableCollectionCard({
   collection,
-  deleting,
   archiving,
   canManage,
   canArchive,
@@ -765,7 +763,6 @@ export default function CollectionsPage() {
               <SortableCollectionCard
                 key={collection.id}
                 collection={collection}
-                deleting={deleting}
                 archiving={archiving}
                 canManage={canManageCollections}
                 canArchive={user?.role === 'super_admin' || user?.role === 'administrator'}
