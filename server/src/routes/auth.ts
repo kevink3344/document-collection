@@ -46,6 +46,16 @@ function hashToken(raw: string): string {
 }
 
 router.get('/organizations', async (_req: Request, res: Response) => {
+  /**
+   * @swagger
+   * /api/auth/organizations:
+   *   get:
+   *     summary: List organizations (for login picker)
+   *     tags: [Auth]
+   *     responses:
+   *       200:
+   *         description: Array of active organizations
+   */
   const db = await getDbAsync()
   // Only return orgs that have at least one user (for the login picker)
   const orgs = await db.queryAll<{ id: number; name: string; description: string | null }>(
@@ -86,6 +96,28 @@ router.get('/users', async (req: Request, res: Response) => {
   res.json(users.map(toApiUser))
 })
 
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     summary: Sign in as a select-mode user (no password)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [userId]
+ *             properties:
+ *               userId:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: JWT token and user profile
+ *       404:
+ *         description: User not found
+ */
 router.post('/login', async (req: Request, res: Response) => {
   const { userId } = req.body as { userId: unknown }
 
@@ -105,6 +137,16 @@ router.post('/login', async (req: Request, res: Response) => {
   res.json({ token, user: toApiUser(user) })
 })
 
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     summary: Sign out (clears auth cookie)
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: Logged out
+ */
 router.post('/logout', (_req: Request, res: Response) => {
   res.clearCookie('dcp-token', { path: '/' })
   res.json({ message: 'Logged out' })
@@ -198,6 +240,20 @@ router.post('/register', authenticateToken, async (req: Request, res: Response) 
   res.status(201).json({ token, user: toApiUser(newUser) })
 })
 
+/**
+ * @swagger
+ * /api/auth/me:
+ *   get:
+ *     summary: Get the current authenticated user
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user profile
+ *       401:
+ *         description: Unauthorized
+ */
 router.get('/me', authenticateToken, async (req: Request, res: Response) => {
   const user = await loadUserAccessProfile(req.user!.sub, req.user?.activeOrganizationId ?? req.user?.organizationId ?? null)
   if (!user) {
@@ -231,6 +287,43 @@ router.post('/switch-organization', authenticateToken, async (req: Request, res:
   res.json({ token, user: toApiUser(user) })
 })
 
+/**
+ * @swagger
+ * /api/auth/login-with-password:
+ *   post:
+ *     summary: Sign in with email and password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, password]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 example: superadmin@admin.local
+ *               password:
+ *                 type: string
+ *                 example: permissiongranted@1234
+ *     responses:
+ *       200:
+ *         description: Returns JWT token, user profile, and mustChangePassword flag
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 token:
+ *                   type: string
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 mustChangePassword:
+ *                   type: boolean
+ *       401:
+ *         description: Invalid credentials
+ */
 router.post('/login-with-password', async (req: Request, res: Response) => {
   const { email, password } = req.body as { email: unknown; password: unknown }
 
@@ -272,6 +365,32 @@ router.post('/login-with-password', async (req: Request, res: Response) => {
 /**
  * POST /api/auth/change-password
  * Authenticated user changes their own password (required on first login).
+ */
+/**
+ * @swagger
+ * /api/auth/change-password:
+ *   post:
+ *     summary: Change own password (required on first login)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [currentPassword, newPassword]
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password changed
+ *       401:
+ *         description: Current password incorrect
  */
 router.post('/change-password', authenticateToken, async (req: Request, res: Response) => {
   const { currentPassword, newPassword } = req.body as { currentPassword: unknown; newPassword: unknown }
