@@ -218,7 +218,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row">
+    <div className="min-h-screen flex flex-col md:flex-row overflow-x-hidden">
       {/* ── Left panel ─────────────────────────────────────── */}
       <div className="flex flex-col justify-between bg-[#0F2942] text-white p-8 md:p-12 md:w-[44%] md:min-h-screen">
         {/* Brand header */}

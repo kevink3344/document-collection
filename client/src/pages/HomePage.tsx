@@ -9,7 +9,7 @@ export default function HomePage() {
   const { user } = useAuth()
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FAFAFA] dark:bg-[#0F172A]">
+    <div className="min-h-screen flex flex-col bg-[#FAFAFA] dark:bg-[#0F172A] overflow-x-hidden">
       <TopNavBar onAppIconClick={() => setMobileNavOpen(open => !open)} />
       <div className="flex flex-1 overflow-hidden">
         <SideNav

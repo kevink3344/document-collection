@@ -17,6 +17,7 @@
     @apply bg-[#FAFAFA] dark:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9] font-sans antialiased;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
 
   *:focus-visible {
