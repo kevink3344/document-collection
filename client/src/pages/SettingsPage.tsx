@@ -3473,6 +3473,10 @@ export default function SettingsPage() {
                   <p className="text-sm text-red-500">{userDeleteError}</p>
                 )}
 
+                {resetPasswordError && (
+                  <p className="text-sm text-red-500">{resetPasswordError}</p>
+                )}
+
                 {userEditError && (
                   <p className="text-sm text-red-500">{userEditError}</p>
                 )}
