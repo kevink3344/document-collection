@@ -97,6 +97,27 @@ export async function deleteCollection(id: number): Promise<void> {
   }
 }
 
+export async function archiveCollection(id: number): Promise<void> {
+  const res = await fetch(`/api/collections/${id}/archive`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  return handleResponse<void>(res)
+}
+
+export async function unarchiveCollection(id: number): Promise<void> {
+  const res = await fetch(`/api/collections/${id}/unarchive`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  return handleResponse<void>(res)
+}
+
+export async function listArchivedCollections(): Promise<Collection[]> {
+  const res = await fetch('/api/collections/archived', { headers: authHeaders() })
+  return handleResponse<Collection[]>(res)
+}
+
 export async function listCollectionVersions(collectionId: number): Promise<CollectionVersion[]> {
   const res = await fetch(`/api/collections/${collectionId}/versions`, {
     headers: authHeaders(),

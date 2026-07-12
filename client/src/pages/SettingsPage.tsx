@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, Save, Tag, Trash2, Upload, Users, UserCheck, X } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, RotateCcw, Save, Tag, Trash2, Upload, Users, UserCheck, X, Archive } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -33,7 +33,7 @@ import {
   listCategories,
   updateCategory,
 } from '../api/categories'
-import { listCollections, seedCollectionData } from '../api/collections'
+import { listCollections, seedCollectionData, listArchivedCollections, unarchiveCollection, deleteCollection as deleteCollectionApi } from '../api/collections'
 import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../api/galleryAssets'
 import { getPublicSetting, updateSetting } from '../api/settings'
 import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type AppUser } from '../api/users'
@@ -61,6 +61,7 @@ type PanelId =
   | 'groups'
   | 'locations'
   | 'gallery'
+  | 'archived-collections'
   | 'qr-code'
   | 'logo-padding'
   | 'database-mode'
@@ -72,7 +73,7 @@ type PanelLayout = Record<TabId, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'groups', 'locations', 'gallery'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'groups', 'locations', 'gallery', 'archived-collections'],
   other: ['qr-code', 'logo-padding', 'database-mode', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -85,6 +86,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   groups: 'Groups',
   locations: 'Locations',
   gallery: 'Cover Photo Gallery',
+  'archived-collections': 'Archived Collections',
   'qr-code': 'QR Code',
   'logo-padding': 'Image Logo URL Padding',
   'database-mode': 'Database Mode',
@@ -328,6 +330,16 @@ export default function SettingsPage() {
   const [usersExpanded, setUsersExpanded] = useState(false)
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [seedExpanded, setSeedExpanded] = useState(false)
+
+  // Archived collections
+  const [archivedExpanded, setArchivedExpanded] = useState(false)
+  const [archivedCollections, setArchivedCollections] = useState<import('../types').Collection[]>([])
+  const [archivedLoading, setArchivedLoading] = useState(false)
+  const [archivedError, setArchivedError] = useState<string | null>(null)
+  const [archivedDeleteTarget, setArchivedDeleteTarget] = useState<import('../types').Collection | null>(null)
+  const [archivedDeleteConfirmation, setArchivedDeleteConfirmation] = useState('')
+  const [archivedDeleteSaving, setArchivedDeleteSaving] = useState(false)
+  const [archivedDeleteError, setArchivedDeleteError] = useState<string | null>(null)
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [organizationsLoading, setOrganizationsLoading] = useState(false)
   const [newOrganizationName, setNewOrganizationName] = useState('')
@@ -3665,6 +3677,162 @@ export default function SettingsPage() {
           </div>
         )}
         </>
+      )
+      case 'archived-collections': return (user?.role !== 'super_admin' && user?.role !== 'administrator') ? null : (
+        <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !archivedExpanded
+              setArchivedExpanded(next)
+              if (next && archivedCollections.length === 0) {
+                setArchivedLoading(true)
+                setArchivedError(null)
+                listArchivedCollections()
+                  .then(data => setArchivedCollections(data))
+                  .catch(err => setArchivedError((err as Error).message))
+                  .finally(() => setArchivedLoading(false))
+              }
+            }}
+            className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                <Archive size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Archived Collections</h2>
+                <p className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-0.5">Restore or permanently delete archived collections</p>
+              </div>
+            </div>
+            {archivedExpanded ? <ChevronDown size={16} className="text-[#64748B] shrink-0" /> : <ChevronRight size={16} className="text-[#64748B] shrink-0" />}
+          </button>
+
+          {archivedExpanded && (
+            <div className="border-t border-[#E2E8F0] dark:border-[#334155] px-5 py-4 space-y-4">
+              {archivedError && <p className="text-sm text-red-500">{archivedError}</p>}
+              {archivedDeleteError && <p className="text-sm text-red-500">{archivedDeleteError}</p>}
+              {archivedLoading && <p className="text-sm text-[#94A3B8] italic">Loading…</p>}
+
+              {!archivedLoading && archivedCollections.length === 0 && (
+                <p className="text-sm text-[#94A3B8] italic">No archived collections.</p>
+              )}
+
+              {archivedCollections.length > 0 && (
+                <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-[#F8FAFC] dark:bg-[#0F172A] border-b border-[#E2E8F0] dark:border-[#334155]">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left text-[10px] font-semibold tracking-[0.15em] uppercase text-[#64748B]">Collection</th>
+                        <th className="px-4 py-2.5 text-left text-[10px] font-semibold tracking-[0.15em] uppercase text-[#64748B] hidden sm:table-cell">Category</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] font-semibold tracking-[0.15em] uppercase text-[#64748B] hidden md:table-cell">Responses</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] font-semibold tracking-[0.15em] uppercase text-[#64748B]">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#334155]">
+                      {archivedCollections.map(col => (
+                        <tr key={col.id} className="hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]">
+                          <td className="px-4 py-2.5 font-medium text-[#1E293B] dark:text-[#F1F5F9]">{col.title}</td>
+                          <td className="px-4 py-2.5 text-[#64748B] hidden sm:table-cell">{col.category ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-right text-[#64748B] hidden md:table-cell">{col.responseCount ?? 0}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="inline-flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  unarchiveCollection(col.id)
+                                    .then(() => {
+                                      setArchivedCollections(prev => prev.filter(c => c.id !== col.id))
+                                      showToast('Collection restored to draft', 'success')
+                                    })
+                                    .catch(err => setArchivedError((err as Error).message))
+                                }}
+                                className="inline-flex items-center gap-1 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-xs font-medium px-2.5 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+                              >
+                                <RotateCcw size={12} />
+                                Restore
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setArchivedDeleteTarget(col)
+                                  setArchivedDeleteConfirmation('')
+                                  setArchivedDeleteError(null)
+                                }}
+                                className="inline-flex items-center gap-1 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-xs font-medium px-2.5 py-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                              >
+                                <Trash2 size={12} />
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Permanent delete panel for archived collection */}
+              {archivedDeleteTarget && (
+                <div className="fixed inset-0 z-50">
+                  <button type="button" aria-label="Close" onClick={() => setArchivedDeleteTarget(null)} className="absolute inset-0 bg-slate-950/35" />
+                  <aside className="absolute right-0 top-0 h-full w-full max-w-xl bg-white dark:bg-[#0F172A] border-l border-[#E2E8F0] dark:border-[#334155] shadow-2xl flex flex-col">
+                    <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155] flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-medium uppercase tracking-[0.18em] text-red-500">Danger Zone</div>
+                        <h2 className="mt-2 text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Delete {archivedDeleteTarget.title}</h2>
+                        <p className="mt-1 text-sm text-[#64748B] dark:text-[#94A3B8]">Permanently removes this collection and all its responses. This cannot be undone.</p>
+                      </div>
+                      <button type="button" onClick={() => setArchivedDeleteTarget(null)} className="w-9 h-9 rounded-md flex items-center justify-center text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors"><X size={18} /></button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+                      {archivedDeleteError && (
+                        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-sm text-red-600">{archivedDeleteError}</div>
+                      )}
+                      <div className="space-y-2">
+                        <p className="text-sm text-[#475569] dark:text-[#CBD5E1]">Are you sure? If so, type <span className="font-semibold">DELETE</span> below.</p>
+                        <input
+                          type="text"
+                          value={archivedDeleteConfirmation}
+                          onChange={e => setArchivedDeleteConfirmation(e.target.value)}
+                          placeholder="DELETE"
+                          className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-red-400"
+                        />
+                      </div>
+                    </div>
+                    <div className="px-5 py-4 border-t border-[#E2E8F0] dark:border-[#334155] flex items-center justify-between gap-3">
+                      <div className="text-xs text-[#94A3B8]">This action cannot be undone.</div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setArchivedDeleteTarget(null)} disabled={archivedDeleteSaving} className="inline-flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-sm font-medium px-3 py-2 rounded hover:bg-[#F8FAFC] transition-colors disabled:opacity-50"><X size={14} />Cancel</button>
+                        <button
+                          type="button"
+                          disabled={archivedDeleteSaving || archivedDeleteConfirmation.trim() !== 'DELETE'}
+                          onClick={() => {
+                            if (!archivedDeleteTarget) return
+                            setArchivedDeleteSaving(true)
+                            setArchivedDeleteError(null)
+                            deleteCollectionApi(archivedDeleteTarget.id)
+                              .then(() => {
+                                setArchivedCollections(prev => prev.filter(c => c.id !== archivedDeleteTarget.id))
+                                setArchivedDeleteTarget(null)
+                              })
+                              .catch(err => setArchivedDeleteError((err as Error).message))
+                              .finally(() => setArchivedDeleteSaving(false))
+                          }}
+                          className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                        >
+                          <Trash2 size={14} />
+                          {archivedDeleteSaving ? 'Deleting…' : 'Delete Permanently'}
+                        </button>
+                      </div>
+                    </div>
+                  </aside>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       )
       case 'seed': return (
         <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">

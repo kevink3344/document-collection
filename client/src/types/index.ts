@@ -67,7 +67,7 @@ export type FieldType =
 
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionType = 'standard' | 'signup_sheet'
-export type CollectionStatus = 'draft' | 'published'
+export type CollectionStatus = 'draft' | 'published' | 'archived'
 export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers'
 export type ApprovalAssignmentType = 'user' | 'role'
 export type ApprovalConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_or_equal' | 'less_than' | 'less_or_equal' | 'contains' | 'not_empty' | 'is_empty'

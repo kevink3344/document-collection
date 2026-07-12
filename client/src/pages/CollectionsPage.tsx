@@ -7,6 +7,7 @@ import {
   Plus,
   Edit2,
   Trash2,
+  Archive,
   Eye,
   Copy,
   X,
@@ -19,7 +20,7 @@ import {
   Table,
   CalendarCheck,
 } from 'lucide-react'
-import { listCollections, deleteCollection } from '../api/collections'
+import { listCollections, deleteCollection, archiveCollection } from '../api/collections'
 import { getPreference, updatePreference } from '../api/preferences'
 import { htmlToPlainText } from '../utils/richText'
 import { getCategoryColorClasses } from '../utils/categoryColors'
@@ -111,20 +112,26 @@ function reorderCollectionsWithinCategory(
 interface CollectionCardProps {
   collection: Collection
   deleting: number | null
+  archiving: number | null
   canManage: boolean
+  canArchive: boolean
   onViewForm: (slug: string) => void
   onEdit: (id: number) => void
   onDelete: (collection: Collection) => void
+  onArchive: (collection: Collection) => void
   onTestForm: (slug: string) => void
 }
 
 function SortableCollectionCard({
   collection,
   deleting,
+  archiving,
   canManage,
+  canArchive,
   onViewForm,
   onEdit,
   onDelete,
+  onArchive,
   onTestForm,
 }: CollectionCardProps) {
   const {
@@ -275,6 +282,17 @@ function SortableCollectionCard({
                 <Edit2 size={13} />
                 Edit
               </button>
+              {canArchive && (
+                <button
+                  onClick={() => onArchive(collection)}
+                  disabled={archiving === collection.id}
+                  title="Archive"
+                  className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-amber-500 transition-colors disabled:opacity-40"
+                >
+                  <Archive size={13} />
+                  {archiving === collection.id ? 'Archiving…' : 'Archive'}
+                </button>
+              )}
               <button
                 onClick={() => onDelete(collection)}
                 disabled={deleting === collection.id}
@@ -314,6 +332,10 @@ export default function CollectionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Collection | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [archiveTarget, setArchiveTarget] = useState<Collection | null>(null)
+  const [archiveConfirmation, setArchiveConfirmation] = useState('')
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [archiving, setArchiving] = useState<number | null>(null)
   const [activeCategoryTab, setActiveCategoryTab] = useState<string | null>(null)
   const [templateLibraryOpen, setTemplateLibraryOpen] = useState(false)
   const [searchParams] = useSearchParams()
@@ -472,6 +494,31 @@ export default function CollectionsPage() {
       setDeleteError((err as Error).message)
     } finally {
       setDeleting(null)
+    }
+  }
+
+  function handleArchive(col: Collection) {
+    setArchiveTarget(col)
+    setArchiveConfirmation('')
+    setArchiveError(null)
+  }
+
+  async function confirmArchive() {
+    if (!archiveTarget) return
+    setArchiving(archiveTarget.id)
+    try {
+      await archiveCollection(archiveTarget.id)
+      setCollections(prev => {
+        const nextCollections = prev.filter(c => c.id !== archiveTarget.id)
+        void persistCollectionOrder(nextCollections.map((collection) => collection.id))
+        return nextCollections
+      })
+      setArchiveTarget(null)
+      showToast('Collection archived', 'success')
+    } catch (err) {
+      setArchiveError((err as Error).message)
+    } finally {
+      setArchiving(null)
     }
   }
 
@@ -758,7 +805,9 @@ export default function CollectionsPage() {
                 key={collection.id}
                 collection={collection}
                 deleting={deleting}
+                archiving={archiving}
                 canManage={canManageCollections}
+                canArchive={user?.role === 'super_admin' || user?.role === 'administrator'}
                 onViewForm={viewForm}
                 onEdit={(id) => {
                   const col = collections.find(c => c.id === id)
@@ -769,6 +818,7 @@ export default function CollectionsPage() {
                   }
                 }}
                 onDelete={handleDelete}
+                onArchive={handleArchive}
                 onTestForm={(slug) => {
                   window.open(`/fill/${slug}?preview=true`, '_blank', 'noopener')
                 }}
@@ -777,6 +827,88 @@ export default function CollectionsPage() {
           </div>
         </SortableContext>
       </DndContext>
+
+      {/* ── Archive confirmation panel ────────────────────────────────────── */}
+      {archiveTarget && (
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setArchiveTarget(null)}
+            className="absolute inset-0 bg-slate-950/35"
+          />
+          <aside className="absolute right-0 top-0 h-full w-full max-w-xl bg-white dark:bg-[#0F172A] border-l border-[#E2E8F0] dark:border-[#334155] shadow-2xl flex flex-col">
+            <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155] flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-amber-500">Archive</div>
+                <h2 className="mt-2 text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Archive {archiveTarget.title}</h2>
+                <p className="mt-1 text-sm text-[#64748B] dark:text-[#94A3B8]">
+                  This hides the collection from all users. All responses are preserved and you can restore it anytime from Settings → Archived Collections.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setArchiveTarget(null)}
+                className="w-9 h-9 rounded-md flex items-center justify-center text-[#64748B] hover:text-[#1E293B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              {archiveError && (
+                <div className="rounded border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-sm text-red-600 dark:text-red-300">
+                  {archiveError}
+                </div>
+              )}
+
+              <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#111827] p-4 space-y-2 text-sm text-[#475569] dark:text-[#CBD5E1]">
+                <p><strong>Collection:</strong> {archiveTarget.title}</p>
+                {archiveTarget.category && <p><strong>Category:</strong> {archiveTarget.category}</p>}
+                <p><strong>Status:</strong> {archiveTarget.status}</p>
+                <p><strong>Responses:</strong> {archiveTarget.responseCount ?? 0} — all preserved after archiving.</p>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm text-[#475569] dark:text-[#CBD5E1]">
+                  Are you sure? If so, type <span className="font-semibold">ARCHIVE</span> below.
+                </p>
+                <input
+                  type="text"
+                  value={archiveConfirmation}
+                  onChange={e => setArchiveConfirmation(e.target.value)}
+                  placeholder="ARCHIVE"
+                  className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 py-4 border-t border-[#E2E8F0] dark:border-[#334155] flex items-center justify-between gap-3">
+              <div className="text-xs text-[#94A3B8]">Restorable from Settings → Archived Collections.</div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setArchiveTarget(null)}
+                  disabled={archiving === archiveTarget.id}
+                  className="inline-flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-sm font-medium px-3 py-2 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors disabled:opacity-50"
+                >
+                  <X size={14} />
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmArchive()}
+                  disabled={archiving === archiveTarget.id || archiveConfirmation.trim() !== 'ARCHIVE'}
+                  className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                >
+                  <Archive size={14} />
+                  {archiving === archiveTarget.id ? 'Archiving…' : 'Archive Collection'}
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* ── Delete confirmation panel ─────────────────────────────────────── */}
       {deleteTarget && (

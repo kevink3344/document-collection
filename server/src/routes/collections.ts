@@ -1909,21 +1909,24 @@ router.get('/', authenticateToken, async (_req: Request, res: Response) => {
   // For super_admin (no org), show all collections
   let cols: DbCollection[]
   if (isAdministrator(context)) {
-    cols = await db.queryAll<DbCollection>(`${COL_SELECT} ORDER BY c.created_at DESC`)
+    cols = await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status != 'archived' ORDER BY c.created_at DESC`)
   } else {
     // Collections in the user's org + collections shared directly or via group
     cols = await db.queryAll<DbCollection>(`
         ${COL_SELECT}
-        WHERE c.organization_id = ?
-           OR EXISTS (
-             SELECT 1 FROM collection_shares cs
-             WHERE cs.collection_id = c.id AND cs.share_type = 'user' AND cs.share_target_id = ?
-           )
-           OR EXISTS (
-             SELECT 1 FROM collection_shares cs
-             JOIN group_members gm ON gm.group_id = cs.share_target_id
-             WHERE cs.collection_id = c.id AND cs.share_type = 'group' AND gm.user_id = ?
-           )
+        WHERE c.status != 'archived'
+          AND (
+            c.organization_id = ?
+            OR EXISTS (
+              SELECT 1 FROM collection_shares cs
+              WHERE cs.collection_id = c.id AND cs.share_type = 'user' AND cs.share_target_id = ?
+            )
+            OR EXISTS (
+              SELECT 1 FROM collection_shares cs
+              JOIN group_members gm ON gm.group_id = cs.share_target_id
+              WHERE cs.collection_id = c.id AND cs.share_type = 'group' AND gm.user_id = ?
+            )
+          )
         ORDER BY c.created_at DESC
       `, [context.organizationId, context.id, context.id])
   }
@@ -2511,6 +2514,78 @@ router.post('/:id/versions/:versionId/publish', authenticateToken, async (req: R
     console.error('[collections] publish version:', err)
     res.status(500).json({ error: 'Failed to publish version' })
   }
+})
+
+/**
+ * GET /api/collections/archived — admin/super_admin only, lists archived collections.
+ */
+router.get('/archived', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
+  if (!context || !isAdministrator(context)) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const db = await getDbAsync()
+  const cols = context.role === 'super_admin'
+    ? await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status = 'archived' ORDER BY c.updated_at DESC`)
+    : await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status = 'archived' AND c.organization_id = ? ORDER BY c.updated_at DESC`, [context.organizationId])
+
+  if (cols.length === 0) { res.json([]); return }
+
+  const ids = cols.map(c => c.id)
+  const ph = ids.map(() => '?').join(',')
+  const responseCountMap = await getVisibleResponseCountMap(db, context, ids)
+  const customTableFlags = await db.queryAll<{ collection_id: number; ct: number }>(`SELECT collection_id, COUNT(*) AS ct FROM collection_fields WHERE collection_id IN (${ph}) AND type = 'custom_table' GROUP BY collection_id`, ids)
+  const customTableMap = new Map(customTableFlags.map(r => [r.collection_id, r.ct]))
+
+  res.json(cols.map(c => ({
+    ...toApiCollection(c, [], new Map()),
+    responseCount: responseCountMap.get(c.id) ?? 0,
+    hasCustomTable: (customTableMap.get(c.id) ?? 0) > 0,
+  })))
+})
+
+/**
+ * POST /api/collections/:id/archive — sets status to 'archived'. Admin/super_admin only.
+ */
+router.post('/:id/archive', authenticateToken, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) { res.status(400).json({ error: 'Invalid collection ID' }); return }
+
+  const context = await loadRequestUserContext(req)
+  if (!context || !isAdministrator(context)) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const db = await getDbAsync()
+  const col = await fetchAccessibleCollectionById(id, context)
+  if (!col) { res.status(404).json({ error: 'Collection not found' }); return }
+
+  await db.execute(`UPDATE collections SET status = 'archived', updated_at = datetime('now') WHERE id = ?`, [id])
+  res.json({ message: 'Collection archived' })
+})
+
+/**
+ * POST /api/collections/:id/unarchive — restores to 'draft'. Admin/super_admin only.
+ */
+router.post('/:id/unarchive', authenticateToken, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) { res.status(400).json({ error: 'Invalid collection ID' }); return }
+
+  const context = await loadRequestUserContext(req)
+  if (!context || !isAdministrator(context)) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const db = await getDbAsync()
+  const col = await db.queryOne<{ id: number; status: string }>('SELECT id, status FROM collections WHERE id = ?', [id])
+  if (!col || col.status !== 'archived') { res.status(404).json({ error: 'Archived collection not found' }); return }
+
+  await db.execute(`UPDATE collections SET status = 'draft', updated_at = datetime('now') WHERE id = ?`, [id])
+  res.json({ message: 'Collection restored to draft' })
 })
 
 /**
