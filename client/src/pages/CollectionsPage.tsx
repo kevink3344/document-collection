@@ -6,7 +6,6 @@ import { CSS } from '@dnd-kit/utilities'
 import {
   Plus,
   Edit2,
-  Trash2,
   Archive,
   Eye,
   Copy,
@@ -20,7 +19,7 @@ import {
   Table,
   CalendarCheck,
 } from 'lucide-react'
-import { listCollections, deleteCollection, archiveCollection } from '../api/collections'
+import { listCollections, archiveCollection } from '../api/collections'
 import { getPreference, updatePreference } from '../api/preferences'
 import { htmlToPlainText } from '../utils/richText'
 import { getCategoryColorClasses } from '../utils/categoryColors'
@@ -117,7 +116,6 @@ interface CollectionCardProps {
   canArchive: boolean
   onViewForm: (slug: string) => void
   onEdit: (id: number) => void
-  onDelete: (collection: Collection) => void
   onArchive: (collection: Collection) => void
   onTestForm: (slug: string) => void
 }
@@ -130,7 +128,6 @@ function SortableCollectionCard({
   canArchive,
   onViewForm,
   onEdit,
-  onDelete,
   onArchive,
   onTestForm,
 }: CollectionCardProps) {
@@ -287,21 +284,12 @@ function SortableCollectionCard({
                   onClick={() => onArchive(collection)}
                   disabled={archiving === collection.id}
                   title="Archive"
-                  className="flex items-center gap-1 text-[11px] text-[#64748B] hover:text-amber-500 transition-colors disabled:opacity-40"
+                  className="ml-auto flex items-center gap-1 text-[11px] text-[#64748B] hover:text-amber-500 transition-colors disabled:opacity-40"
                 >
                   <Archive size={13} />
                   {archiving === collection.id ? 'Archiving…' : 'Archive'}
                 </button>
               )}
-              <button
-                onClick={() => onDelete(collection)}
-                disabled={deleting === collection.id}
-                title="Delete"
-                className="ml-auto flex items-center gap-1 text-[11px] text-[#64748B] hover:text-red-500 transition-colors disabled:opacity-40"
-              >
-                <Trash2 size={13} />
-                {deleting === collection.id ? 'Deleting…' : 'Delete'}
-              </button>
             </>
           )}
         </div>
@@ -329,9 +317,6 @@ export default function CollectionsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<Collection | null>(null)
-  const [deleteConfirmation, setDeleteConfirmation] = useState('')
-  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<Collection | null>(null)
   const [archiveConfirmation, setArchiveConfirmation] = useState('')
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -471,31 +456,6 @@ export default function CollectionsPage() {
       return categoryTabs[0].value
     })
   }, [categoryTabs])
-
-  async function handleDelete(col: Collection) {
-    setDeleteTarget(col)
-    setDeleteConfirmation('')
-    setDeleteError(null)
-  }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return
-    setDeleting(deleteTarget.id)
-    try {
-      await deleteCollection(deleteTarget.id)
-      setCollections(prev => {
-        const nextCollections = prev.filter(c => c.id !== deleteTarget.id)
-        void persistCollectionOrder(nextCollections.map((collection) => collection.id))
-        return nextCollections
-      })
-      setDeleteTarget(null)
-      showToast('Collection deleted', 'success')
-    } catch (err) {
-      setDeleteError((err as Error).message)
-    } finally {
-      setDeleting(null)
-    }
-  }
 
   function handleArchive(col: Collection) {
     setArchiveTarget(col)
@@ -817,9 +777,7 @@ export default function CollectionsPage() {
                     navigate(`/collections/${id}/edit`)
                   }
                 }}
-                onDelete={handleDelete}
-                onArchive={handleArchive}
-                onTestForm={(slug) => {
+                onArchive={handleArchive}                onTestForm={(slug) => {
                   window.open(`/fill/${slug}?preview=true`, '_blank', 'noopener')
                 }}
               />
@@ -910,87 +868,6 @@ export default function CollectionsPage() {
         </div>
       )}
 
-      {/* ── Delete confirmation panel ─────────────────────────────────────── */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50">
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={() => setDeleteTarget(null)}
-            className="absolute inset-0 bg-slate-950/35"
-          />
-          <aside className="absolute right-0 top-0 h-full w-full max-w-xl bg-white dark:bg-[#0F172A] border-l border-[#E2E8F0] dark:border-[#334155] shadow-2xl flex flex-col">
-            <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155] flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-medium uppercase tracking-[0.18em] text-red-500">Danger Zone</div>
-                <h2 className="mt-2 text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Delete {deleteTarget.title}</h2>
-                <p className="mt-1 text-sm text-[#64748B] dark:text-[#94A3B8]">
-                  This removes the collection and all its responses permanently.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDeleteTarget(null)}
-                className="w-9 h-9 rounded-md flex items-center justify-center text-[#64748B] hover:text-[#1E293B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
-              {deleteError && (
-                <div className="rounded border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-sm text-red-600 dark:text-red-300">
-                  {deleteError}
-                </div>
-              )}
-
-              <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#111827] p-4 space-y-2 text-sm text-[#475569] dark:text-[#CBD5E1]">
-                <p><strong>Collection:</strong> {deleteTarget.title}</p>
-                {deleteTarget.category && <p><strong>Category:</strong> {deleteTarget.category}</p>}
-                <p><strong>Status:</strong> {deleteTarget.status}</p>
-                <p><strong>Responses:</strong> {deleteTarget.responseCount ?? 0} — these will be permanently deleted.</p>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-sm text-[#475569] dark:text-[#CBD5E1]">
-                  Are you sure? If so, type <span className="font-semibold">DELETE</span> below.
-                </p>
-                <input
-                  type="text"
-                  value={deleteConfirmation}
-                  onChange={e => setDeleteConfirmation(e.target.value)}
-                  placeholder="DELETE"
-                  className="w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-red-400"
-                />
-              </div>
-            </div>
-
-            <div className="px-5 py-4 border-t border-[#E2E8F0] dark:border-[#334155] flex items-center justify-between gap-3">
-              <div className="text-xs text-[#94A3B8]">This action cannot be undone.</div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeleteTarget(null)}
-                  disabled={deleting === deleteTarget.id}
-                  className="inline-flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-sm font-medium px-3 py-2 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors disabled:opacity-50"
-                >
-                  <X size={14} />
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void confirmDelete()}
-                  disabled={deleting === deleteTarget.id || deleteConfirmation.trim() !== 'DELETE'}
-                  className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
-                >
-                  <Trash2 size={14} />
-                  {deleting === deleteTarget.id ? 'Deleting…' : 'Delete Collection'}
-                </button>
-              </div>
-            </div>
-          </aside>
-        </div>
-      )}
     </div>
   )
 }
