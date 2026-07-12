@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities'
 import {
   Plus,
   Edit2,
+  Trash2,
   Archive,
   Eye,
   Copy,
@@ -19,7 +20,7 @@ import {
   Table,
   CalendarCheck,
 } from 'lucide-react'
-import { listCollections, archiveCollection } from '../api/collections'
+import { listCollections, deleteCollection, archiveCollection } from '../api/collections'
 import { getPreference, updatePreference } from '../api/preferences'
 import { htmlToPlainText } from '../utils/richText'
 import { getCategoryColorClasses } from '../utils/categoryColors'
