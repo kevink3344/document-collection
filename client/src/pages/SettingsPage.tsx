@@ -327,6 +327,7 @@ export default function SettingsPage() {
   const [organizationsExpanded, setOrganizationsExpanded] = useState(false)
   const [locationsExpanded, setLocationsExpanded] = useState(false)
   const [galleryExpanded, setGalleryExpanded] = useState(false)
+  const [galleryStorageLabel, setGalleryStorageLabel] = useState<string | null>(null)
   const [usersExpanded, setUsersExpanded] = useState(false)
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [seedExpanded, setSeedExpanded] = useState(false)
@@ -3066,6 +3067,18 @@ export default function SettingsPage() {
               const next = !galleryExpanded
               setGalleryExpanded(next)
               if (next && galleryAssets.length === 0) void loadGallery()
+              if (next && !galleryStorageLabel) {
+                fetch('/api/info')
+                  .then(r => r.json() as Promise<{ dbMode: string; googleDriveConfigured: boolean }>)
+                  .then(info => {
+                    if (info.googleDriveConfigured) {
+                      setGalleryStorageLabel('📁 Google Drive')
+                    } else {
+                      setGalleryStorageLabel(info.dbMode === 'sqlserver' ? '🗄️ SQL Server' : '⚡ Turso DB')
+                    }
+                  })
+                  .catch(() => {})
+              }
             }}
             className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
           >
@@ -3094,6 +3107,9 @@ export default function SettingsPage() {
                 <div>
                   <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Upload to {user?.activeOrganizationDescription ?? user?.activeOrganizationName ?? 'current organization'} gallery</h3>
                   <p className="mt-1 text-xs text-[#64748B]">Collections can only choose cover images that already exist in this gallery.</p>
+                  {galleryStorageLabel && (
+                    <p className="mt-1 text-xs text-[#94A3B8]">Images will be saved to {galleryStorageLabel}</p>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <input
