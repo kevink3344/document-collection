@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
-import { setupDatabase, resetDbIfStreamError, getDbAsync, runSqlServerSeedFile } from './database/db'
+import { setupDatabase, resetDbIfStreamError, getDbAsync, runSqlServerSeedFile, getConfiguredDatabaseMode } from './database/db'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
@@ -99,12 +99,40 @@ void syncSuperAdmin()
 
 // ── SQL Server data seed ─────────────────────────────────────
 // Set SEED_SQL_ON_START=true in Azure App Settings to run the seed file once on startup.
-// Remove or set to false after the first successful deploy to avoid re-running it.
+// The seed writes a completion flag to app_settings so it only ever runs once,
+// even if SEED_SQL_ON_START is left as true across multiple restarts.
 async function runStartupSeed() {
   if (process.env.SEED_SQL_ON_START !== 'true') return
+  if (getConfiguredDatabaseMode() !== 'sqlserver') return
+
+  // Check if this seed file has already been applied successfully
+  try {
+    const db = await getDbAsync()
+    const flag = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE [key] = 'seed_completed_version'`)
+    const seedFile = 'data-export-v1.sql'
+    if (flag?.value === seedFile) {
+      console.log(`[server] Seed already applied (${seedFile}) — skipping.`)
+      return
+    }
+  } catch {
+    // If app_settings doesn't exist yet, proceed with seeding
+  }
+
   const seedPath = path.join(__dirname, '../../scripts/data-export-v1.sql')
   try {
     await runSqlServerSeedFile(seedPath)
+    // Write completion flag so future restarts skip the seed
+    try {
+      const db = await getDbAsync()
+      await db.execute(
+        `INSERT INTO app_settings ([key], value) VALUES ('seed_completed_version', 'data-export-v1.sql')
+         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
+        []
+      )
+      console.log('[server] Seed completion flag saved.')
+    } catch {
+      console.warn('[server] Could not save seed completion flag — set SEED_SQL_ON_START=false manually.')
+    }
   } catch (err) {
     console.error('[server] Startup seed failed:', (err as Error).message)
   }
