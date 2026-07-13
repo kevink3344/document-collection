@@ -37,10 +37,14 @@ router.get('/health', (_req: Request, res: Response) => {
 })
 
 router.get('/info', (_req: Request, res: Response) => {
+  const loginModeOverride = process.env.LOGIN_MODE?.trim().toLowerCase()
   res.json({
     version: pkg.version,
     dbMode: getConfiguredDatabaseMode(),
     googleDriveConfigured: isGoogleDriveConfigured(),
+    loginModeOverride: (loginModeOverride === 'maintenance' || loginModeOverride === 'select' || loginModeOverride === 'password')
+      ? loginModeOverride
+      : null,
   })
 })
 

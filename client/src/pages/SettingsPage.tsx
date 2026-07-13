@@ -469,6 +469,7 @@ export default function SettingsPage() {
   const [loginModeSaving, setLoginModeSaving] = useState(false)
   const [loginModeError, setLoginModeError] = useState<string | null>(null)
   const [loginModeSaved, setLoginModeSaved] = useState(false)
+  const [loginModeOverride, setLoginModeOverride] = useState<string | null>(null)
   const [maintenanceMessage, setMaintenanceMessage] = useState('System is currently undergoing maintenance. Please check back later.')
   const [maintenanceMessageDraft, setMaintenanceMessageDraft] = useState('System is currently undergoing maintenance. Please check back later.')
   const [maintenanceMessageSaving, setMaintenanceMessageSaving] = useState(false)
@@ -544,6 +545,10 @@ export default function SettingsPage() {
     getPublicSetting('login_mode')
       .then(val => setLoginMode(val === 'password' ? 'password' : val === 'maintenance' ? 'maintenance' : 'select'))
       .catch(() => setLoginMode('select'))
+    fetch('/api/info')
+      .then(r => r.json() as Promise<{ loginModeOverride: string | null }>)
+      .then(info => setLoginModeOverride(info.loginModeOverride))
+      .catch(() => {})
     getPublicSetting('maintenance_message')
       .then(val => { setMaintenanceMessage(val); setMaintenanceMessageDraft(val) })
       .catch(() => {})
@@ -3249,40 +3254,46 @@ export default function SettingsPage() {
                 <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
                   Controls which sign-in method is shown on the login page. Use <strong>Select User</strong> for test environments and <strong>Password</strong> for production.
                 </p>
+                {loginModeOverride && (
+                  <div className="flex items-start gap-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    <span className="shrink-0 mt-0.5">⚙️</span>
+                    <span>Login mode is locked to <strong>{loginModeOverride}</strong> by the <code>LOGIN_MODE</code> environment variable. Change it in Azure App Settings to override.</span>
+                  </div>
+                )}
                 <div className="flex gap-2 flex-wrap">
                   <button
                     type="button"
                     onClick={() => void handleLoginModeToggle('select')}
-                    disabled={loginModeSaving}
+                    disabled={loginModeSaving || !!loginModeOverride}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-[2px] border transition-colors ${
                       loginMode === 'select'
                         ? 'bg-[#2563EB] text-white border-[#2563EB]'
                         : 'bg-white dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:border-[#2563EB]'
-                    }`}
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     Select User (Test)
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleLoginModeToggle('password')}
-                    disabled={loginModeSaving}
+                    disabled={loginModeSaving || !!loginModeOverride}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-[2px] border transition-colors ${
                       loginMode === 'password'
                         ? 'bg-[#2563EB] text-white border-[#2563EB]'
                         : 'bg-white dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:border-[#2563EB]'
-                    }`}
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     Password (Production)
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleLoginModeToggle('maintenance')}
-                    disabled={loginModeSaving}
+                    disabled={loginModeSaving || !!loginModeOverride}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-[2px] border transition-colors ${
                       loginMode === 'maintenance'
                         ? 'bg-amber-500 text-white border-amber-500'
                         : 'bg-white dark:bg-[#0F172A] text-[#475569] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:border-amber-400'
-                    }`}
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     System Maintenance
                   </button>

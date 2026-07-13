@@ -64,6 +64,15 @@ router.get('/:key', async (req: Request, res: Response) => {
     return
   }
 
+  // LOGIN_MODE env var overrides the database value when set to a valid mode
+  if (key === 'login_mode') {
+    const envOverride = process.env.LOGIN_MODE?.trim().toLowerCase()
+    if (envOverride === 'maintenance' || envOverride === 'select' || envOverride === 'password') {
+      res.json({ key: 'login_mode', value: envOverride })
+      return
+    }
+  }
+
   const db = await getDbAsync()
   const row = await db.queryOne<DbSetting>('SELECT key, value FROM app_settings WHERE key = ?', [key])
 
