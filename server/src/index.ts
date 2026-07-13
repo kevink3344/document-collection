@@ -98,9 +98,6 @@ async function syncSuperAdmin() {
 void syncSuperAdmin()
 
 // ── SQL Server data seed ─────────────────────────────────────
-// Set SEED_SQL_ON_START=true in Azure App Settings to run the seed file once on startup.
-// The seed writes a completion flag to app_settings so it only ever runs once,
-// even if SEED_SQL_ON_START is left as true across multiple restarts.
 async function runStartupSeed() {
   if (process.env.SEED_SQL_ON_START !== 'true') return
   if (getConfiguredDatabaseMode() !== 'sqlserver') return
@@ -120,11 +117,9 @@ async function runStartupSeed() {
     const msg = (err as Error).message ?? ''
     const tableNotFound = /no such table|Invalid object name/i.test(msg)
     if (!tableNotFound) {
-      // DB connection or other transient error — skip seed rather than risk re-running
       console.warn('[server] Could not check seed flag, skipping seed to be safe:', msg)
       return
     }
-    // Table doesn't exist yet — safe to seed
   }
 
   const seedPath = path.join(__dirname, '../../scripts/data-export-v1.sql')
@@ -134,7 +129,6 @@ async function runStartupSeed() {
   }
   try {
     await runSqlServerSeedFile(seedPath)
-    // Write completion flag so future restarts skip the seed
     try {
       const db = await getDbAsync()
       await db.execute(
@@ -143,8 +137,10 @@ async function runStartupSeed() {
       )
       console.log('[server] Seed completion flag saved.')
     } catch {
-      console.warn('[server] Could not save seed completion flag — set SEED_SQL_ON_START=false manually.')
+      console.warn('[server] Could not save seed completion flag.')
     }
+    // Sync super admin AFTER seed so the users table is in its final state
+    await syncSuperAdmin()
   } catch (err) {
     console.error('[server] Startup seed failed:', (err as Error).message)
   }
