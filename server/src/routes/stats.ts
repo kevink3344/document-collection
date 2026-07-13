@@ -306,13 +306,19 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
       ? `ON cr.respondent_email = u.email AND cr.submitted_at >= ${dateThreshold}`
       : `ON cr.respondent_email = u.email`
 
+    // Super admins see all users; org admins only see users in their own organization
+    const orgUserJoin = role === 'administrator' && context?.organizationId
+      ? `JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = ${Number(context.organizationId)}`
+      : ''
+
     const userActivity =
-      role === 'administrator'
+      role === 'administrator' || role === 'super_admin'
         ? await db.queryAll<{ id: number; name: string; role: string; organization: string | null; submissionCount: number; lastActive: string | null }>(
             `SELECT u.id, u.name, u.role, u.organization,
                       COUNT(cr.id) AS submissionCount,
                       MAX(cr.submitted_at) AS lastActive
                FROM users u
+               ${orgUserJoin}
                LEFT JOIN collection_responses cr ${crUserJoinCond}
                GROUP BY u.id, u.name, u.role, u.organization
                ORDER BY submissionCount DESC, u.name ASC`
