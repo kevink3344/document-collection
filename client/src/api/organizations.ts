@@ -28,7 +28,7 @@ export async function createOrganization(payload: {
 }): Promise<Organization> {
   const res = await fetch('/api/organizations', {
     method: 'POST',
-    headers: authHeaders(),
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload),
   })
   return handleResponse<Organization>(res)
@@ -45,7 +45,7 @@ export async function updateOrganization(
 ): Promise<Organization> {
   const res = await fetch(`/api/organizations/${id}`, {
     method: 'PATCH',
-    headers: authHeaders(),
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload),
   })
   return handleResponse<Organization>(res)
@@ -54,7 +54,7 @@ export async function updateOrganization(
 export async function deleteOrganization(id: number, confirmationText: string): Promise<void> {
   const res = await fetch(`/api/organizations/${id}`, {
     method: 'DELETE',
-    headers: authHeaders(),
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ confirmationText }),
   })
   await handleResponse<void>(res)
