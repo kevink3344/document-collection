@@ -128,6 +128,10 @@ async function runStartupSeed() {
   }
 
   const seedPath = path.join(__dirname, '../../scripts/data-export-v1.sql')
+  if (!fs.existsSync(seedPath)) {
+    console.log('[server] Seed file not found — skipping seed.')
+    return
+  }
   try {
     await runSqlServerSeedFile(seedPath)
     // Write completion flag so future restarts skip the seed
