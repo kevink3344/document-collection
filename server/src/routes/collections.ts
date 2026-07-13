@@ -2104,6 +2104,37 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
+/**
+ * GET /api/collections/archived — admin/super_admin only, lists archived collections.
+ * Must be registered BEFORE /:id to avoid Express matching 'archived' as an ID.
+ */
+router.get('/archived', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
+  if (!context || !isAdministrator(context)) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const db = await getDbAsync()
+  const cols = context.role === 'super_admin'
+    ? await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status = 'archived' ORDER BY c.updated_at DESC`)
+    : await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status = 'archived' AND c.organization_id = ? ORDER BY c.updated_at DESC`, [context.organizationId])
+
+  if (cols.length === 0) { res.json([]); return }
+
+  const ids = cols.map(c => c.id)
+  const ph = ids.map(() => '?').join(',')
+  const responseCountMap = await getVisibleResponseCountMap(db, context, ids)
+  const customTableFlags = await db.queryAll<{ collection_id: number; ct: number }>(`SELECT collection_id, COUNT(*) AS ct FROM collection_fields WHERE collection_id IN (${ph}) AND type = 'custom_table' GROUP BY collection_id`, ids)
+  const customTableMap = new Map(customTableFlags.map(r => [r.collection_id, r.ct]))
+
+  res.json(cols.map(c => ({
+    ...toApiCollection(c, [], new Map()),
+    responseCount: responseCountMap.get(c.id) ?? 0,
+    hasCustomTable: (customTableMap.get(c.id) ?? 0) > 0,
+  })))
+})
+
 router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) {
@@ -2514,36 +2545,6 @@ router.post('/:id/versions/:versionId/publish', authenticateToken, async (req: R
     console.error('[collections] publish version:', err)
     res.status(500).json({ error: 'Failed to publish version' })
   }
-})
-
-/**
- * GET /api/collections/archived — admin/super_admin only, lists archived collections.
- */
-router.get('/archived', authenticateToken, async (req: Request, res: Response) => {
-  const context = await loadRequestUserContext(req)
-  if (!context || !isAdministrator(context)) {
-    res.status(403).json({ error: 'Administrator access required' })
-    return
-  }
-
-  const db = await getDbAsync()
-  const cols = context.role === 'super_admin'
-    ? await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status = 'archived' ORDER BY c.updated_at DESC`)
-    : await db.queryAll<DbCollection>(`${COL_SELECT} WHERE c.status = 'archived' AND c.organization_id = ? ORDER BY c.updated_at DESC`, [context.organizationId])
-
-  if (cols.length === 0) { res.json([]); return }
-
-  const ids = cols.map(c => c.id)
-  const ph = ids.map(() => '?').join(',')
-  const responseCountMap = await getVisibleResponseCountMap(db, context, ids)
-  const customTableFlags = await db.queryAll<{ collection_id: number; ct: number }>(`SELECT collection_id, COUNT(*) AS ct FROM collection_fields WHERE collection_id IN (${ph}) AND type = 'custom_table' GROUP BY collection_id`, ids)
-  const customTableMap = new Map(customTableFlags.map(r => [r.collection_id, r.ct]))
-
-  res.json(cols.map(c => ({
-    ...toApiCollection(c, [], new Map()),
-    responseCount: responseCountMap.get(c.id) ?? 0,
-    hasCustomTable: (customTableMap.get(c.id) ?? 0) > 0,
-  })))
 })
 
 /**
