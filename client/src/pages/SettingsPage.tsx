@@ -1847,7 +1847,7 @@ export default function SettingsPage() {
               including authentication, collections, categories, and responses.
             </p>
             <a
-              href={`${window.location.protocol}//${window.location.hostname}:4000/api-docs`}
+              href={`${window.location.origin}/api-docs`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-[#2563EB] hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
