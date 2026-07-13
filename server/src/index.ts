@@ -108,7 +108,7 @@ async function runStartupSeed() {
   // Check if this seed file has already been applied successfully
   try {
     const db = await getDbAsync()
-    const flag = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE [key] = 'seed_completed_version'`)
+    const flag = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'seed_completed_version'`)
     const seedFile = 'data-export-v1.sql'
     if (flag?.value === seedFile) {
       console.log(`[server] Seed already applied (${seedFile}) — skipping.`)
@@ -125,9 +125,8 @@ async function runStartupSeed() {
     try {
       const db = await getDbAsync()
       await db.execute(
-        `INSERT INTO app_settings ([key], value) VALUES ('seed_completed_version', 'data-export-v1.sql')
-         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
-        []
+        `INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        ['seed_completed_version', 'data-export-v1.sql']
       )
       console.log('[server] Seed completion flag saved.')
     } catch {
