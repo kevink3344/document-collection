@@ -105,7 +105,8 @@ async function runStartupSeed() {
   if (process.env.SEED_SQL_ON_START !== 'true') return
   if (getConfiguredDatabaseMode() !== 'sqlserver') return
 
-  // Check if this seed file has already been applied successfully
+  // Check if this seed file has already been applied successfully.
+  // Default to SKIPPING — only seed if we can positively confirm the flag is absent.
   try {
     const db = await getDbAsync()
     const flag = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'seed_completed_version'`)
@@ -114,8 +115,16 @@ async function runStartupSeed() {
       console.log(`[server] Seed already applied (${seedFile}) — skipping.`)
       return
     }
-  } catch {
-    // If app_settings doesn't exist yet, proceed with seeding
+    // Flag absent — fall through to seed
+  } catch (err) {
+    const msg = (err as Error).message ?? ''
+    const tableNotFound = /no such table|Invalid object name/i.test(msg)
+    if (!tableNotFound) {
+      // DB connection or other transient error — skip seed rather than risk re-running
+      console.warn('[server] Could not check seed flag, skipping seed to be safe:', msg)
+      return
+    }
+    // Table doesn't exist yet — safe to seed
   }
 
   const seedPath = path.join(__dirname, '../../scripts/data-export-v1.sql')
