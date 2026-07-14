@@ -420,11 +420,14 @@ export default function CollectionsPage() {
       })
     })
 
-    return Array.from(counts.entries()).map(([value, data]) => ({
-      value,
-      label: data.label,
-      count: data.count,
-    }))
+    return Array.from(counts.entries())
+      .map(([value, data]) => ({ value, label: data.label, count: data.count }))
+      .sort((a, b) => {
+        // Push uncategorized to the end, sort everything else alphabetically
+        if (a.value === UNCATEGORIZED_TAB) return 1
+        if (b.value === UNCATEGORIZED_TAB) return -1
+        return a.label.localeCompare(b.label)
+      })
   }, [collections])
 
   const visibleCollections = useMemo(() => {
