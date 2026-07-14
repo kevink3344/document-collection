@@ -101,10 +101,16 @@ function normalizeRow<T>(row: T): T {
       const d = new Date(cleaned)
       out[k] = isNaN(d.getTime()) ? v : d.toISOString().replace('T', ' ').slice(0, 19)
     } else if (typeof v === 'string' && /^\d+$/.test(v)) {
-      // BIGINT and all integer-like columns come back as digit strings from mssql.
-      // Convert them all so comparisons like `=== 1` and `!f.staff_only` work.
-      const n = Number(v)
-      out[k] = Number.isSafeInteger(n) ? n : v
+      // BIGINT columns come back as digit strings from mssql.
+      // Only convert columns whose names indicate they hold integer values.
+      const isIntegerColumn =
+        /^id$|_id$|^count$|Count$|_count$|_only$|_enabled$|_edits$|^anonymous$|^required$|^size_bytes$|^sort_order$|^page_number$|^version_number$/.test(k)
+      if (isIntegerColumn) {
+        const n = Number(v)
+        out[k] = Number.isSafeInteger(n) ? n : v
+      } else {
+        out[k] = v
+      }
     } else {
       out[k] = v
     }
