@@ -254,7 +254,7 @@ export default function LoginPage() {
           ].map(stat => (
             <div
               key={stat.label}
-              className="flex-1 border border-[#1E3A5F] p-3"
+              className="flex-1 border border-white/40 p-3"
             >
               <div className="font-mono text-xl font-medium text-white">{stat.value}</div>
               <div className="text-[9px] tracking-[0.2em] text-white/50 uppercase mt-1">
