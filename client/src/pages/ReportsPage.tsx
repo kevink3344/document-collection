@@ -11,7 +11,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react'
-import { getReportsData, type ReportsData, type ReportsDateRange } from '../api/stats'
+import { getReportsData, type ReportsData } from '../api/stats'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import { useAuth } from '../contexts/AuthContext'
 
