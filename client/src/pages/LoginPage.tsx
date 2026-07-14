@@ -67,6 +67,9 @@ export default function LoginPage() {
   )
 
   const [selectedUserId, setSelectedUserId] = useState<string>('')
+  const [rememberMe, setRememberMe] = useState(() => {
+    try { return localStorage.getItem('dcp-remember-me') === 'true' } catch { return false }
+  })
   const [signingIn, setSigningIn] = useState(false)
   const [loginMessage, setLoginMessage] = useState(
     'Choose an existing user profile or register a new account to enter the data workspace.'
@@ -102,7 +105,11 @@ export default function LoginPage() {
       }
 
       setExistingUsers(data)
-      setSelectedUserId(data.length > 0 ? String(data[0].id) : '')
+      const savedUserId = localStorage.getItem('dcp-saved-user-id')
+      const defaultUserId = (rememberMe && savedUserId && data.some(u => String(u.id) === savedUserId))
+        ? savedUserId
+        : data.length > 0 ? String(data[0].id) : ''
+      setSelectedUserId(defaultUserId)
     } catch (err) {
       console.error('[LoginPage] Failed to load users:', err)
       setExistingUsers([])
@@ -146,7 +153,10 @@ export default function LoginPage() {
           setServerStarting(false)
           setOrganizations(orgs)
           setLoadingOrgs(false)
-          const firstOrgId = String(orgs[0].id)
+          const savedOrgId = localStorage.getItem('dcp-saved-org-id')
+          const firstOrgId = (rememberMe && savedOrgId && orgs.some(o => String(o.id) === savedOrgId))
+            ? savedOrgId
+            : String(orgs[0].id)
           setSelectedOrgId(firstOrgId)
           void loadUsers(firstOrgId)
         })
@@ -199,6 +209,16 @@ export default function LoginPage() {
     try {
       if (!selectedUserId) {
         throw new Error('No user available to sign in')
+      }
+
+      if (rememberMe) {
+        localStorage.setItem('dcp-remember-me', 'true')
+        localStorage.setItem('dcp-saved-org-id', selectedOrgId)
+        localStorage.setItem('dcp-saved-user-id', selectedUserId)
+      } else {
+        localStorage.removeItem('dcp-remember-me')
+        localStorage.removeItem('dcp-saved-org-id')
+        localStorage.removeItem('dcp-saved-user-id')
       }
 
       const res = await fetch('/api/auth/login', {
@@ -372,10 +392,20 @@ export default function LoginPage() {
           <button
             onClick={handleSelectSignIn}
             disabled={loadingUsers || signingIn || !selectedUserId}
-            className="w-full bg-[#1E293B] dark:bg-[#F1F5F9] text-white dark:text-[#0F172A] font-semibold py-2.5 text-sm tracking-wide rounded-[2px] hover:bg-[#0F172A] dark:hover:bg-white transition-colors disabled:opacity-50 mb-8"
+            className="w-full bg-[#1E293B] dark:bg-[#F1F5F9] text-white dark:text-[#0F172A] font-semibold py-2.5 text-sm tracking-wide rounded-[2px] hover:bg-[#0F172A] dark:hover:bg-white transition-colors disabled:opacity-50 mb-3"
           >
             {signingIn ? 'Signing in…' : 'Sign In as Selected User'}
           </button>
+
+          <label className="flex items-center gap-2 mb-8 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded accent-[#2563EB]"
+            />
+            <span className="text-xs text-[#64748B] dark:text-[#94A3B8]">Remember my selection next time</span>
+          </label>
             </>
           )}
 
