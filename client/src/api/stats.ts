@@ -85,7 +85,7 @@ export async function getGlobalStats(): Promise<GlobalStats> {
   return res.json() as Promise<GlobalStats>
 }
 
-export interface ReportsDateRange {
+export type ReportsDateRange = {
   startDate: string  // YYYY-MM-DD
   endDate: string    // YYYY-MM-DD
 }
