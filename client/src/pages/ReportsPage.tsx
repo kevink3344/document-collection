@@ -11,7 +11,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react'
-import { getReportsData, type ReportsData, type ReportsDatePreset } from '../api/stats'
+import { getReportsData, type ReportsData, type ReportsDateRange } from '../api/stats'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -145,7 +145,14 @@ export default function ReportsPage() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'administrator'
 
-  const [preset, setPreset] = useState<ReportsDatePreset>(30)
+  // Default: last 30 days
+  const today = new Date()
+  const thirtyDaysAgo = new Date(today)
+  thirtyDaysAgo.setDate(today.getDate() - 30)
+  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+
+  const [startDate, setStartDate] = useState(fmt(thirtyDaysAgo))
+  const [endDate, setEndDate] = useState(fmt(today))
   const [data, setData] = useState<ReportsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -154,13 +161,14 @@ export default function ReportsPage() {
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   useEffect(() => {
+    if (!startDate || !endDate) return
     setLoading(true)
     setError(null)
-    getReportsData(preset)
+    getReportsData({ startDate, endDate })
       .then(setData)
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
-  }, [preset])
+  }, [startDate, endDate])
 
   // Sorted collection performance
   const sortedPerformance = useMemo(() => {
@@ -188,12 +196,7 @@ export default function ReportsPage() {
     ? Math.max(...data.categoryBreakdown.map(c => c.count), 1)
     : 1
 
-  const PRESETS: { label: string; value: ReportsDatePreset }[] = [
-    { label: 'Last 7 days', value: 7 },
-    { label: 'Last 30 days', value: 30 },
-    { label: 'Last 90 days', value: 90 },
-    { label: 'All time', value: 'all' },
-  ]
+  const INPUT_CLS = 'border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] text-[#1E293B] dark:text-[#F1F5F9] text-sm px-2.5 py-1.5 rounded focus:outline-none focus:ring-2 focus:ring-[#2563EB]'
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -207,21 +210,28 @@ export default function ReportsPage() {
         </div>
 
         {/* Date range filter */}
-        <div className="flex items-center gap-1 bg-[#F1F5F9] dark:bg-[#1E293B] p-1 rounded-lg">
-          {PRESETS.map(p => (
-            <button
-              key={p.value}
-              onClick={() => setPreset(p.value)}
-              className={[
-                'px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
-                preset === p.value
-                  ? 'bg-white dark:bg-[#334155] text-[#1E293B] dark:text-[#F1F5F9] shadow-sm'
-                  : 'text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9]',
-              ].join(' ')}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs font-medium text-[#64748B] dark:text-[#94A3B8] whitespace-nowrap">From</label>
+            <input
+              type="date"
+              value={startDate}
+              max={endDate}
+              onChange={e => setStartDate(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs font-medium text-[#64748B] dark:text-[#94A3B8] whitespace-nowrap">To</label>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate}
+              max={fmt(today)}
+              onChange={e => setEndDate(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </div>
         </div>
       </div>
 

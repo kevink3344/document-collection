@@ -85,8 +85,14 @@ export async function getGlobalStats(): Promise<GlobalStats> {
   return res.json() as Promise<GlobalStats>
 }
 
-export async function getReportsData(days: ReportsDatePreset = 30): Promise<ReportsData> {
-  const res = await fetch(`/api/stats/reports?days=${days}`, { headers: authHeaders() })
+export interface ReportsDateRange {
+  startDate: string  // YYYY-MM-DD
+  endDate: string    // YYYY-MM-DD
+}
+
+export async function getReportsData(range: ReportsDateRange): Promise<ReportsData> {
+  const params = new URLSearchParams({ startDate: range.startDate, endDate: range.endDate })
+  const res = await fetch(`/api/stats/reports?${params}`, { headers: authHeaders() })
   handleUnauthorizedResponse(res)
   if (!res.ok) {
     const body = await res.json().catch(() => null)

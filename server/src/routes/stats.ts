@@ -195,10 +195,13 @@ router.get('/', authenticateToken, async (req: Request, res: Response): Promise<
 
 /**
  * GET /api/stats/reports?days=30
+ * GET /api/stats/reports?startDate=2026-01-01&endDate=2026-03-31
  * Full reports data. Accessible to administrators and team_managers only.
  * days: 7 | 30 | 90 | "all"  (default 30)
+ * startDate / endDate: ISO date strings (YYYY-MM-DD) — override days when both provided
  */
 const VALID_DAYS = new Set([7, 30, 90])
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 router.get('/reports', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   const context = await loadRequestUserContext(req)
@@ -213,25 +216,42 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
     const scopeParam = !isAdministrator(context!) && context?.organizationId ? [context.organizationId] : []
     const collectionScope = !isAdministrator(context!) && context?.organizationId ? 'WHERE c.organization_id = ?' : !isAdministrator(context!) ? 'WHERE 1 = 0' : ''
     const collectionScopeAnd = !isAdministrator(context!) && context?.organizationId ? 'AND c.organization_id = ?' : !isAdministrator(context!) ? 'AND 1 = 0' : ''
-    const daysRaw = req.query.days as string | undefined
-    const days: number | null =
-      daysRaw === 'all' ? null
-      : VALID_DAYS.has(Number(daysRaw)) ? Number(daysRaw)
-      : 30
 
     const isSqlServer = getDialect() === 'sqlserver'
-    const dateThreshold = days
-      ? isSqlServer
-        ? `DATEADD(day, -${days}, GETUTCDATE())`
-        : `datetime('now', '-${days} days')`
-      : null
     const dateToStr = isSqlServer
       ? (col: string) => `CONVERT(varchar(10), ${col}, 120)`
       : (col: string) => `date(${col})`
 
+    // ── Date range resolution ─────────────────────────────────
+    const startDateRaw = req.query.startDate as string | undefined
+    const endDateRaw   = req.query.endDate   as string | undefined
+    const daysRaw      = req.query.days      as string | undefined
+
+    let dateThreshold:  string | null = null
+    let dateUpperBound: string | null = null
+
+    if (startDateRaw && ISO_DATE_RE.test(startDateRaw)) {
+      dateThreshold  = isSqlServer ? `CAST('${startDateRaw}' AS DATE)` : `'${startDateRaw}'`
+      if (endDateRaw && ISO_DATE_RE.test(endDateRaw)) {
+        dateUpperBound = isSqlServer ? `CAST('${endDateRaw}' AS DATE)` : `'${endDateRaw}'`
+      }
+    } else {
+      const days: number | null =
+        daysRaw === 'all' ? null
+        : VALID_DAYS.has(Number(daysRaw)) ? Number(daysRaw)
+        : 30
+      dateThreshold = days
+        ? isSqlServer
+          ? `DATEADD(day, -${days}, GETUTCDATE())`
+          : `datetime('now', '-${days} days')`
+        : null
+    }
+
+    const upperClause = dateUpperBound ? ` AND cr.submitted_at <= ${dateUpperBound}` : ''
+
     // ── KPI ─────────────────────────────────────────────────
     const subWhere = dateThreshold
-      ? `WHERE ${!isAdministrator(context!) && context?.organizationId ? 'c.organization_id = ? AND ' : !isAdministrator(context!) ? '1 = 0 AND ' : ''}cr.submitted_at >= ${dateThreshold}`
+      ? `WHERE ${!isAdministrator(context!) && context?.organizationId ? 'c.organization_id = ? AND ' : !isAdministrator(context!) ? '1 = 0 AND ' : ''}cr.submitted_at >= ${dateThreshold}${upperClause}`
       : (!isAdministrator(context!) && context?.organizationId ? 'WHERE c.organization_id = ?' : !isAdministrator(context!) ? 'WHERE 1 = 0' : '')
     const { totalSubmissions } = (await db.queryOne<{ totalSubmissions: number }>(
         `SELECT COUNT(*) AS totalSubmissions FROM collection_responses cr JOIN collections c ON c.id = cr.collection_id ${subWhere}`,
@@ -267,7 +287,7 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
 
     // ── Collection performance ───────────────────────────────
     const crJoinCond = dateThreshold
-      ? `ON cr.collection_id = c.id AND cr.submitted_at >= ${dateThreshold}`
+      ? `ON cr.collection_id = c.id AND cr.submitted_at >= ${dateThreshold}${upperClause.replace('cr.submitted_at', 'cr.submitted_at')}`
       : `ON cr.collection_id = c.id`
 
     const collectionPerformance = await db.queryAll<{
@@ -303,7 +323,7 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
 
     // ── User activity (admin only) ───────────────────────────
     const crUserJoinCond = dateThreshold
-      ? `ON cr.respondent_email = u.email AND cr.submitted_at >= ${dateThreshold}`
+      ? `ON cr.respondent_email = u.email AND cr.submitted_at >= ${dateThreshold}${upperClause}`
       : `ON cr.respondent_email = u.email`
 
     // Super admins see all users; org admins only see users in their own organization
