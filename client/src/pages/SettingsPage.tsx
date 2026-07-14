@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, RotateCcw, Save, Tag, Trash2, Upload, Users, UserCheck, X, Archive } from 'lucide-react'
 import {
   DndContext,
@@ -137,6 +137,24 @@ function SettingsSortablePanel({ id, children }: { id: PanelId; children: React.
       <div className="flex-1 min-w-0">{children}</div>
     </div>
   )
+}
+
+class PanelErrorBoundary extends React.Component<{ label: string; children: React.ReactNode }, { error: Error | null }> {
+  constructor(props: { label: string; children: React.ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-600 dark:text-red-400">
+          <strong>{this.props.label}</strong> failed to render: {this.state.error.message}
+        </div>
+      )
+    }
+    return this.props.children
+  }
 }
 
 function DroppableTabButton({
@@ -4033,7 +4051,9 @@ export default function SettingsPage() {
           <div className="space-y-6">
             {panelLayout[activeTab].map(id => (
               <SettingsSortablePanel key={id} id={id}>
-                {renderPanel(id)}
+                <PanelErrorBoundary label={PANEL_LABELS[id]}>
+                  {renderPanel(id)}
+                </PanelErrorBoundary>
               </SettingsSortablePanel>
             ))}
           </div>
