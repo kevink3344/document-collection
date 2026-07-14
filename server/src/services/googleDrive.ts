@@ -1,6 +1,5 @@
 import { Readable } from 'stream'
 import { google } from 'googleapis'
-import { getDbAsync } from '../database/db'
 
 interface DriveUploadInput {
   fileName: string
@@ -25,54 +24,18 @@ function getRequiredEnv(name: string): string {
   return value
 }
 
-/** Read the refresh token — DB value takes priority over env var. */
-async function getRefreshToken(): Promise<string> {
-  try {
-    const db = await getDbAsync()
-    const row = await db.queryOne<{ value: string }>(
-      `SELECT value FROM app_settings WHERE key = 'google_drive_refresh_token'`
-    )
-    if (row?.value?.trim()) return row.value.trim()
-  } catch {
-    // DB unavailable — fall through to env var
-  }
-  return getRequiredEnv('GOOGLE_DRIVE_REFRESH_TOKEN')
-}
-
-/** Persist a new refresh token issued by Google back to app_settings. */
-async function persistRefreshToken(token: string): Promise<void> {
-  try {
-    const db = await getDbAsync()
-    await db.execute(
-      `INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      ['google_drive_refresh_token', token]
-    )
-    console.log('[googleDrive] Refresh token rotated and saved to app_settings.')
-  } catch (err) {
-    console.warn('[googleDrive] Could not persist new refresh token:', (err as Error).message)
-  }
-}
-
-async function createOAuthClient() {
+function createOAuthClient() {
   const clientId = getRequiredEnv('GOOGLE_DRIVE_CLIENT_ID')
   const clientSecret = getRequiredEnv('GOOGLE_DRIVE_CLIENT_SECRET')
-  const refreshToken = await getRefreshToken()
+  const refreshToken = getRequiredEnv('GOOGLE_DRIVE_REFRESH_TOKEN')
 
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret)
   oauth2Client.setCredentials({ refresh_token: refreshToken })
-
-  // When Google issues a new refresh token, save it to the DB automatically
-  oauth2Client.on('tokens', (tokens) => {
-    if (tokens.refresh_token) {
-      void persistRefreshToken(tokens.refresh_token)
-    }
-  })
-
   return oauth2Client
 }
 
-async function createDriveClient() {
-  return google.drive({ version: 'v3', auth: await createOAuthClient() })
+function createDriveClient() {
+  return google.drive({ version: 'v3', auth: createOAuthClient() })
 }
 
 function getDriveParentIds(): string[] {
@@ -89,7 +52,7 @@ export function isGoogleDriveConfigured(): boolean {
 }
 
 export async function uploadBufferToDrive(input: DriveUploadInput): Promise<DriveFileMetadata> {
-  const drive = await createDriveClient()
+  const drive = createDriveClient()
   const response = await drive.files.create({
     requestBody: {
       name: input.fileName,
@@ -118,7 +81,7 @@ export async function uploadBufferToDrive(input: DriveUploadInput): Promise<Driv
 }
 
 export async function deleteDriveFile(fileId: string): Promise<void> {
-  const drive = await createDriveClient()
+  const drive = createDriveClient()
   await drive.files.delete({
     fileId,
     supportsAllDrives: true,
@@ -126,7 +89,7 @@ export async function deleteDriveFile(fileId: string): Promise<void> {
 }
 
 export async function downloadDriveFile(fileId: string): Promise<{ stream: NodeJS.ReadableStream; mimeType: string; fileName: string }> {
-  const drive = await createDriveClient()
+  const drive = createDriveClient()
   const [metadataResponse, contentResponse] = await Promise.all([
     drive.files.get({
       fileId,
