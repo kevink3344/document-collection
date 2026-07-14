@@ -38,9 +38,11 @@ router.get('/health', (_req: Request, res: Response) => {
 
 router.get('/info', (_req: Request, res: Response) => {
   const loginModeOverride = process.env.LOGIN_MODE?.trim().toLowerCase()
-  // Only pass through valid CSS hex colors to prevent injection
+  // Only pass through valid CSS hex colors to prevent injection.
+  // Also add # prefix if omitted (dotenv strips # values unless quoted).
   const rawColor = process.env.LOGIN_SCREEN_COLOR?.trim() ?? ''
-  const loginScreenColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor) ? rawColor : null
+  const normalizedColor = rawColor.startsWith('#') ? rawColor : rawColor ? `#${rawColor}` : ''
+  const loginScreenColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(normalizedColor) ? normalizedColor : null
   res.json({
     version: pkg.version,
     dbMode: getConfiguredDatabaseMode(),
