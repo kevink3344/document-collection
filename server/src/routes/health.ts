@@ -38,6 +38,9 @@ router.get('/health', (_req: Request, res: Response) => {
 
 router.get('/info', (_req: Request, res: Response) => {
   const loginModeOverride = process.env.LOGIN_MODE?.trim().toLowerCase()
+  // Only pass through valid CSS hex colors to prevent injection
+  const rawColor = process.env.LOGIN_SCREEN_COLOR?.trim() ?? ''
+  const loginScreenColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor) ? rawColor : null
   res.json({
     version: pkg.version,
     dbMode: getConfiguredDatabaseMode(),
@@ -45,6 +48,7 @@ router.get('/info', (_req: Request, res: Response) => {
     loginModeOverride: (loginModeOverride === 'maintenance' || loginModeOverride === 'select' || loginModeOverride === 'password')
       ? loginModeOverride
       : null,
+    loginScreenColor,
   })
 })
 

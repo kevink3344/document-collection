@@ -75,7 +75,7 @@ export default function LoginPage() {
   const [publicStats, setPublicStats] = useState<PublicSummaryStats>(DEFAULT_PUBLIC_STATS)
   const [loginMode, setLoginMode] = useState<'select' | 'password' | 'maintenance' | null>(null)
   const [maintenanceMessage, setMaintenanceMessage] = useState('System is currently undergoing maintenance. Please check back later.')
-  const [appInfo, setAppInfo] = useState<{ version: string; dbMode: string } | null>(null)
+  const [appInfo, setAppInfo] = useState<{ version: string; dbMode: string; loginScreenColor?: string | null } | null>(null)
 
   // Fetch global stats once on mount (not scoped to selected org)
   useEffect(() => {
@@ -220,7 +220,10 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex flex-col md:flex-row overflow-x-hidden">
       {/* ── Left panel ─────────────────────────────────────── */}
-      <div className="flex flex-col justify-between bg-[#0F2942] text-white p-8 md:p-12 md:w-[44%] md:min-h-screen">
+      <div
+        className="flex flex-col justify-between bg-[#0F2942] text-white p-8 md:p-12 md:w-[44%] md:min-h-screen"
+        style={appInfo?.loginScreenColor ? { backgroundColor: appInfo.loginScreenColor } : undefined}
+      >
         {/* Brand header */}
         <div>
           <div className="flex items-center gap-3 mb-10">
