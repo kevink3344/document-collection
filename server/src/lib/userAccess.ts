@@ -143,7 +143,9 @@ export async function loadUserAccessProfile(
     createdAt: user.created_at,
     organizations,
     passwordHash: user.password_hash ?? null,
-    mustChangePassword: Boolean(user.must_change_password),
+    // Only flag mustChangePassword if the user actually has a password set —
+    // select-mode users (no password_hash) never need to change a password.
+    mustChangePassword: Boolean(user.must_change_password) && !!user.password_hash,
     inviteToken: user.invite_token ?? null,
   }
 }
