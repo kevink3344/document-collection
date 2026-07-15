@@ -46,8 +46,9 @@ export default function App() {
 
   return (
     <>
-      {/* Force-change password modal — shown over everything until resolved */}
-      {user?.mustChangePassword && (
+      {/* Force-change password modal — shown over everything until resolved.
+          Super admins are exempt since their password is managed via SUPER_ADMIN_PASSWORD env var. */}
+      {user?.mustChangePassword && user?.role !== 'super_admin' && (
         <ChangePasswordModal onSuccess={clearMustChangePassword} />
       )}
     <Routes>
