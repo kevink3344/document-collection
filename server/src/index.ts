@@ -83,7 +83,7 @@ async function syncSuperAdmin() {
     // Upsert: if user exists update their hash; if not, insert as super_admin
     const existing = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE lower(email) = lower(?)', [email])
     if (existing) {
-      await db.execute('UPDATE users SET password_hash = ?, invite_token = NULL WHERE lower(email) = lower(?)', [hash, email])
+      await db.execute('UPDATE users SET password_hash = ?, must_change_password = 0, invite_token = NULL WHERE lower(email) = lower(?)', [hash, email])
     } else {
       await db.execute(
         `INSERT INTO users (name, email, role, password_hash, invite_token) VALUES (?, ?, 'super_admin', ?, NULL)`,
