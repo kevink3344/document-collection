@@ -29,6 +29,7 @@ export async function createUser(payload: {
   role?: UserRole
   organizationId?: number
   memberships?: UserMembershipPayload[]
+  locationIds?: number[]
 }): Promise<AppUser> {
   const res = await fetch('/api/users', {
     method: 'POST',

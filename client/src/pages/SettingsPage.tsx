@@ -431,6 +431,7 @@ export default function SettingsPage() {
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserRole, setNewUserRole] = useState<'user' | 'super_admin'>('user')
   const [newUserMemberships, setNewUserMemberships] = useState<EditableMembership[]>([createEditableMembership()])
+  const [newUserLocations, setNewUserLocations] = useState<Location[]>([])
 
   // Pre-populate new user membership with the admin's own org once user + organizations list are ready
   useEffect(() => {
@@ -703,12 +704,14 @@ export default function SettingsPage() {
         email,
         role: isSuperAdmin ? 'super_admin' : memberships.find(entry => entry.isDefault)?.role ?? memberships[0].role,
         memberships: isSuperAdmin ? [] : memberships,
+        locationIds: isSuperAdmin ? undefined : newUserLocations.map(l => l.id),
       })
       setAllUsers(prev => [...prev, created])
       setUserCreateSuccess(created.id)
       setNewUserName('')
       setNewUserEmail('')
       setNewUserRole('user')
+      setNewUserLocations([])
       const defaultMembership = user?.organizations?.find(m => m.isDefault) ?? user?.organizations?.[0]
       const orgId = defaultMembership?.organizationId ?? user?.activeOrganizationId ?? user?.organizationId
       setNewUserMemberships(orgId ? [{ organizationId: String(orgId), role: 'user', isDefault: true }] : [createEditableMembership()])
@@ -3376,7 +3379,11 @@ export default function SettingsPage() {
                     <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Access</label>
                     <select
                       value={newUserRole}
-                      onChange={e => setNewUserRole(e.target.value as typeof newUserRole)}
+                      onChange={e => {
+                        const value = e.target.value as typeof newUserRole
+                        setNewUserRole(value)
+                        if (value === 'super_admin') setNewUserLocations([])
+                      }}
                       className={INPUT}
                     >
                       <option value="user">Organization Member</option>
@@ -3393,6 +3400,42 @@ export default function SettingsPage() {
                       <p className="text-sm text-[#64748B] dark:text-[#94A3B8]">Super admins have global access and do not need organization memberships.</p>
                     ) : renderMembershipEditor(newUserMemberships, setNewUserMemberships, userCreateSaving)}
                   </div>
+                  {newUserRole !== 'super_admin' && (
+                    <div className="sm:col-span-2 rounded-lg border border-teal-100 dark:border-teal-900/30 bg-teal-50 dark:bg-teal-900/10 p-4 space-y-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Locations</h3>
+                        <p className="mt-1 text-xs text-[#64748B] dark:text-[#94A3B8]">Limit which submissions this user can see based on location.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {newUserLocations.map(loc => (
+                          <span key={loc.id} className="inline-flex items-center gap-1 bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300 text-xs px-2 py-0.5 rounded">
+                            {loc.name}
+                            <button
+                              type="button"
+                              onClick={() => setNewUserLocations(prev => prev.filter(l => l.id !== loc.id))}
+                              className="hover:text-teal-900 dark:hover:text-teal-100"
+                            >
+                              <X size={10} />
+                            </button>
+                          </span>
+                        ))}
+                        {newUserLocations.length === 0 && (
+                          <span className="text-xs text-[#94A3B8] italic">No locations assigned</span>
+                        )}
+                      </div>
+                      <div className="max-w-md">
+                        <LocationTypeahead
+                          value={null}
+                          onChange={loc => {
+                            if (loc && !newUserLocations.find(existingLocation => existingLocation.id === loc.id)) {
+                              setNewUserLocations(prev => [...prev, loc])
+                            }
+                          }}
+                          placeholder="Add location…"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   <button

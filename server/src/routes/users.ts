@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
+import type { DbAdapter } from '../database/adapter'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, type RequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole, type UserOrganizationMembership } from '../lib/userAccess'
@@ -10,6 +11,14 @@ interface MembershipInput {
   organizationId: number
   role: MembershipRole
   isDefault: boolean
+}
+
+class HttpError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
 }
 
 function isMembershipRole(value: unknown): value is MembershipRole {
@@ -161,16 +170,15 @@ async function persistMemberships(
   userId: number,
   systemRole: UserRole,
   memberships: MembershipInput[],
+  tx?: DbAdapter,
 ): Promise<void> {
-  const db = await getDbAsync()
-  const defaultMembership = memberships.find(item => item.isDefault) ?? memberships[0] ?? null
+  const run = async (runner: DbAdapter) => {
+    const defaultMembership = memberships.find(item => item.isDefault) ?? memberships[0] ?? null
+    const defaultOrganization = defaultMembership
+      ? await runner.queryOne<{ id: number; name: string }>('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1', [defaultMembership.organizationId])
+      : undefined
 
-  const defaultOrganization = defaultMembership
-    ? await db.queryOne<{ id: number; name: string }>('SELECT id, name FROM organizations WHERE id = ? AND is_active = 1', [defaultMembership.organizationId])
-    : undefined
-
-  await db.transaction(async (tx) => {
-    await tx.execute(
+    await runner.execute(
       `UPDATE users SET role = ?, organization = ?, organization_id = ? WHERE id = ?`,
       [
         systemRole === 'super_admin' ? 'super_admin' : (defaultMembership?.role ?? 'user'),
@@ -180,15 +188,22 @@ async function persistMemberships(
       ]
     )
 
-    await tx.execute('DELETE FROM user_organizations WHERE user_id = ?', [userId])
+    await runner.execute('DELETE FROM user_organizations WHERE user_id = ?', [userId])
     for (const membership of memberships) {
-      await tx.execute(
+      await runner.execute(
         `INSERT INTO user_organizations (user_id, organization_id, role, is_default, updated_at)
          VALUES (?, ?, ?, ?, datetime('now'))`,
         [userId, membership.organizationId, membership.role, membership.isDefault ? 1 : 0]
       )
     }
-  })
+  }
+
+  if (tx) {
+    await run(tx)
+  } else {
+    const db = await getDbAsync()
+    await db.transaction(run)
+  }
 }
 
 /**
@@ -307,34 +322,81 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const db = await getDbAsync()
-  const existingEmail = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ?', [email.trim()])
-
-  if (existingEmail) {
-    res.status(409).json({ error: 'Email already registered' })
-    return
-  }
-
-  for (const membership of parsedPayload.memberships) {
-    const organization = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ? AND is_active = 1', [membership.organizationId])
-    if (!organization) {
-      res.status(400).json({ error: 'Selected organization does not exist' })
+  const rawLocationIds = (req.body as Record<string, unknown>).locationIds
+  let locationIds: number[] = []
+  if (rawLocationIds !== undefined) {
+    if (!Array.isArray(rawLocationIds) || rawLocationIds.some(x => typeof x !== 'number' || !Number.isInteger(x) || x < 1)) {
+      res.status(400).json({ error: 'locationIds must be an array of positive integers' })
       return
     }
+    locationIds = [...new Set(rawLocationIds as number[])]
   }
 
-  const inserted = await db.execute('INSERT INTO users (name, email, role) VALUES (?, ?, ?)', [name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user'])
+  const db = await getDbAsync()
+  try {
+    const createdUserId = await db.transaction(async (tx) => {
+      const existingEmail = await tx.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ?', [email.trim()])
+      if (existingEmail) {
+        throw new HttpError(409, 'Email already registered')
+      }
 
-  const createdUserId = Number(inserted.lastInsertRowid)
-  await persistMemberships(createdUserId, parsedPayload.systemRole, parsedPayload.memberships)
+      for (const membership of parsedPayload.memberships) {
+        const organization = await tx.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ? AND is_active = 1', [membership.organizationId])
+        if (!organization) {
+          throw new HttpError(400, 'Selected organization does not exist')
+        }
+      }
 
-  const created = await loadAccessibleUserProfile(createdUserId, currentUser)
-  if (!created) {
-    res.status(500).json({ error: 'Failed to load created user' })
-    return
+      if (parsedPayload.systemRole === 'super_admin' && locationIds.length > 0) {
+        throw new HttpError(400, 'Super admins cannot be assigned locations')
+      }
+
+      const membershipOrgIds = new Set(parsedPayload.memberships.map(m => m.organizationId))
+      if (locationIds.length > 0) {
+        const ph = locationIds.map(() => '?').join(',')
+        const locRows = await tx.queryAll<{ id: number; organization_id: number }>(
+          `SELECT id, organization_id FROM locations WHERE id IN (${ph})`,
+          locationIds
+        )
+        if (locRows.length !== locationIds.length) {
+          throw new HttpError(400, 'One or more locations do not exist')
+        }
+        for (const loc of locRows) {
+          if (!membershipOrgIds.has(loc.organization_id)) {
+            throw new HttpError(400, 'Locations must belong to the user\'s organizations')
+          }
+        }
+      }
+
+      const inserted = await tx.execute(
+        'INSERT INTO users (name, email, role) VALUES (?, ?, ?)',
+        [name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user']
+      )
+      const userId = Number(inserted.lastInsertRowid)
+      await persistMemberships(userId, parsedPayload.systemRole, parsedPayload.memberships, tx)
+
+      for (const locId of locationIds) {
+        await tx.execute('INSERT OR IGNORE INTO user_locations (user_id, location_id) VALUES (?, ?)', [userId, locId])
+      }
+
+      return userId
+    })
+
+    const created = await loadAccessibleUserProfile(createdUserId, currentUser)
+    if (!created) {
+      res.status(500).json({ error: 'Failed to load created user' })
+      return
+    }
+
+    res.status(201).json(toApiUser(created))
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    console.error('[users] create error:', err)
+    res.status(500).json({ error: (err as Error).message ?? 'Failed to create user' })
   }
-
-  res.status(201).json(toApiUser(created))
 })
 
 router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
