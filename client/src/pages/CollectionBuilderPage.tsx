@@ -18,6 +18,8 @@ import {
   X,
   Archive,
   ArchiveRestore,
+  RotateCcw,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   createCollection,
@@ -27,6 +29,7 @@ import {
   getCollectionVersion,
   listCollectionVersions,
   publishCollectionVersion,
+  restoreCollectionVersion,
   saveCollectionShares,
   updateCollection,
 } from '../api/collections'
@@ -56,6 +59,7 @@ import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { getDocumentEmbedUrl, parseDocumentFieldConfig, serialiseDocumentFieldConfig, type DocumentFieldKind } from '../utils/documentField'
 import { htmlToPlainText } from '../utils/richText'
 import { useToast } from '../contexts/ToastContext'
+import { useAuth } from '../contexts/AuthContext'
 import type { FieldBranchRule } from '../types'
 
 // ── Local builder types ───────────────────────────────────────
@@ -236,6 +240,7 @@ export default function CollectionBuilderPage() {
   const templateId = !isEdit ? searchParams.get('templateId') : null
   const collectionType = searchParams.get('type') === 'template' ? 'template' : 'standard'
   const { showToast } = useToast()
+  const { user } = useAuth()
 
   // Metadata
   const [title, setTitle] = useState('')
@@ -289,6 +294,11 @@ export default function CollectionBuilderPage() {
   const [versionSnapshots, setVersionSnapshots] = useState<Record<number, Collection>>({})
   const [versionDiffLoading, setVersionDiffLoading] = useState(false)
   const [versionDiffError, setVersionDiffError] = useState<string | null>(null)
+  const [lastSavedSignature, setLastSavedSignature] = useState<string>('')
+  const [pendingRestoreVersionId, setPendingRestoreVersionId] = useState<number | null>(null)
+  const [restoring, setRestoring] = useState(false)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
+  const [pendingRemoveKey, setPendingRemoveKey] = useState<string | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
   const [categoriesError, setCategoriesError] = useState<string | null>(null)
@@ -338,6 +348,95 @@ export default function CollectionBuilderPage() {
     paddingLeft: `${logoPadding.left}px`,
   }), [logoPadding.bottom, logoPadding.left, logoPadding.right, logoPadding.top])
 
+  function normalizeFieldsForSignature(fieldsToNormalize: BuilderField[]): BuilderField[] {
+    if (fieldsToNormalize.length === 1 && fieldsToNormalize[0].label.trim() === '' && fieldsToNormalize[0].type === 'short_text') {
+      return []
+    }
+    return fieldsToNormalize
+  }
+
+  function buildFormSignature(): string {
+    return JSON.stringify({
+      title: title.trim(),
+      description,
+      category,
+      dateDue,
+      coverPhotoUrl,
+      coverPhotoAssetId,
+      logoUrl,
+      anonymous,
+      allowSubmissionEdits,
+      submissionEditWindowHours,
+      status,
+      instructions,
+      instructionsDocUrl,
+      workflowEnabled,
+      workflowStages: workflowEnabled ? workflowStages : [],
+      fields: normalizeFieldsForSignature(fields).map(({ _key, ...f }) => ({
+        ...f,
+        tableColumns: f.tableColumns.map(({ id, ...c }) => ({
+          ...c,
+          listOptions: c.colType === 'list' ? (c.listOptions ?? []).map(opt => opt.trim()).filter(Boolean) : null,
+        })),
+      })),
+    })
+  }
+
+  function buildSignatureFromCollection(col: Collection): string {
+    const workflow = normalizeWorkflowDefinitionForBuilder(col.workflowDefinition)
+    const builderFields = col.fields.length === 0
+      ? []
+      : col.fields.map(f => ({
+          fieldKey: f.fieldKey ?? uid(),
+          type: normalizeFieldType(f.type),
+          label: f.label,
+          subtitle: f.subtitle ?? '',
+          page: f.page ?? 1,
+          required: f.required,
+          options: f.options ?? [],
+          displayStyle: resolveDisplayStyle(normalizeFieldType(f.type), f.displayStyle),
+          branchRules: f.branchRules ?? [],
+          tableColumns: (f.tableColumns ?? []).map(tc => ({
+            name: tc.name.trim(),
+            colType: normalizeColType(tc.colType),
+            listOptions:
+              tc.colType === 'list'
+                ? (tc.listOptions ?? []).map(opt => String(opt).trim()).filter(Boolean)
+                : null,
+            sortOrder: tc.sortOrder,
+          })),
+          staffOnly: f.staffOnly ?? false,
+          locationFilterEnabled: f.locationFilterEnabled ?? false,
+        }))
+
+    return JSON.stringify({
+      title: col.title.trim(),
+      description: col.description ? htmlToPlainText(col.description) : '',
+      category: col.category ?? '',
+      dateDue: col.dateDue ?? '',
+      coverPhotoUrl: col.coverPhotoUrl ?? '',
+      coverPhotoAssetId: col.coverPhotoAssetId ?? null,
+      logoUrl: col.logoUrl ?? '',
+      anonymous: col.anonymous,
+      allowSubmissionEdits: col.allowSubmissionEdits,
+      submissionEditWindowHours: String(col.submissionEditWindowHours ?? 24),
+      status: col.status ?? 'draft',
+      instructions: col.instructions ?? '',
+      instructionsDocUrl: col.instructionsDocUrl ?? '',
+      workflowEnabled: workflow.enabled,
+      workflowStages: workflow.enabled ? workflow.stages : [],
+      fields: builderFields,
+    })
+  }
+
+  const currentSignature = useMemo(buildFormSignature, [
+    title, description, category, dateDue, coverPhotoUrl, coverPhotoAssetId, logoUrl,
+    anonymous, allowSubmissionEdits, submissionEditWindowHours, status, instructions,
+    instructionsDocUrl, workflowEnabled, workflowStages, fields,
+  ])
+
+  const isDirty = useMemo(() => currentSignature !== lastSavedSignature, [currentSignature, lastSavedSignature])
+
   function applyCollectionToForm(col: Collection, options?: { asTemplate?: boolean }) {
     const asTemplate = options?.asTemplate === true
 
@@ -383,6 +482,7 @@ export default function CollectionBuilderPage() {
     getCollection(parseInt(id, 10))
       .then(col => {
         applyCollectionToForm(col)
+        setLastSavedSignature(buildSignatureFromCollection(col))
         setLoadTick(t => t + 1)
       })
       .catch(err => setLoadError((err as Error).message))
@@ -844,6 +944,7 @@ export default function CollectionBuilderPage() {
         const collectionId = parseInt(id!, 10)
         listCollectionVersions(collectionId).then(setVersions).catch(() => undefined)
       }
+      setLastSavedSignature(buildSignatureFromCollection(saved))
       if (silent) {
         setAutoSaveStatus('saved')
         setTimeout(() => setAutoSaveStatus('idle'), 2500)
@@ -876,6 +977,7 @@ export default function CollectionBuilderPage() {
         setActiveVersionId(saved.activeVersionId ?? null)
         setCurrentVersionNumber(saved.currentVersionNumber ?? null)
         setCollectionSlug(saved.slug)
+        setLastSavedSignature(buildSignatureFromCollection(saved))
         showToast('Version published', 'success')
         listCollectionVersions(parseInt(id!, 10)).then(setVersions).catch(() => undefined)
       } catch (err) {
@@ -904,6 +1006,7 @@ export default function CollectionBuilderPage() {
       setCollectionSlug(created.slug)
       setActiveVersionId(created.activeVersionId ?? null)
       setCurrentVersionNumber(created.currentVersionNumber ?? null)
+      setLastSavedSignature(buildSignatureFromCollection(created))
       setLoadTick(t => t + 1)
       showToast('New draft version created', 'success')
     } catch (err) {
@@ -911,6 +1014,59 @@ export default function CollectionBuilderPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function canRestoreVersions(): boolean {
+    return user?.role === 'super_admin' || user?.role === 'administrator'
+  }
+
+  function handleRestoreVersionClick(versionId: number) {
+    setRestoreError(null)
+    setPendingRestoreVersionId(versionId)
+  }
+
+  function cancelRestore() {
+    setPendingRestoreVersionId(null)
+    setRestoreError(null)
+  }
+
+  async function confirmRestore() {
+    if (!isEdit || !id || !pendingRestoreVersionId) return
+    const versionId = pendingRestoreVersionId
+
+    setRestoring(true)
+    setRestoreError(null)
+    try {
+      const restored = await restoreCollectionVersion(parseInt(id, 10), versionId)
+      applyCollectionToForm(restored)
+      setLastSavedSignature(buildSignatureFromCollection(restored))
+      setPendingRemoveKey(null)
+      setLoadTick(t => t + 1)
+      listCollectionVersions(parseInt(id, 10)).then(setVersions).catch(() => undefined)
+      showToast(`Restored to v${restored.currentVersionNumber} as a new draft`, 'success')
+    } catch (err) {
+      setRestoreError((err as Error).message)
+    } finally {
+      setRestoring(false)
+      setPendingRestoreVersionId(null)
+    }
+  }
+
+  function handleRemoveFieldClick(field: BuilderField) {
+    if (!field.label.trim()) {
+      removeField(field._key)
+      return
+    }
+    setPendingRemoveKey(field._key)
+  }
+
+  function confirmRemoveField(field: BuilderField) {
+    removeField(field._key)
+    setPendingRemoveKey(null)
+  }
+
+  function cancelRemoveField() {
+    setPendingRemoveKey(null)
   }
 
   function updateWorkflowStage(stageId: string, patch: Partial<ApprovalWorkflowStageDefinition>) {
@@ -1166,6 +1322,67 @@ export default function CollectionBuilderPage() {
             }}
             onClose={() => setTicketMatrixConfigField(null)}
           />
+        )
+      })()}
+
+      {/* Restore Version confirmation modal */}
+      {pendingRestoreVersionId && (() => {
+        const version = versions.find(v => v.id === pendingRestoreVersionId)
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white dark:bg-[#1E293B] rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155]">
+                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
+                  Restore Version {version ? `v${version.versionNumber}` : ''}
+                </h2>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                <div className="flex items-start gap-3 rounded border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 p-3 text-sm text-amber-800 dark:text-amber-300">
+                  <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-medium">This will create a new draft version.</p>
+                    <p>
+                      A new draft version will be created from v{version?.versionNumber} and set as the active version.
+                    </p>
+                    {status === 'published' && (
+                      <p className="font-medium">
+                        The collection will be moved back to draft status and will no longer be visible to respondents until re-published.
+                      </p>
+                    )}
+                    {isDirty && (
+                      <p className="text-xs">
+                        You have unsaved changes in the current draft. Restoring will discard those changes.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {restoreError && (
+                  <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-3 text-red-700 dark:text-red-400 text-sm">
+                    {restoreError}
+                  </div>
+                )}
+              </div>
+              <div className="px-5 py-4 border-t border-[#E2E8F0] dark:border-[#334155] flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={cancelRestore}
+                  disabled={restoring}
+                  className="rounded border border-[#CBD5E1] dark:border-[#475569] px-4 py-2 text-sm font-medium text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRestore}
+                  disabled={restoring}
+                  className="inline-flex items-center gap-1.5 rounded bg-[#0F766E] px-4 py-2 text-sm font-medium text-white hover:bg-[#0D5C56] transition-colors disabled:opacity-50"
+                >
+                  <RotateCcw size={14} />
+                  {restoring ? 'Restoring…' : 'Restore Version'}
+                </button>
+              </div>
+            </div>
+          </div>
         )
       })()}
 
@@ -2057,6 +2274,59 @@ export default function CollectionBuilderPage() {
                   )}
                 </div>
               )}
+
+              <div className="border-t border-[#E2E8F0] dark:border-[#334155] pt-4 space-y-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
+                  Version History
+                </h3>
+                {versions.length === 0 ? (
+                  <p className="text-sm text-[#64748B]">No saved versions yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {versions.map(v => {
+                      const isActive = v.isActive
+                      return (
+                        <div
+                          key={v.id}
+                          className="flex items-center justify-between gap-3 rounded border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] px-3 py-2"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">
+                              v{v.versionNumber}
+                            </span>
+                            <span className={[
+                              'text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border',
+                              v.status === 'published'
+                                ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-700'
+                                : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700',
+                            ].join(' ')}>
+                              {v.status}
+                            </span>
+                            {isActive && (
+                              <span className="text-[10px] font-medium text-[#2563EB]">Active</span>
+                            )}
+                            <span className="text-xs text-[#94A3B8] truncate">
+                              {new Date(v.createdAt).toLocaleString()}
+                            </span>
+                          </div>
+                          {canRestoreVersions() && (
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreVersionClick(v.id)}
+                              disabled={isActive}
+                              title={isActive ? 'This is the active version' : 'Restore this version as a new draft'}
+                              className="inline-flex items-center gap-1 text-xs text-[#0F766E] hover:text-[#0D5C56] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors shrink-0"
+                            >
+                              <RotateCcw size={12} />
+                              Restore
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -2320,7 +2590,7 @@ export default function CollectionBuilderPage() {
                   index={idx}
                   total={visibleFields.length}
                   onUpdate={patch => updateField(field._key, patch)}
-                  onRemove={() => removeField(field._key)}
+                  onRemove={() => handleRemoveFieldClick(field)}
                   onMoveUp={() => moveField(field._key, -1)}
                   onMoveDown={() => moveField(field._key, 1)}
                   onAddOption={() => addOption(field._key)}
@@ -2330,6 +2600,10 @@ export default function CollectionBuilderPage() {
                   onRemoveOption={i => removeOption(field._key, i)}
                   onConfigureTable={() => setWizardField(field._key)}
                   onConfigureMatrix={() => setMatrixConfigField(field._key)}
+                  isPendingRemove={pendingRemoveKey === field._key}
+                  collectionStatus={status}
+                  onConfirmRemove={() => confirmRemoveField(field)}
+                  onCancelRemove={cancelRemoveField}
                 />
               ))}
             </div>
@@ -2367,6 +2641,10 @@ interface FieldCardProps {
   onConfigureTable: () => void
   onConfigureMatrix: () => void
   hideStaffOnly?: boolean
+  isPendingRemove?: boolean
+  collectionStatus?: CollectionStatus
+  onConfirmRemove?: () => void
+  onCancelRemove?: () => void
 }
 
 const FIELD_INPUT =
@@ -2390,6 +2668,10 @@ function FieldCard({
   onConfigureTable,
   onConfigureMatrix,
   hideStaffOnly = false,
+  isPendingRemove = false,
+  collectionStatus = 'draft',
+  onConfirmRemove,
+  onCancelRemove,
 }: FieldCardProps) {
   const showOptions =
     field.type === 'single_choice' || field.type === 'multiple_choice'
@@ -2417,6 +2699,39 @@ function FieldCard({
         ? 'border-amber-400 dark:border-amber-600'
         : 'border-[#E2E8F0] dark:border-[#334155]',
     ].join(' ')}>
+      {isPendingRemove && (
+        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-3 space-y-2">
+          <div className="flex items-start gap-2 text-sm text-red-700 dark:text-red-400">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium">Remove field &quot;{field.label}&quot;?</p>
+              {collectionStatus === 'published' && (
+                <p className="text-xs mt-1">
+                  This collection is published. Removing this field may affect existing submissions and reports.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onConfirmRemove}
+              className="inline-flex items-center gap-1 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 transition-colors"
+            >
+              <Trash2 size={12} />
+              Remove
+            </button>
+            <button
+              type="button"
+              onClick={onCancelRemove}
+              className="rounded border border-[#CBD5E1] dark:border-[#475569] px-3 py-1.5 text-xs font-medium text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Row 1: type selector + move/delete */}
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold text-[#94A3B8] w-5 text-center shrink-0">

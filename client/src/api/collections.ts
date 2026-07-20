@@ -158,6 +158,17 @@ export async function publishCollectionVersion(
   return handleResponse<Collection>(res)
 }
 
+export async function restoreCollectionVersion(
+  collectionId: number,
+  versionId: number
+): Promise<Collection> {
+  const res = await fetch(`/api/collections/${collectionId}/versions/${versionId}/restore`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  return handleResponse<Collection>(res)
+}
+
 export async function submitResponse(
   slug: string,
   payload: {

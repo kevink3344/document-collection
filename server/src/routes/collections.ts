@@ -5,7 +5,7 @@ import multer from 'multer'
 import { getDbAsync } from '../database/db'
 import type { DbAdapter } from '../database/types'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
-import { loadRequestUserContext, isAdministrator, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
+import { loadRequestUserContext, isAdministrator, isAdminOrSuperAdmin, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
 import { parseAttachmentValue, stringifyAttachmentValue, type AttachmentReference } from '../lib/attachmentValue'
 import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
 import { sendNotificationEmail, isEmailDeliveryConfigured } from '../services/notificationEmail'
@@ -635,6 +635,35 @@ function toApiCollection(
 
 function resolveRequestedStatus(body: CollectionBody): 'draft' | 'published' {
   return body.status === 'published' ? 'published' : 'draft'
+}
+
+function dbFieldsToFieldInput(fields: DbField[], colsByField: Map<number, DbTableColumn[]>): FieldInput[] {
+  return fields.map(f => ({
+    fieldKey: f.field_key ?? undefined,
+    type: f.type,
+    label: f.label,
+    subtitle: f.subtitle ?? undefined,
+    page: f.page_number,
+    required: f.required === 1,
+    options: f.options ? (JSON.parse(f.options) as string[]) : undefined,
+    displayStyle: resolveFieldDisplayStyle(f.type, f.display_style),
+    branchRules: parseBranchRules(f.branch_rules) ?? undefined,
+    sortOrder: f.sort_order,
+    staffOnly: f.staff_only === 1,
+    locationFilterEnabled: f.location_filter_enabled === 1,
+    tableColumns:
+      f.type === 'custom_table'
+        ? (colsByField.get(f.id) ?? []).map(col => ({
+            name: col.name,
+            colType: col.col_type,
+            listOptions:
+              col.col_type === 'list' && col.list_options
+                ? (JSON.parse(col.list_options) as string[])
+                : undefined,
+            sortOrder: col.sort_order,
+          }))
+        : undefined,
+  }))
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -2544,6 +2573,69 @@ router.post('/:id/versions/:versionId/publish', authenticateToken, async (req: R
   } catch (err) {
     console.error('[collections] publish version:', err)
     res.status(500).json({ error: 'Failed to publish version' })
+  }
+})
+
+/**
+ * POST /api/collections/:id/versions/:versionId/restore
+ * Creates a new draft version cloned from a previous version.
+ * Limited to administrators / super admins.
+ */
+router.post('/:id/versions/:versionId/restore', authenticateToken, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  const versionId = parseInt(req.params.versionId, 10)
+  if (isNaN(id) || isNaN(versionId)) {
+    res.status(400).json({ error: 'Invalid collection or version ID' })
+    return
+  }
+
+  const context = await loadRequestUserContext(req)
+  if (!context) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+
+  if (!isAdminOrSuperAdmin(context)) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const db = await getDbAsync()
+  const accessibleCollection = await fetchAccessibleCollectionById(id, context)
+  if (!accessibleCollection) {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  const version = await db.queryOne<{ id: number }>('SELECT id FROM collection_versions WHERE id = ? AND collection_id = ?', [versionId, id])
+  if (!version) {
+    res.status(404).json({ error: 'Version not found' })
+    return
+  }
+
+  try {
+    const [fields, colsByField] = await fetchFields(id, versionId)
+    const fieldInputs = dbFieldsToFieldInput(fields, colsByField)
+    const { versionId: newVersionId } = await createCollectionVersion(id, req.user!.sub, 'draft', fieldInputs)
+
+    await db.execute(
+      `UPDATE collections
+       SET status = 'draft', active_version_id = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [newVersionId, id]
+    )
+
+    const updated = await db.queryOne<DbCollection>(`${COL_SELECT} WHERE c.id = ?`, [id])
+    if (!updated) {
+      res.status(500).json({ error: 'Failed to load updated collection' })
+      return
+    }
+
+    const [updatedFields, updatedColsByField] = await fetchFields(id, updated.active_version_id)
+    res.json(toApiCollection(updated, updatedFields, updatedColsByField))
+  } catch (err) {
+    console.error('[collections] restore version:', err)
+    res.status(500).json({ error: 'Failed to restore collection version' })
   }
 })
 
