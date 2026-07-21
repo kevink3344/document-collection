@@ -137,7 +137,7 @@ export async function getCollectionVersion(
 
 export async function createCollectionVersion(
   collectionId: number,
-  payload: CollectionPayload
+  payload: CollectionPayload & { versionTitle?: string; versionReason?: string }
 ): Promise<Collection> {
   const res = await fetch(`/api/collections/${collectionId}/versions`, {
     method: 'POST',
@@ -145,6 +145,21 @@ export async function createCollectionVersion(
     body: JSON.stringify(payload),
   })
   return handleResponse<Collection>(res)
+}
+
+export async function deleteCollectionVersion(
+  collectionId: number,
+  versionId: number
+): Promise<void> {
+  const res = await fetch(`/api/collections/${collectionId}/versions/${versionId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  handleUnauthorizedResponse(res)
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error ?? `Delete failed: ${res.status}`)
+  }
 }
 
 export async function publishCollectionVersion(

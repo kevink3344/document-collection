@@ -998,6 +998,10 @@ function applyIncrementalSchema(database: AppDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_saved_export_presets_collection
       ON saved_export_presets(organization_id, collection_id)
   `)
+  // Add version title/reason columns to collection_versions (idempotent)
+  for (const col of ['title', 'reason']) {
+    try { database.exec(`ALTER TABLE collection_versions ADD COLUMN ${col} TEXT`) } catch { /* already exists */ }
+  }
 }
 
 export function setupDatabase(): void {

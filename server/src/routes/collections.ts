@@ -128,6 +128,8 @@ interface DbCollectionVersion {
   collection_id: number
   version_number: number
   status: 'draft' | 'published'
+  title: string | null
+  reason: string | null
   created_by: number
   created_at: string
   published_at: string | null
@@ -794,15 +796,16 @@ async function createCollectionVersion(
   collectionId: number,
   createdBy: number,
   status: 'draft' | 'published',
-  fields: FieldInput[]
+  fields: FieldInput[],
+  meta?: { title?: string; reason?: string }
 ): Promise<{ versionId: number; versionNumber: number }> {
   const db = await getDbAsync()
   const row = await db.queryOne<{ maxVersion: number }>('SELECT COALESCE(MAX(version_number), 0) AS maxVersion FROM collection_versions WHERE collection_id = ?', [collectionId])
   const versionNumber = (row?.maxVersion ?? 0) + 1
   const inserted = await db.execute(
-      `INSERT INTO collection_versions (collection_id, version_number, status, created_by, published_at)
-       VALUES (?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`,
-      [collectionId, versionNumber, status, createdBy, status]
+      `INSERT INTO collection_versions (collection_id, version_number, status, title, reason, created_by, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`,
+      [collectionId, versionNumber, status, meta?.title?.trim() ?? null, meta?.reason?.trim() ?? null, createdBy, status]
     )
   const versionId = Number(inserted.lastInsertRowid)
   await insertFieldsForVersion(collectionId, versionId, fields)
@@ -2397,6 +2400,8 @@ router.get('/:id/versions', authenticateToken, async (req: Request, res: Respons
       id: v.id,
       versionNumber: v.version_number,
       status: v.status,
+      title: v.title ?? null,
+      reason: v.reason ?? null,
       createdBy: v.created_by,
       createdAt: v.created_at,
       publishedAt: v.published_at,
@@ -2478,7 +2483,10 @@ router.post('/:id/versions', authenticateToken, async (req: Request, res: Respon
   }
 
   try {
-    const { versionId } = await createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [])
+    const { versionId } = await createCollectionVersion(id, req.user!.sub, requestedStatus, body.fields ?? [], {
+      title: (body as { versionTitle?: string }).versionTitle,
+      reason: (body as { versionReason?: string }).versionReason,
+    })
 
     await db.execute(
       `UPDATE collections
@@ -2637,6 +2645,63 @@ router.post('/:id/versions/:versionId/restore', authenticateToken, async (req: R
   } catch (err) {
     console.error('[collections] restore version:', err)
     res.status(500).json({ error: 'Failed to restore collection version' })
+  }
+})
+
+/**
+ * DELETE /api/collections/:id/versions/:versionId
+ * Deletes a draft version. Rejects if status is 'published'. If the deleted
+ * version is the current active_version_id, promotes the next-highest version.
+ */
+router.delete('/:id/versions/:versionId', authenticateToken, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  const versionId = parseInt(req.params.versionId, 10)
+  if (isNaN(id) || isNaN(versionId)) {
+    res.status(400).json({ error: 'Invalid collection or version ID' })
+    return
+  }
+
+  const context = await loadRequestUserContext(req)
+  if (!context) { res.status(401).json({ error: 'Authentication required' }); return }
+  if (!isAdminOrSuperAdmin(context)) { res.status(403).json({ error: 'Administrator access required' }); return }
+
+  const db = await getDbAsync()
+  const collection = await fetchAccessibleCollectionById(id, context)
+  if (!collection) { res.status(404).json({ error: 'Collection not found' }); return }
+
+  const version = await db.queryOne<{ id: number; status: string }>(
+    'SELECT id, status FROM collection_versions WHERE id = ? AND collection_id = ?',
+    [versionId, id]
+  )
+  if (!version) { res.status(404).json({ error: 'Version not found' }); return }
+  if (version.status !== 'draft') {
+    res.status(409).json({ error: 'Only draft versions can be deleted' })
+    return
+  }
+
+  const allVersions = await db.queryAll<{ id: number; version_number: number }>(
+    'SELECT id, version_number FROM collection_versions WHERE collection_id = ? ORDER BY version_number DESC',
+    [id]
+  )
+  if (allVersions.length <= 1) {
+    res.status(409).json({ error: 'Cannot delete the only version of a collection' })
+    return
+  }
+
+  try {
+    // If deleting the active version, promote the next-highest remaining version
+    if (collection.active_version_id === versionId) {
+      const next = allVersions.find(v => v.id !== versionId)!
+      await db.execute(
+        `UPDATE collections SET active_version_id = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
+        [next.id, 'draft', id]
+      )
+    }
+    await db.execute('DELETE FROM collection_versions WHERE id = ?', [versionId])
+    res.status(204).send()
+  } catch (err) {
+    console.error('[collections] delete version:', err)
+    res.status(500).json({ error: 'Failed to delete version' })
   }
 })
 

@@ -216,6 +216,8 @@ export interface CollectionVersion {
   id: number
   versionNumber: number
   status: CollectionStatus
+  title: string | null
+  reason: string | null
   createdBy: number
   createdAt: string
   publishedAt: string | null

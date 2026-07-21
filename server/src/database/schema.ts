@@ -130,6 +130,8 @@ export function createSchema(db: AppDatabase): void {
       version_number INTEGER NOT NULL,
       status         TEXT    NOT NULL DEFAULT 'draft'
                              CHECK(status IN ('draft', 'published')),
+      title          TEXT,
+      reason         TEXT,
       created_by     INTEGER NOT NULL REFERENCES users(id),
       created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
       published_at   TEXT,

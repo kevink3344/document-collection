@@ -8,6 +8,7 @@ import CollectionsPage from './pages/CollectionsPage'
 import CollectionTypePage from './pages/CollectionTypePage'
 import CollectionBuilderPage from './pages/CollectionBuilderPage'
 import CollectionBranchingPage from './pages/CollectionBranchingPage'
+import CollectionNewVersionPage from './pages/CollectionNewVersionPage'
 import CollectionFillPage from './pages/CollectionFillPage'
 import RecordsPage from './pages/RecordsPage'
 import DashboardPage from './pages/DashboardPage'
@@ -86,6 +87,7 @@ export default function App() {
             <Route path="/collections/new/builder" element={<CollectionBuilderPage />} />
             <Route path="/collections/new/signup-builder" element={<SignupSheetBuilderPage />} />
             <Route path="/collections/:id/edit" element={<CollectionBuilderPage />} />
+            <Route path="/collections/:id/new-version" element={<CollectionNewVersionPage />} />
             <Route path="/collections/:id/signup-builder" element={<SignupSheetBuilderPage />} />
             <Route path="/collections/:id/branching" element={<CollectionBranchingPage />} />
             <Route path="/settings" element={<SettingsPage />} />

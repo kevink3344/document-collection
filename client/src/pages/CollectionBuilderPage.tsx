@@ -24,6 +24,7 @@ import {
 import {
   createCollection,
   createCollectionVersion,
+  deleteCollectionVersion,
   getCollection,
   getCollectionShares,
   getCollectionVersion,
@@ -298,6 +299,8 @@ export default function CollectionBuilderPage() {
   const [pendingRestoreVersionId, setPendingRestoreVersionId] = useState<number | null>(null)
   const [restoring, setRestoring] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
+  const [pendingDeleteVersionId, setPendingDeleteVersionId] = useState<number | null>(null)
+  const [deletingVersion, setDeletingVersion] = useState(false)
   const [pendingRemoveKey, setPendingRemoveKey] = useState<string | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
@@ -1020,6 +1023,27 @@ export default function CollectionBuilderPage() {
     return user?.role === 'super_admin' || user?.role === 'administrator'
   }
 
+  async function handleConfirmDeleteVersion() {
+    if (!id || !pendingDeleteVersionId) return
+    setDeletingVersion(true)
+    try {
+      await deleteCollectionVersion(parseInt(id, 10), pendingDeleteVersionId)
+      setPendingDeleteVersionId(null)
+      // If we deleted the active version, reload the collection to pick up the promoted one
+      if (activeVersionId === pendingDeleteVersionId) {
+        const reloaded = await getCollection(parseInt(id, 10))
+        applyCollectionToForm(reloaded)
+        setLastSavedSignature(buildSignatureFromCollection(reloaded))
+      }
+      setLoadTick(t => t + 1)
+      showToast('Draft version deleted', 'success')
+    } catch (err) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      setDeletingVersion(false)
+    }
+  }
+
   function handleRestoreVersionClick(versionId: number) {
     setRestoreError(null)
     setPendingRestoreVersionId(versionId)
@@ -1325,6 +1349,47 @@ export default function CollectionBuilderPage() {
         )
       })()}
 
+      {/* Delete Draft Version confirmation modal */}
+      {pendingDeleteVersionId && (() => {
+        const version = versions.find(v => v.id === pendingDeleteVersionId)
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white dark:bg-[#1E293B] rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155]">
+                <h2 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
+                  Delete Draft {version ? `v${version.versionNumber}` : ''}?
+                </h2>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-sm text-[#475569] dark:text-[#CBD5E1]">
+                  This will permanently delete draft v{version?.versionNumber}
+                  {version?.title ? ` — "${version.title}"` : ''}. This cannot be undone.
+                </p>
+              </div>
+              <div className="px-5 py-4 border-t border-[#E2E8F0] dark:border-[#334155] flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteVersionId(null)}
+                  disabled={deletingVersion}
+                  className="rounded border border-[#CBD5E1] dark:border-[#475569] px-4 py-2 text-sm font-medium text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteVersion}
+                  disabled={deletingVersion}
+                  className="inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  {deletingVersion ? 'Deleting…' : 'Delete Draft'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Restore Version confirmation modal */}
       {pendingRestoreVersionId && (() => {
         const version = versions.find(v => v.id === pendingRestoreVersionId)
@@ -1454,7 +1519,7 @@ export default function CollectionBuilderPage() {
             )}
             {isEdit && (
               <button
-                onClick={handleCreateNewVersion}
+                onClick={() => navigate(`/collections/${id}/new-version`)}
                 disabled={saving}
                 className="flex items-center gap-1.5 text-sm text-[#64748B] border border-[#E2E8F0] dark:border-[#334155] px-3 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] transition-colors disabled:opacity-40"
               >
@@ -2305,6 +2370,11 @@ export default function CollectionBuilderPage() {
                             {isActive && (
                               <span className="text-[10px] font-medium text-[#2563EB]">Active</span>
                             )}
+                            {v.title && (
+                              <span className="text-xs text-[#475569] dark:text-[#CBD5E1] truncate max-w-[120px]" title={v.title}>
+                                {v.title}
+                              </span>
+                            )}
                             <span className="text-xs text-[#94A3B8] truncate">
                               {new Date(v.createdAt).toLocaleString()}
                             </span>
@@ -2319,6 +2389,17 @@ export default function CollectionBuilderPage() {
                             >
                               <RotateCcw size={12} />
                               Restore
+                            </button>
+                          )}
+                          {canRestoreVersions() && v.status === 'draft' && (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteVersionId(v.id)}
+                              title="Delete this draft version"
+                              className="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 transition-colors shrink-0"
+                            >
+                              <Trash2 size={12} />
+                              Delete
                             </button>
                           )}
                         </div>
