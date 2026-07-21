@@ -1,5 +1,6 @@
 import { parseAttachmentValue } from '../utils/attachmentValue'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Calendar, ClipboardList, Clipboard, LayoutGrid, Lock, LockOpen, Mail, MessageSquare, Save, Table2, Tag, Trash2, User as UserIcon, Download, X } from 'lucide-react'
 import { approveResponseWorkflow, getCollection, getComments, addComment, deleteComment, getResponses, listCollections, rejectResponseWorkflow, upsertStaffFields } from '../api/collections'
 import {
@@ -761,49 +762,8 @@ function formatResponseValueForCsv(field: CollectionField | undefined, rawValue:
   }
 }
 
-function buildCollectionCsv(collection: Collection, responses: CollectionResponse[]): string {
-  const fields = [...collection.fields].sort((left, right) => {
-    if (left.page !== right.page) return left.page - right.page
-    return left.sortOrder - right.sortOrder
-  })
-  const includeRespondentColumns = !collection.anonymous
-
-  const labelCounts = new Map<string, number>()
-  const fieldColumns = fields.map((field) => {
-    const baseLabel = field.label.trim() || `Field ${field.id ?? ''}`.trim()
-    const nextCount = (labelCounts.get(baseLabel) ?? 0) + 1
-    labelCounts.set(baseLabel, nextCount)
-    return {
-      fieldId: field.id,
-      header: nextCount === 1 ? baseLabel : `${baseLabel} (${nextCount})`,
-      field,
-    }
-  })
-
-  const header = [
-    'Submission ID',
-    'Submitted At',
-    ...(includeRespondentColumns ? ['Respondent Name', 'Respondent Email'] : []),
-    ...fieldColumns.map((column) => column.header),
-  ]
-
-  const lines = responses.map((response) => {
-    const valueMap = new Map(response.values.map((entry) => [entry.fieldId, entry.value]))
-    return [
-      String(response.id),
-      response.submittedAt,
-      ...(includeRespondentColumns ? [response.respondentName ?? '', response.respondentEmail ?? ''] : []),
-      ...fieldColumns.map((column) => {
-        if (column.fieldId === undefined) return ''
-        return formatResponseValueForCsv(column.field, valueMap.get(column.fieldId) ?? '')
-      }),
-    ]
-      .map(toCsvCell)
-      .join(',')
-  })
-
-  return [header.map(toCsvCell).join(','), ...lines].join('\n')
-}
+const _formatResponseValueForCsv = formatResponseValueForCsv
+void _formatResponseValueForCsv
 
 function formatTicketFieldValueForCsv(field: TicketField | undefined, value: string | null): string {
   const raw = value ?? ''
@@ -885,22 +845,6 @@ function downloadTicketsCsv(
   const link = document.createElement('a')
   link.href = url
   link.download = `${safeFilename}-tickets.csv`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
-}
-
-function downloadCollectionCsv(collection: Collection, responses: CollectionResponse[]): void {
-  const safeFilename = (collection.title.trim() || `collection-${collection.id}`)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || `collection-${collection.id}`
-  const blob = new Blob([buildCollectionCsv(collection, responses)], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `${safeFilename}-records.csv`
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
@@ -1214,6 +1158,7 @@ function canUserActOnWorkflow(workflow: ApprovalWorkflowSummary | null | undefin
 }
 
 export default function RecordsPage() {
+  const navigate = useNavigate()
   const { user } = useAuth()
   const [collections, setCollections] = useState<Collection[]>([])
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null)
@@ -1881,8 +1826,8 @@ export default function RecordsPage() {
             </select>
             <button
               type="button"
-              onClick={() => selectedCollection && downloadCollectionCsv(selectedCollection, responses)}
-              disabled={!selectedCollection || responses.length === 0}
+              onClick={() => selectedCollection && navigate(`/records/${selectedCollection.id}/export-csv`)}
+              disabled={!selectedCollection}
               className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded bg-[#2563EB] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
             >
               <Download size={14} />

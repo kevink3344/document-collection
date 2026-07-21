@@ -478,6 +478,29 @@ export function createSchema(db: AppDatabase): void {
   `)
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS saved_export_presets (
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_by_user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      organization_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      collection_id          INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      name                   TEXT    NOT NULL,
+      all_submission_columns INTEGER NOT NULL DEFAULT 1,
+      submission_columns     TEXT    NOT NULL DEFAULT '[]',
+      ticket_template_id     INTEGER,
+      all_ticket_columns     INTEGER NOT NULL DEFAULT 1,
+      ticket_columns         TEXT    NOT NULL DEFAULT '[]',
+      created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(organization_id, collection_id, name)
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_saved_export_presets_collection
+      ON saved_export_presets(organization_id, collection_id);
+  `)
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS approval_workflow_instances (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
       collection_id         INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,

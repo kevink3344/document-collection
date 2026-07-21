@@ -450,3 +450,34 @@ export interface SignupSheetSummary {
   coverPhotoUrl: string | null
 }
 
+// ── Export CSV ─────────────────────────────────────────────────
+
+export interface ExportCsvColumn {
+  fieldId: number | null
+  key: string
+  label: string
+}
+
+export interface ExportCsvTicketTemplate {
+  templateId: number
+  title: string
+  columns: ExportCsvColumn[]
+}
+
+export interface ExportCsvSchema {
+  submissionColumns: ExportCsvColumn[]
+  ticketTemplates: ExportCsvTicketTemplate[]
+}
+
+export interface ExportCsvPreset {
+  id: number
+  name: string
+  allSubmissionColumns: boolean
+  submissionColumns: string[]
+  ticketTemplateId: number | null
+  allTicketColumns: boolean
+  ticketColumns: string[]
+  createdAt: string
+  updatedAt: string
+}
+

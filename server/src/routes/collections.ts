@@ -1047,6 +1047,7 @@ function normaliseIncomingFields(fields: FieldInput[]): string {
       })),
       sortOrder: f.sortOrder ?? i,
       staffOnly: !!f.staffOnly,
+      locationFilterEnabled: !!f.locationFilterEnabled,
     }))
   )
 }

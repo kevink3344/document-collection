@@ -34,12 +34,26 @@ function isStreamExpiredError(err: unknown): boolean {
  * Resets the cached connection so the next request gets a fresh one.
  */
 export function resetDbIfStreamError(err: unknown): void {
+  const message = (err as { message?: string })?.message ?? ''
   if (isStreamExpiredError(err)) {
     console.warn('[db] Turso stream expired â€“ resetting connection for next request')
     try { db?.close() } catch { /* ignore */ }
     db = null
     dbConnectedMode = null
     dbLastVerifiedAt = 0
+    return
+  }
+  // Malformed replica: wipe files so getDb() rebuilds from Turso on next request
+  if (dbConnectedMode === 'turso' && message.toLowerCase().includes('malformed')) {
+    console.warn('[db] Turso replica malformed -- wiping replica for rebuild on next request')
+    try { db?.close() } catch { /* ignore */ }
+    db = null
+    dbConnectedMode = null
+    dbLastVerifiedAt = 0
+    const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
+    for (const suffix of ['', '-wal', '-shm', '-info']) {
+      try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
+    }
   }
 }
 
@@ -751,7 +765,7 @@ export function getDb(): AppDatabase {
         return db
       } catch (err) {
         const msg = (err as Error).message ?? ''
-        const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists')
+        const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists') || msg.toLowerCase().includes('malformed')
         if (isCorrupted) {
           console.warn('[db] Turso replica corrupted, wiping and retrying:', msg)
           try { db?.close() } catch { /* ignore */ }
@@ -955,11 +969,55 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
   console.log(`[db] Seed file complete: ${batches.length} batches executed`)
 }
 
+/**
+ * Apply DDL statements that should be idempotent across all database modes
+ * (Turso, SQLite). SQL Server uses its own migration path via runSqlServerSeedFile.
+ *
+ * Add `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
+ * here for tables that were added after the initial Turso schema was deployed.
+ */
+function applyIncrementalSchema(database: AppDatabase): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS saved_export_presets (
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_by_user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      organization_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      collection_id          INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      name                   TEXT    NOT NULL,
+      all_submission_columns INTEGER NOT NULL DEFAULT 1,
+      submission_columns     TEXT    NOT NULL DEFAULT '[]',
+      ticket_template_id     INTEGER,
+      all_ticket_columns     INTEGER NOT NULL DEFAULT 1,
+      ticket_columns         TEXT    NOT NULL DEFAULT '[]',
+      created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(organization_id, collection_id, name)
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_saved_export_presets_collection
+      ON saved_export_presets(organization_id, collection_id)
+  `)
+}
+
 export function setupDatabase(): void {
-  // SQL Server and Turso: schema already exists remotely — skip local migrations.
+  // SQL Server and Turso: skip full local schema/migration setup, but still
+  // apply incremental DDL so newly-added tables are provisioned in Turso.
   const mode = getConfiguredDatabaseMode()
-  if (mode === 'sqlserver' || mode === 'turso') {
-    console.log(`[db] ${mode} mode — skipping local schema/migration setup`)
+  if (mode === 'sqlserver') {
+    console.log('[db] sqlserver mode — skipping local schema/migration setup')
+    return
+  }
+  if (mode === 'turso') {
+    console.log('[db] turso mode — applying incremental schema to Turso')
+    try {
+      const database = getDb()
+      applyIncrementalSchema(database)
+      try { database.sync() } catch { /* sync failure is non-fatal */ }
+      console.log('[db] Turso incremental schema applied')
+    } catch (err) {
+      console.warn('[db] Turso incremental schema failed (non-fatal):', (err as Error).message)
+    }
     return
   }
 
@@ -2216,6 +2274,29 @@ function runMigrations(db: AppDatabase): void {
     `)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_collection_shares_collection ON collection_shares(collection_id)`)
     console.log('[db] Migration: created collection_shares table')
+  }
+
+  // ── Saved Export Presets ────────────────────────────────────────────────────
+  if (!tableExists(db, 'saved_export_presets')) {
+    db.exec(`
+      CREATE TABLE saved_export_presets (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_by_user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        organization_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        collection_id          INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        name                   TEXT    NOT NULL,
+        all_submission_columns INTEGER NOT NULL DEFAULT 1,
+        submission_columns     TEXT    NOT NULL DEFAULT '[]',
+        ticket_template_id     INTEGER,
+        all_ticket_columns     INTEGER NOT NULL DEFAULT 1,
+        ticket_columns         TEXT    NOT NULL DEFAULT '[]',
+        created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(organization_id, collection_id, name)
+      )
+    `)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_saved_export_presets_collection ON saved_export_presets(organization_id, collection_id)`)
+    console.log('[db] Migration: created saved_export_presets table')
   }
 
 }

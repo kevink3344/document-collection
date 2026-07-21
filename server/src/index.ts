@@ -23,6 +23,7 @@ import invitationsRouter from './routes/invitations'
 import locationsRouter from './routes/locations'
 import galleryAssetsRouter from './routes/gallery-assets'
 import ticketTemplatesRouter from './routes/ticket-templates'
+import exportCsvRouter from './routes/export-csv'
 import approvalsRouter from './routes/approvals'
 import groupsRouter from './routes/groups'
 import signupSlotsRouter from './routes/signup-slots'
@@ -186,6 +187,7 @@ app.use('/api/invitations', invitationsRouter)
 app.use('/api/locations', locationsRouter)
 app.use('/api/gallery-assets', galleryAssetsRouter)
 app.use('/api/ticket-templates', ticketTemplatesRouter)
+app.use('/api/export-csv', exportCsvRouter)
 app.use('/api/approvals', approvalsRouter)
 app.use('/api/groups', groupsRouter)
 app.use('/api/signup-slots', signupSlotsRouter)

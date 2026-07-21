@@ -1,0 +1,39 @@
+# Skill: Plan Archiving Protocol
+
+## Objective
+Whenever the user asks for a "plan", "architecture design", "strategy", "migration outline", or "blueprint", your primary task is to document the plan in a markdown file for future review, rather than implementing the changes immediately.
+
+## Trigger Phrases
+Activate this protocol when the user requests:
+- "Create a plan..."
+- "How should we implement..."
+- "Draft a migration strategy..."
+- "Give me a blueprint/architecture..."
+- "Write a plan to..."
+
+## Execution Steps
+
+1. **Verify/Create Directory**: 
+   Check if the directory `/docs/plans/` exists in the workspace. If it does not, create it.
+
+2. **File Naming Convention**:
+   Generate a filename using the format: `YYYY-MM-DD-[short-descriptive-kebab-case].md`
+   *(Example: `2026-07-20-auth-system-migration.md`)*
+
+3. **Save the Plan**:
+   Use the `create_new_file` tool to save the complete, detailed plan to the `/docs/plans/` folder. Do not modify any other codebase files yet.
+
+4. **Markdown Structure Requirements**:
+   The generated `.md` file must contain:
+   - **Title & Date**: Clear heading and creation date.
+   - **Executive Summary**: A high-level description of what the plan achieves.
+   - **Scope**: What is included and excluded.
+   - **Step-by-Step Implementation Guide**: Detailed phases of coding/terminal actions.
+   - **Impacted Files**: List of existing files that will need editing, or new files to be created.
+   - **Rollback / Verification Plan**: How to test if the plan succeeded, or undo it if it fails.
+
+5. **Chat Interface Response**:
+   In the Cline chat panel, do not output the entire plan. Instead:
+   - Provide a concise 2-3 sentence summary of the plan.
+   - Inform the user of the exact path where the `.md` file has been saved.
+   - Explicitly stop and ask: *"The detailed plan has been archived to your docs. Would you like to review/edit it, or are you ready for me to begin implementing Step 1?"*

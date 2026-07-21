@@ -22,6 +22,7 @@ import MySubmissionDetailPage from './pages/MySubmissionDetailPage'
 import ApprovalsPage from './pages/ApprovalsPage'
 import SignupSheetBuilderPage from './pages/SignupSheetBuilderPage'
 import SignupSheetFillPage from './pages/SignupSheetFillPage'
+import ExportCsvPage from './pages/ExportCsvPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -74,6 +75,7 @@ export default function App() {
           <Route element={<RequireRole allowed={['super_admin', 'administrator', 'team_manager', 'reviewer']} fallback="/dashboard" />}>
             <Route path="/collections" element={<CollectionsPage />} />
             <Route path="/records" element={<RecordsPage />} />
+            <Route path="/records/:id/export-csv" element={<ExportCsvPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
           </Route>
