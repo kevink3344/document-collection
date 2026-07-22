@@ -1,8 +1,91 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import {
+  isAdminOrSuperAdmin,
+  loadRequestUserContext,
+  resolveManagedOrganizationId,
+} from '../middleware/organizationAccess'
 
 const router = Router()
+
+const MENU_LABEL_KEYS = ['dashboard', 'collections', 'records', 'reports', 'settings', 'tickets'] as const
+type MenuLabelKey = typeof MENU_LABEL_KEYS[number]
+
+const DEFAULT_MENU_LABELS: Record<MenuLabelKey, string> = {
+  dashboard: 'Dashboard',
+  collections: 'Collections',
+  records: 'Records',
+  reports: 'Reports',
+  settings: 'Settings',
+  tickets: 'Tickets',
+}
+
+const MENU_LABEL_MAX_LENGTH = 40
+
+function mergeWithDefaults(labels: Partial<Record<MenuLabelKey, string>> | null | undefined): Record<MenuLabelKey, string> {
+  const merged = { ...DEFAULT_MENU_LABELS }
+  if (!labels || typeof labels !== 'object') return merged
+  for (const key of MENU_LABEL_KEYS) {
+    const value = labels[key]
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed) merged[key] = trimmed
+    }
+  }
+  return merged
+}
+
+function parseStoredLabels(raw: string | null | undefined): Partial<Record<MenuLabelKey, string>> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const result: Partial<Record<MenuLabelKey, string>> = {}
+    for (const key of MENU_LABEL_KEYS) {
+      const value = (parsed as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim()) {
+        result[key] = value.trim()
+      }
+    }
+    return result
+  } catch {
+    return {}
+  }
+}
+
+function sanitizeIncomingLabels(input: unknown): { ok: true; labels: Partial<Record<MenuLabelKey, string>> } | { ok: false; error: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { ok: false, error: 'labels must be an object' }
+  }
+
+  const record = input as Record<string, unknown>
+  const unknownKeys = Object.keys(record).filter(
+    key => !(MENU_LABEL_KEYS as readonly string[]).includes(key),
+  )
+  if (unknownKeys.length > 0) {
+    return { ok: false, error: `Unknown label keys: ${unknownKeys.join(', ')}` }
+  }
+
+  const labels: Partial<Record<MenuLabelKey, string>> = {}
+  for (const key of MENU_LABEL_KEYS) {
+    if (!(key in record)) continue
+    const value = record[key]
+    if (value === null || value === undefined) continue
+    if (typeof value !== 'string') {
+      return { ok: false, error: `Label for "${key}" must be a string` }
+    }
+    const trimmed = value.trim()
+    if (!trimmed) continue
+    if (trimmed.length > MENU_LABEL_MAX_LENGTH) {
+      return { ok: false, error: `Label for "${key}" must be ${MENU_LABEL_MAX_LENGTH} characters or fewer` }
+    }
+    labels[key] = trimmed
+  }
+
+  return { ok: true, labels }
+}
+
 
 interface DbOrganization {
   id: number
@@ -278,4 +361,110 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
   }
 })
 
+// ── Menu Labels ──────────────────────────────────────────────────────────────
+
+router.get('/:id/menu-labels', authenticateToken, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: 'Invalid organization ID' })
+    return
+  }
+
+  const context = await loadRequestUserContext(req)
+  if (!context) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+
+  const db = await getDbAsync()
+
+  const org = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ?', [id])
+  if (!org) {
+    res.status(404).json({ error: 'Organization not found' })
+    return
+  }
+
+  // super_admin can read any org; everyone else must be a member of the org
+  if (context.role !== 'super_admin') {
+    const membership = await db.queryOne<{ user_id: number }>(
+      'SELECT user_id FROM user_organizations WHERE user_id = ? AND organization_id = ?',
+      [context.id, id],
+    )
+    if (!membership) {
+      res.status(403).json({ error: 'Access denied' })
+      return
+    }
+  }
+
+  const row = await db.queryOne<{ labels: string }>(
+    'SELECT labels FROM organization_menu_labels WHERE organization_id = ?',
+    [id],
+  )
+
+  res.json({
+    organizationId: id,
+    labels: mergeWithDefaults(parseStoredLabels(row?.labels)),
+  })
+})
+
+router.put('/:id/menu-labels', authenticateToken, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10)
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: 'Invalid organization ID' })
+    return
+  }
+
+  const context = await loadRequestUserContext(req)
+  if (!context) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+
+  if (!isAdminOrSuperAdmin(context)) {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  // Administrators may only edit their active org; super_admin may edit any
+  const managedId = resolveManagedOrganizationId(context, id)
+  if (managedId == null || managedId !== id) {
+    res.status(403).json({ error: 'Access denied for this organization' })
+    return
+  }
+
+  const body = req.body as { labels?: unknown }
+  const sanitized = sanitizeIncomingLabels(body.labels)
+  if (!sanitized.ok) {
+    res.status(400).json({ error: sanitized.error })
+    return
+  }
+
+  const db = await getDbAsync()
+
+  const org = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ?', [id])
+  if (!org) {
+    res.status(404).json({ error: 'Organization not found' })
+    return
+  }
+
+  const labelsJson = JSON.stringify(sanitized.labels)
+
+  await db.execute(
+    `INSERT INTO organization_menu_labels (organization_id, labels, updated_by_user_id, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(organization_id) DO UPDATE SET
+       labels = excluded.labels,
+       updated_by_user_id = excluded.updated_by_user_id,
+       updated_at = datetime('now')`,
+    [id, labelsJson, context.id],
+  )
+
+  res.json({
+    organizationId: id,
+    labels: mergeWithDefaults(sanitized.labels),
+  })
+})
+
 export default router
+
+

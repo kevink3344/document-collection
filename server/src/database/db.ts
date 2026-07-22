@@ -998,11 +998,20 @@ function applyIncrementalSchema(database: AppDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_saved_export_presets_collection
       ON saved_export_presets(organization_id, collection_id)
   `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS organization_menu_labels (
+      organization_id    INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+      labels             TEXT    NOT NULL DEFAULT '{}',
+      updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
   // Add version title/reason columns to collection_versions (idempotent)
   for (const col of ['title', 'reason']) {
     try { database.exec(`ALTER TABLE collection_versions ADD COLUMN ${col} TEXT`) } catch { /* already exists */ }
   }
 }
+
 
 export function setupDatabase(): void {
   // SQL Server and Turso: skip full local schema/migration setup, but still
@@ -2303,7 +2312,21 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: created saved_export_presets table')
   }
 
+  // ── Organization Menu Labels ────────────────────────────────────────────────
+  if (!tableExists(db, 'organization_menu_labels')) {
+    db.exec(`
+      CREATE TABLE organization_menu_labels (
+        organization_id    INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+        labels             TEXT    NOT NULL DEFAULT '{}',
+        updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+    console.log('[db] Migration: created organization_menu_labels table')
+  }
+
 }
+
 
 
 

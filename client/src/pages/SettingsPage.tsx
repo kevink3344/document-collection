@@ -36,6 +36,7 @@ import {
 import { listCollections, seedCollectionData, listArchivedCollections, unarchiveCollection, deleteCollection as deleteCollectionApi } from '../api/collections'
 import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../api/galleryAssets'
 import { getPublicSetting, updateSetting } from '../api/settings'
+import { getMenuLabels, updateMenuLabels } from '../api/menuLabels'
 import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type AppUser } from '../api/users'
 import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson } from '../api/locations'
 import { listGroups, createGroup, updateGroup, deleteGroup, listGroupMembers, addGroupMember, removeGroupMember } from '../api/groups'
@@ -44,6 +45,13 @@ import RichTextEditor from '../components/common/RichTextEditor'
 import { useAuth } from '../contexts/AuthContext'
 import type { Category, Collection, GalleryAsset, Group, GroupMember, Location, MembershipRole, Organization } from '../types'
 import { getCategoryColorClasses } from '../utils/categoryColors'
+import {
+  DEFAULT_MENU_LABELS,
+  MENU_LABEL_KEYS,
+  MENU_LABEL_MAX_LENGTH,
+  type MenuLabelKey,
+} from '../utils/menuLabels'
+
 
 const INPUT =
   'w-full border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] ' +
@@ -57,6 +65,7 @@ type PanelId =
   | 'notifications'
   | 'login-page'
   | 'navigation'
+  | 'menu-labels'
   | 'users'
   | 'groups'
   | 'locations'
@@ -73,7 +82,7 @@ type PanelLayout = Record<TabId, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'users', 'groups', 'locations', 'gallery', 'archived-collections'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections'],
   other: ['qr-code', 'logo-padding', 'database-mode', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -82,6 +91,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   notifications: 'Notifications',
   'login-page': 'Login Page',
   navigation: 'Navigation',
+  'menu-labels': 'Admin Menu Labels',
   users: 'User Accounts',
   groups: 'Groups',
   locations: 'Locations',
@@ -93,6 +103,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   api: 'API Documentation',
   seed: 'Seed Data',
 }
+
 
 const ALL_PANEL_IDS: PanelId[] = [
   ...DEFAULT_PANEL_LAYOUT.general,
@@ -342,7 +353,14 @@ export default function SettingsPage() {
   const [notificationsExpanded, setNotificationsExpanded] = useState(false)
   const [loginPageExpanded, setLoginPageExpanded] = useState(false)
   const [navigationExpanded, setNavigationExpanded] = useState(false)
+  const [menuLabelsExpanded, setMenuLabelsExpanded] = useState(false)
+  const [menuLabelsOrgId, setMenuLabelsOrgId] = useState<number | null>(null)
+  const [menuLabelsDraft, setMenuLabelsDraft] = useState<Record<MenuLabelKey, string>>({ ...DEFAULT_MENU_LABELS })
+  const [menuLabelsSaving, setMenuLabelsSaving] = useState(false)
+  const [menuLabelsError, setMenuLabelsError] = useState<string | null>(null)
+  const [menuLabelsSaved, setMenuLabelsSaved] = useState(false)
   const [organizationsExpanded, setOrganizationsExpanded] = useState(false)
+
   const [locationsExpanded, setLocationsExpanded] = useState(false)
   const [galleryExpanded, setGalleryExpanded] = useState(false)
   const [galleryStorageLabel, setGalleryStorageLabel] = useState<string | null>(null)
@@ -613,6 +631,35 @@ export default function SettingsPage() {
       .catch(err => setError((err as Error).message))
   }, [isGlobalAdmin, categoriesOrgId])
 
+  // Resolve which org's menu labels to load
+  const menuLabelsTargetOrgId = isGlobalAdmin
+    ? menuLabelsOrgId
+    : (user?.activeOrganizationId ?? user?.organizationId ?? null)
+
+  useEffect(() => {
+    if (user?.role !== 'administrator' && user?.role !== 'super_admin') return
+    if (menuLabelsTargetOrgId == null) {
+      setMenuLabelsDraft({ ...DEFAULT_MENU_LABELS })
+      setMenuLabelsError(null)
+      setMenuLabelsSaved(false)
+      return
+    }
+    let cancelled = false
+    setMenuLabelsError(null)
+    setMenuLabelsSaved(false)
+    getMenuLabels(menuLabelsTargetOrgId)
+      .then(labels => {
+        if (!cancelled) setMenuLabelsDraft(labels)
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setMenuLabelsDraft({ ...DEFAULT_MENU_LABELS })
+          setMenuLabelsError((err as Error).message)
+        }
+      })
+    return () => { cancelled = true }
+  }, [user?.role, menuLabelsTargetOrgId])
+
   useEffect(() => {
     if (user?.role === 'administrator' || user?.role === 'super_admin') {
       loadOrganizations()
@@ -621,6 +668,7 @@ export default function SettingsPage() {
       void loadGallery()
     }
   }, [user?.role])
+
 
   useEffect(() => {
     getPreference(SETTINGS_LAYOUT_PREF)
@@ -2275,7 +2323,152 @@ export default function SettingsPage() {
         )}
       </section>
       )
+      case 'menu-labels': return (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setMenuLabelsExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EEF2FF] text-[#4F46E5] dark:bg-indigo-900/30 dark:text-indigo-300">
+              <LayoutList size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Admin Menu Labels</h2>
+              <p className="text-sm text-[#64748B] mt-1">Customize the sidebar menu labels shown to everyone in this organization.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {menuLabelsExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {menuLabelsExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-5">
+            {isGlobalAdmin && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-[#475569] dark:text-[#CBD5E1]">
+                  Managing labels for
+                </label>
+                <select
+                  value={menuLabelsOrgId ?? ''}
+                  onChange={e => {
+                    const val = e.target.value
+                    setMenuLabelsOrgId(val === '' ? null : parseInt(val, 10))
+                  }}
+                  className="w-full sm:w-72 rounded-md border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-sm text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                >
+                  <option value="">Select an organization</option>
+                  {organizations.map(org => (
+                    <option key={org.id} value={org.id}>{org.name}</option>
+                  ))}
+                </select>
+                {menuLabelsOrgId == null && (
+                  <p className="text-xs text-[#94A3B8]">Select an organization to edit its menu labels.</p>
+                )}
+              </div>
+            )}
+
+            {menuLabelsTargetOrgId == null ? (
+              isGlobalAdmin ? null : (
+                <p className="text-sm text-[#64748B]">No active organization is available for label editing.</p>
+              )
+            ) : (
+              <>
+                <div className="space-y-3">
+                  {MENU_LABEL_KEYS.map(key => (
+                    <div key={key} className="grid grid-cols-1 sm:grid-cols-[140px_minmax(0,1fr)_auto] gap-2 items-center">
+                      <label className="text-sm font-medium text-[#475569] dark:text-[#CBD5E1]">
+                        {DEFAULT_MENU_LABELS[key]}
+                      </label>
+                      <input
+                        type="text"
+                        value={menuLabelsDraft[key] ?? ''}
+                        maxLength={MENU_LABEL_MAX_LENGTH}
+                        onChange={e => {
+                          const value = e.target.value
+                          setMenuLabelsDraft(prev => ({ ...prev, [key]: value }))
+                          setMenuLabelsSaved(false)
+                          setMenuLabelsError(null)
+                        }}
+                        placeholder={DEFAULT_MENU_LABELS[key]}
+                        className={INPUT}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuLabelsDraft(prev => ({ ...prev, [key]: DEFAULT_MENU_LABELS[key] }))
+                          setMenuLabelsSaved(false)
+                          setMenuLabelsError(null)
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#CBD5E1] text-sm font-medium px-3 py-2 rounded hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors"
+                        title={`Reset ${DEFAULT_MENU_LABELS[key]} to default`}
+                      >
+                        <RotateCcw size={14} />
+                        Reset
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {menuLabelsError && (
+                  <p className="text-sm text-red-500">{menuLabelsError}</p>
+                )}
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={menuLabelsSaving}
+                    onClick={async () => {
+                      if (menuLabelsTargetOrgId == null) return
+                      setMenuLabelsSaving(true)
+                      setMenuLabelsError(null)
+                      setMenuLabelsSaved(false)
+                      try {
+                        // Blank / whitespace-only fields mean "use default" (omit override)
+                        const payload: Partial<Record<MenuLabelKey, string>> = {}
+                        for (const key of MENU_LABEL_KEYS) {
+                          const trimmed = (menuLabelsDraft[key] ?? '').trim()
+                          if (trimmed && trimmed !== DEFAULT_MENU_LABELS[key]) {
+                            payload[key] = trimmed
+                          } else if (trimmed === DEFAULT_MENU_LABELS[key]) {
+                            // Explicitly sending the default clears any prior override on save
+                            // by omitting the key — same outcome as blank
+                          } else {
+                            // blank: omit
+                          }
+                        }
+                        const saved = await updateMenuLabels(menuLabelsTargetOrgId, payload)
+                        setMenuLabelsDraft(saved)
+                        setMenuLabelsSaved(true)
+                      } catch (err) {
+                        setMenuLabelsError((err as Error).message)
+                      } finally {
+                        setMenuLabelsSaving(false)
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    <Save size={14} />
+                    {menuLabelsSaving ? 'Saving…' : 'Save Labels'}
+                  </button>
+                  {menuLabelsSaved && (
+                    <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </section>
+      )
       case 'organizations': return user?.role !== 'super_admin' ? null : (
+
       <>
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
         <button

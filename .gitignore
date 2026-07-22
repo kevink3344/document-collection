@@ -8,4 +8,5 @@ dist/
 *.db-journal
 *.db-wal
 *.db-shm
+*.db-info
 .DS_Store

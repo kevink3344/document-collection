@@ -15,8 +15,10 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { getPendingApprovals } from '../../api/approvals'
 import { getPublicSetting } from '../../api/settings'
+import { getMenuLabels, MENU_LABELS_UPDATED_EVENT } from '../../api/menuLabels'
 import type { LucideIcon } from 'lucide-react'
 import type { UserRole } from '../../types'
+import { DEFAULT_MENU_LABELS, type MenuLabelKey } from '../../utils/menuLabels'
 
 interface SideNavProps {
   mobileDrawerOpen?: boolean
@@ -28,28 +30,29 @@ interface NavItem {
   label: string
   to: string
   roles?: UserRole[]
+  labelKey?: MenuLabelKey
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard'        },
-  { icon: Database,        label: 'Collections',     to: '/collections'      },
-  { icon: FileText,        label: 'Records',         to: '/records'          },
-  { icon: BarChart3,       label: 'Reports',         to: '/reports'          },
+  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard',       labelKey: 'dashboard'   },
+  { icon: Database,        label: 'Collections',     to: '/collections',     labelKey: 'collections' },
+  { icon: FileText,        label: 'Records',         to: '/records',         labelKey: 'records'     },
+  { icon: BarChart3,       label: 'Reports',         to: '/reports',         labelKey: 'reports'     },
   { icon: Sparkles,        label: 'AI Summary',      to: '/ai-summary',      roles: ['administrator'] },
-  { icon: Settings,        label: 'Settings',        to: '/settings'         },
-  { icon: ClipboardList,   label: 'Tickets',         to: '/ticket-designer'  },
+  { icon: Settings,        label: 'Settings',        to: '/settings',        labelKey: 'settings'    },
+  { icon: ClipboardList,   label: 'Tickets',         to: '/ticket-designer', labelKey: 'tickets'     },
 ]
 
 const USER_NAV_ITEMS: NavItem[] = [
-  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard'        },
+  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard',       labelKey: 'dashboard'   },
   { icon: ClipboardCheck,  label: 'My Submissions',  to: '/my-submissions'   },
 ]
 
 const REVIEWER_NAV_ITEMS: NavItem[] = [
-  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard'        },
-  { icon: Database,        label: 'Collections',     to: '/collections'      },
-  { icon: FileText,        label: 'Records',         to: '/records'          },
-  { icon: BarChart3,       label: 'Reports',         to: '/reports'          },
+  { icon: LayoutDashboard, label: 'Dashboard',       to: '/dashboard',       labelKey: 'dashboard'   },
+  { icon: Database,        label: 'Collections',     to: '/collections',     labelKey: 'collections' },
+  { icon: FileText,        label: 'Records',         to: '/records',         labelKey: 'records'     },
+  { icon: BarChart3,       label: 'Reports',         to: '/reports',         labelKey: 'reports'     },
 ]
 
 export default function SideNav({
@@ -59,6 +62,9 @@ export default function SideNav({
   const { user } = useAuth()
   const [hasPendingApprovals, setHasPendingApprovals] = useState(false)
   const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true)
+  const [menuLabels, setMenuLabels] = useState<Record<MenuLabelKey, string>>(DEFAULT_MENU_LABELS)
+
+  const activeOrgId = user?.activeOrganizationId ?? user?.organizationId ?? null
 
   useEffect(() => {
     getPublicSetting('ai_summary_enabled')
@@ -72,6 +78,39 @@ export default function SideNav({
       .then(items => setHasPendingApprovals(items.length > 0))
       .catch(() => {})
   }, [user])
+
+  useEffect(() => {
+    if (!activeOrgId) {
+      setMenuLabels(DEFAULT_MENU_LABELS)
+      return
+    }
+    let cancelled = false
+    getMenuLabels(activeOrgId)
+      .then(labels => {
+        if (!cancelled) setMenuLabels(labels)
+      })
+      .catch(() => {
+        if (!cancelled) setMenuLabels(DEFAULT_MENU_LABELS)
+      })
+    return () => { cancelled = true }
+  }, [activeOrgId])
+
+  useEffect(() => {
+    if (!activeOrgId) return
+    function onMenuLabelsUpdated(event: Event) {
+      const detail = (event as CustomEvent<{ organizationId: number; labels: Record<MenuLabelKey, string> }>).detail
+      if (detail?.organizationId === activeOrgId) {
+        setMenuLabels(detail.labels)
+      }
+    }
+    window.addEventListener(MENU_LABELS_UPDATED_EVENT, onMenuLabelsUpdated)
+    return () => window.removeEventListener(MENU_LABELS_UPDATED_EVENT, onMenuLabelsUpdated)
+  }, [activeOrgId])
+
+  function resolveLabel(item: NavItem): string {
+    if (item.labelKey) return menuLabels[item.labelKey] || item.label
+    return item.label
+  }
 
   const baseNavItems =
     user?.role === 'user'
@@ -92,11 +131,12 @@ export default function SideNav({
       <nav className="hidden md:flex flex-col w-14 lg:w-48 shrink-0 border-r border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A] py-2">
         {visibleNavItems.map(item => {
           const Icon = item.icon
+          const label = resolveLabel(item)
           return (
             <NavLink
               key={item.to}
               to={item.to}
-              title={item.label}
+              title={label}
               className={({ isActive }) =>
                 [
                   'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left border-l-[4px]',
@@ -107,7 +147,7 @@ export default function SideNav({
               }
             >
               <Icon size={18} className="shrink-0" />
-              <span className="hidden lg:block">{item.label}</span>
+              <span className="hidden lg:block">{label}</span>
             </NavLink>
           )
         })}
@@ -137,12 +177,13 @@ export default function SideNav({
             <nav className="pt-2">
               {visibleNavItems.map(item => {
                 const Icon = item.icon
+                const label = resolveLabel(item)
                 return (
                   <NavLink
                     key={item.to}
                     to={item.to}
                     onClick={onCloseMobileDrawer}
-                    title={item.label}
+                    title={label}
                     className={({ isActive }) =>
                       [
                         'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left border-l-[4px]',
@@ -153,7 +194,7 @@ export default function SideNav({
                     }
                   >
                     <Icon size={18} className="shrink-0" />
-                    <span>{item.label}</span>
+                    <span>{label}</span>
                   </NavLink>
                 )
               })}
@@ -166,11 +207,12 @@ export default function SideNav({
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A]">
         {visibleNavItems.map(item => {
           const Icon = item.icon
+          const label = resolveLabel(item)
           return (
             <NavLink
               key={item.to}
               to={item.to}
-              aria-label={item.label}
+              aria-label={label}
               className={({ isActive }) =>
                 [
                   'flex-1 flex flex-col items-center justify-center py-2 gap-0.5 text-[9px] font-medium tracking-wide uppercase transition-colors',
@@ -181,7 +223,7 @@ export default function SideNav({
               }
             >
               <Icon size={17} />
-              <span>{item.label}</span>
+              <span>{label}</span>
             </NavLink>
           )
         })}

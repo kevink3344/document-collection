@@ -503,6 +503,15 @@ export function createSchema(db: AppDatabase): void {
   `)
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS organization_menu_labels (
+      organization_id    INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+      labels             TEXT    NOT NULL DEFAULT '{}',
+      updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS approval_workflow_instances (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
       collection_id         INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
