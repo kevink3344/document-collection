@@ -23,7 +23,6 @@ import {
 } from 'lucide-react'
 import {
   createCollection,
-  createCollectionVersion,
   deleteCollectionVersion,
   getCollection,
   getCollectionShares,
@@ -993,30 +992,6 @@ export default function CollectionBuilderPage() {
 
     setStatus(nextStatus)
     await doSave({ silent: false, statusOverride: nextStatus })
-  }
-
-  async function handleCreateNewVersion() {
-    if (!isEdit || !id || !title.trim()) {
-      setSaveError('Title is required.')
-      return
-    }
-
-    setSaving(true)
-    setSaveError(null)
-    try {
-      const created = await createCollectionVersion(parseInt(id, 10), buildPayload('draft'))
-      setStatus(created.status)
-      setCollectionSlug(created.slug)
-      setActiveVersionId(created.activeVersionId ?? null)
-      setCurrentVersionNumber(created.currentVersionNumber ?? null)
-      setLastSavedSignature(buildSignatureFromCollection(created))
-      setLoadTick(t => t + 1)
-      showToast('New draft version created', 'success')
-    } catch (err) {
-      setSaveError((err as Error).message)
-    } finally {
-      setSaving(false)
-    }
   }
 
   function canRestoreVersions(): boolean {
