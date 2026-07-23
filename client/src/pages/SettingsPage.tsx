@@ -74,6 +74,7 @@ type PanelId =
   | 'qr-code'
   | 'logo-padding'
   | 'database-mode'
+  | 'document-storage'
   | 'api'
   | 'seed'
 
@@ -83,7 +84,7 @@ type PanelLayout = Record<TabId, PanelId[]>
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
   general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections'],
-  other: ['qr-code', 'logo-padding', 'database-mode', 'api', 'seed'],
+  other: ['qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
   organizations: 'Organizations',
@@ -100,6 +101,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   'qr-code': 'QR Code',
   'logo-padding': 'Image Logo URL Padding',
   'database-mode': 'Database Mode',
+  'document-storage': 'Document Storage',
   api: 'API Documentation',
   seed: 'Seed Data',
 }
@@ -516,6 +518,17 @@ export default function SettingsPage() {
   const [databaseModeSaving, setDatabaseModeSaving] = useState(false)
   const [databaseModeError, setDatabaseModeError] = useState<string | null>(null)
   const [databaseModeSaved, setDatabaseModeSaved] = useState(false)
+  const [documentStorageExpanded, setDocumentStorageExpanded] = useState(false)
+  const [documentStorageMode, setDocumentStorageMode] = useState<'google_drive' | 'turso_db' | 'sql_server'>('google_drive')
+  const [documentStorageStatus, setDocumentStorageStatus] = useState<Record<string, { available: boolean }>>({
+    google_drive: { available: false },
+    turso_db: { available: false },
+    sql_server: { available: false },
+  })
+  const [documentStorageFileCounts, setDocumentStorageFileCounts] = useState<{ galleryAssets: number; responseAttachments: number; total: number } | null>(null)
+  const [documentStorageSaving, setDocumentStorageSaving] = useState(false)
+  const [documentStorageError, setDocumentStorageError] = useState<string | null>(null)
+  const [documentStorageSaved, setDocumentStorageSaved] = useState(false)
   const [qrCodeSaving, setQrCodeSaving] = useState(false)
   const [qrCodeError, setQrCodeError] = useState<string | null>(null)
   const [qrCodeSaved, setQrCodeSaved] = useState(false)
@@ -1207,6 +1220,21 @@ export default function SettingsPage() {
       setDatabaseModeError((err as Error).message)
     } finally {
       setDatabaseModeSaving(false)
+    }
+  }
+
+  async function handleDocumentStorageChange(nextMode: 'google_drive' | 'turso_db' | 'sql_server') {
+    setDocumentStorageMode(nextMode)
+    setDocumentStorageSaving(true)
+    setDocumentStorageError(null)
+    setDocumentStorageSaved(false)
+    try {
+      await updateSetting('document_storage_mode', nextMode)
+      setDocumentStorageSaved(true)
+    } catch (err) {
+      setDocumentStorageError((err as Error).message)
+    } finally {
+      setDocumentStorageSaving(false)
     }
   }
 
@@ -4242,6 +4270,147 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
+      )
+      case 'document-storage': return (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => {
+            const next = !documentStorageExpanded
+            setDocumentStorageExpanded(next)
+            if (next) {
+              fetch('/api/settings/document-storage/status', {
+                credentials: 'include',
+              })
+                .then(r => {
+                  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+                  return r.json() as Promise<{
+                    currentMode: string
+                    backends: Record<string, { available: boolean }>
+                    fileCounts: { galleryAssets: number; responseAttachments: number; total: number }
+                  }>
+                })
+                .then(data => {
+                  setDocumentStorageMode(data.currentMode as 'google_drive' | 'turso_db' | 'sql_server')
+                  setDocumentStorageStatus(data.backends ?? {
+                    google_drive: { available: false },
+                    turso_db: { available: false },
+                    sql_server: { available: false },
+                  })
+                  setDocumentStorageFileCounts(data.fileCounts ?? null)
+                  setDocumentStorageError(null)
+                })
+                .catch((err: Error) => {
+                  setDocumentStorageError(`Failed to load document storage status: ${err.message}`)
+                })
+            }
+          }}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Database size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Document Storage</h2>
+              <p className="text-sm text-[#64748B] mt-1">Choose where uploaded documents, images, and attachments are stored. Changing this setting only affects new uploads — existing files remain in their current location.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {documentStorageExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {documentStorageExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+            {/* Current mode summary */}
+            {documentStorageFileCounts && (
+              <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4 text-sm text-[#475569] dark:text-[#CBD5E1]">
+                <p>
+                  Current storage: <strong>{documentStorageMode === 'google_drive' ? '📁 Google Drive' : documentStorageMode === 'sql_server' ? '🗄️ SQL Server' : '⚡ Turso DB'}</strong>
+                </p>
+                <p className="text-xs text-[#94A3B8] mt-1">
+                  {documentStorageFileCounts.total} total files ({documentStorageFileCounts.galleryAssets} gallery images, {documentStorageFileCounts.responseAttachments} attachments)
+                </p>
+              </div>
+            )}
+
+            {/* Radio card options */}
+            <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] p-4 space-y-3">
+              <label className={`flex items-center justify-between gap-4 rounded-lg border p-4 transition-colors cursor-pointer ${documentStorageMode === 'google_drive' ? 'border-[#2563EB] bg-[#EFF6FF] dark:bg-blue-950/20' : 'border-[#E2E8F0] dark:border-[#334155] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]'}`}>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Google Drive</p>
+                    <span className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${documentStorageStatus['google_drive']?.available ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300'}`}>
+                      {documentStorageStatus['google_drive']?.available ? 'Available' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#64748B] mt-1">Files stored in your team Google Drive folder using OAuth2.</p>
+                </div>
+                <input
+                  type="radio"
+                  name="document-storage"
+                  checked={documentStorageMode === 'google_drive'}
+                  onChange={() => { void handleDocumentStorageChange('google_drive') }}
+                  disabled={documentStorageSaving}
+                  className="h-4 w-4 accent-[#2563EB]"
+                />
+              </label>
+
+              <label className={`flex items-center justify-between gap-4 rounded-lg border p-4 transition-colors cursor-pointer ${documentStorageMode === 'turso_db' ? 'border-[#2563EB] bg-[#EFF6FF] dark:bg-blue-950/20' : 'border-[#E2E8F0] dark:border-[#334155] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]'}`}>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Turso DB</p>
+                    <span className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${documentStorageStatus['turso_db']?.available ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300'}`}>
+                      {documentStorageStatus['turso_db']?.available ? 'Available' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#64748B] mt-1">Files stored as base64 in the Turso database (fast, edge-distributed).</p>
+                </div>
+                <input
+                  type="radio"
+                  name="document-storage"
+                  checked={documentStorageMode === 'turso_db'}
+                  onChange={() => { void handleDocumentStorageChange('turso_db') }}
+                  disabled={documentStorageSaving}
+                  className="h-4 w-4 accent-[#2563EB]"
+                />
+              </label>
+
+              <label className={`flex items-center justify-between gap-4 rounded-lg border p-4 transition-colors cursor-pointer ${documentStorageMode === 'sql_server' ? 'border-[#2563EB] bg-[#EFF6FF] dark:bg-blue-950/20' : 'border-[#E2E8F0] dark:border-[#334155] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]'}`}>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">SQL Server</p>
+                    <span className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${documentStorageStatus['sql_server']?.available ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300'}`}>
+                      {documentStorageStatus['sql_server']?.available ? 'Available' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#64748B] mt-1">Files stored as base64 in Azure SQL Server (enterprise database).</p>
+                </div>
+                <input
+                  type="radio"
+                  name="document-storage"
+                  checked={documentStorageMode === 'sql_server'}
+                  onChange={() => { void handleDocumentStorageChange('sql_server') }}
+                  disabled={documentStorageSaving}
+                  className="h-4 w-4 accent-[#2563EB]"
+                />
+              </label>
+            </div>
+
+            {documentStorageError && <p className="text-sm text-red-500">{documentStorageError}</p>}
+
+            <div className="flex items-center gap-3">
+              {documentStorageSaving && <span className="text-sm text-[#64748B]">Saving…</span>}
+              {documentStorageSaved && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
+            </div>
+          </div>
+        )}
+      </section>
       )
       default: return null
     }

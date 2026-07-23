@@ -87,7 +87,7 @@ function readPersistedDatabaseMode(): 'turso' | 'sqlserver' | 'sqlite' | null {
   }
 }
 
-function isPlaceholderValue(value: string | undefined): boolean {
+export function isPlaceholderValue(value: string | undefined): boolean {
   if (!value) return true
   const normalized = value.trim().toLowerCase()
   return normalized === ''

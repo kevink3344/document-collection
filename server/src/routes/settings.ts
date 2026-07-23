@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync, setConfiguredDatabaseMode } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import { getDocumentStorageMode, isStorageBackendAvailable, getFileCounts, type DocumentStorageMode } from '../services/documentStorage'
 
 const router = Router()
 
@@ -21,6 +22,7 @@ const ALLOWED_KEYS = new Set([
   'database_mode',
   'login_mode',
   'maintenance_message',
+  'document_storage_mode',
 ])
 
 interface DbSetting {
@@ -160,6 +162,14 @@ router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
     setConfiguredDatabaseMode(normalized as 'turso' | 'sqlserver' | 'sqlite')
   }
 
+  if (key === 'document_storage_mode') {
+    const normalized = value.toLowerCase()
+    if (normalized !== 'turso_db' && normalized !== 'sql_server' && normalized !== 'google_drive') {
+      res.status(400).json({ error: 'document_storage_mode must be one of: turso_db, sql_server, google_drive' })
+      return
+    }
+  }
+
   const db = await getDbAsync()
   await db.execute(
     'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
@@ -167,6 +177,42 @@ router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
   )
 
   res.json({ key, value })
+})
+
+/**
+ * GET /api/settings/document-storage/status
+ *
+ * Returns the current document storage mode, availability of each backend,
+ * and per-organization file counts.
+ *
+ * Query parameters:
+ *   organizationId (optional) — scope file counts to a specific organization
+ */
+router.get('/document-storage/status', authenticateToken, async (req: Request, res: Response) => {
+  if (req.user?.role !== 'administrator' && req.user?.role !== 'super_admin') {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+
+  const organizationId = req.query.organizationId
+    ? Number.parseInt(String(req.query.organizationId), 10)
+    : undefined
+
+  const currentMode = await getDocumentStorageMode()
+
+  const backends: Record<DocumentStorageMode, { available: boolean }> = {
+    google_drive: { available: isStorageBackendAvailable('google_drive') },
+    turso_db: { available: isStorageBackendAvailable('turso_db') },
+    sql_server: { available: isStorageBackendAvailable('sql_server') },
+  }
+
+  const fileCounts = await getFileCounts(organizationId)
+
+  res.json({
+    currentMode,
+    backends,
+    fileCounts,
+  })
 })
 
 export default router
