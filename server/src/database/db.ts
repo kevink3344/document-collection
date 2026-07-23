@@ -886,6 +886,12 @@ function applyIncrementalSchema(database: AppDatabase): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_settings_tabs_sort ON settings_tabs(sort_order)
   `)
+  // Turso embedded replicas proxy writes to the remote primary but do not
+  // reflect them in the local replica file until an explicit sync(); without
+  // this, a fresh environment (new container, other deployment slot, etc.)
+  // that just created settings_tabs above can fail the very next read with
+  // "no such table: settings_tabs" because the local file hasn't caught up.
+  try { database.sync() } catch { /* non-fatal; read below may retry via next incremental-schema run */ }
   const settingsTabsCount = (database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined)?.n ?? 0
   if (settingsTabsCount === 0) {
     database.exec(`
