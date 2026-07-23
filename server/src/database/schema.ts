@@ -503,6 +503,23 @@ export function createSchema(db: AppDatabase): void {
   `)
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS settings_tabs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      slug        TEXT    NOT NULL UNIQUE,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      visible_to  TEXT    NOT NULL DEFAULT 'all'
+                          CHECK(visible_to IN ('all', 'super_admin_only')),
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_settings_tabs_sort ON settings_tabs(sort_order);
+  `)
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS organization_menu_labels (
       organization_id    INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
       labels             TEXT    NOT NULL DEFAULT '{}',

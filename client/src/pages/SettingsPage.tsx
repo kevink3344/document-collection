@@ -35,7 +35,8 @@ import {
 } from '../api/categories'
 import { listCollections, seedCollectionData, listArchivedCollections, unarchiveCollection, deleteCollection as deleteCollectionApi } from '../api/collections'
 import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../api/galleryAssets'
-import { getPublicSetting, updateSetting } from '../api/settings'
+import { getPublicSetting, updateSetting, listSettingsTabs, createSettingsTab, updateSettingsTab, deleteSettingsTab, reorderSettingsTabs } from '../api/settings'
+import type { SettingsTab } from '../api/settings'
 import { getMenuLabels, updateMenuLabels } from '../api/menuLabels'
 import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type AppUser } from '../api/users'
 import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson } from '../api/locations'
@@ -77,9 +78,9 @@ type PanelId =
   | 'document-storage'
   | 'api'
   | 'seed'
+  | 'manage-tabs'
 
-type TabId = 'general' | 'other'
-type PanelLayout = Record<TabId, PanelId[]>
+type PanelLayout = Record<string, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
@@ -104,28 +105,41 @@ const PANEL_LABELS: Record<PanelId, string> = {
   'document-storage': 'Document Storage',
   api: 'API Documentation',
   seed: 'Seed Data',
+  'manage-tabs': 'Manage Tabs',
 }
 
 
 const ALL_PANEL_IDS: PanelId[] = [
-  ...DEFAULT_PANEL_LAYOUT.general,
-  ...DEFAULT_PANEL_LAYOUT.other,
+  'organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections',
+  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs',
 ]
 
-function mergeStoredLayout(stored: unknown): PanelLayout {
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return DEFAULT_PANEL_LAYOUT
-  const s = stored as Record<string, unknown>
-  const storedGeneral = Array.isArray(s.general) ? (s.general as string[]) : []
-  const storedOther = Array.isArray(s.other) ? (s.other as string[]) : []
-  const storedAll = [...storedGeneral, ...storedOther]
-  const missing = ALL_PANEL_IDS.filter(id => !storedAll.includes(id))
-  return {
-    general: [
-      ...storedGeneral.filter(id => ALL_PANEL_IDS.includes(id as PanelId)),
-      ...missing,
-    ] as PanelId[],
-    other: storedOther.filter(id => ALL_PANEL_IDS.includes(id as PanelId)) as PanelId[],
+function mergeStoredLayout(stored: unknown, tabs: SettingsTab[]): PanelLayout {
+  const defaultLayout: PanelLayout = {}
+  for (const tab of tabs) {
+    defaultLayout[tab.slug] = []
   }
+  // If no tabs yet, fall back to hardcoded defaults for migration
+  if (tabs.length === 0) return { ...DEFAULT_PANEL_LAYOUT }
+
+  const result: PanelLayout = { ...defaultLayout }
+  if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+    const s = stored as Record<string, unknown>
+    for (const [key, val] of Object.entries(s)) {
+      if (Array.isArray(val) && defaultLayout[key] !== undefined) {
+        result[key] = val.filter(id => ALL_PANEL_IDS.includes(id as PanelId)) as PanelId[]
+      }
+    }
+  }
+  // Ensure all panels are present somewhere (covers both missing/invalid stored data
+  // and any panels not yet assigned to a tab, e.g. newly added panel ids)
+  const assigned = new Set(Object.values(result).flat())
+  for (const id of ALL_PANEL_IDS) {
+    if (!assigned.has(id)) {
+      result[tabs[0].slug].push(id)
+    }
+  }
+  return result
 }
 
 function SettingsSortablePanel({ id, children }: { id: PanelId; children: React.ReactNode }) {
@@ -177,7 +191,7 @@ function DroppableTabButton({
   isDragging,
   onClick,
 }: {
-  tab: TabId
+  tab: string
   label: string
   isActive: boolean
   isDragging: boolean
@@ -552,8 +566,21 @@ export default function SettingsPage() {
   const [logoPaddingSaving, setLogoPaddingSaving] = useState(false)
   const [logoPaddingError, setLogoPaddingError] = useState<string | null>(null)
   const [logoPaddingSaved, setLogoPaddingSaved] = useState(false)
+  // Settings tabs
+  const [availableTabs, setAvailableTabs] = useState<SettingsTab[]>([])
+  const [tabsLoading, setTabsLoading] = useState(false)
+  // Tab management state
+  const [manageTabsExpanded, setManageTabsExpanded] = useState(false)
+  const [newTabName, setNewTabName] = useState('')
+  const [newTabSlug, setNewTabSlug] = useState('')
+  const [newTabVisibility, setNewTabVisibility] = useState<'all' | 'super_admin_only'>('all')
+  const [editingTabId, setEditingTabId] = useState<number | null>(null)
+  const [editingTabName, setEditingTabName] = useState('')
+  const [tabSaving, setTabSaving] = useState(false)
+  const [tabError, setTabError] = useState<string | null>(null)
+
   // Panel layout
-  const [activeTab, setActiveTab] = useState<TabId>('general')
+  const [activeTab, setActiveTab] = useState<string>('general')
   const [panelLayout, setPanelLayout] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT)
   const [draggingId, setDraggingId] = useState<PanelId | null>(null)
 
@@ -632,6 +659,38 @@ export default function SettingsPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Load dynamic settings tabs + persisted panel layout, then merge them together
+  useEffect(() => {
+    if (!user?.id) return
+    let cancelled = false
+    setTabsLoading(true)
+    listSettingsTabs()
+      .then(tabs => {
+        if (cancelled) return
+        const visibleTabs = user.role === 'super_admin'
+          ? tabs
+          : tabs.filter(t => t.visibleTo === 'all')
+        setAvailableTabs(visibleTabs)
+        return getPreference(SETTINGS_LAYOUT_PREF)
+          .catch(() => null)
+          .then(raw => {
+            if (cancelled) return
+            let parsed: unknown = null
+            if (raw) {
+              try { parsed = JSON.parse(raw) } catch { parsed = null }
+            }
+            const merged = mergeStoredLayout(parsed, visibleTabs)
+            setPanelLayout(merged)
+            setActiveTab(current =>
+              visibleTabs.some(t => t.slug === current) ? current : (visibleTabs[0]?.slug ?? current)
+            )
+          })
+      })
+      .catch(err => setError((err as Error).message))
+      .finally(() => { if (!cancelled) setTabsLoading(false) })
+    return () => { cancelled = true }
+  }, [user?.id, user?.role])
+
   // For global admins: track which org's categories are being managed
   const [categoriesOrgId, setCategoriesOrgId] = useState<number | null>(null)
   const isGlobalAdmin = user?.role === 'super_admin'
@@ -683,19 +742,6 @@ export default function SettingsPage() {
   }, [user?.role])
 
 
-  useEffect(() => {
-    getPreference(SETTINGS_LAYOUT_PREF)
-      .then(val => {
-        if (val) {
-          try {
-            setPanelLayout(mergeStoredLayout(JSON.parse(val)))
-          } catch {
-            // ignore parse errors, use default
-          }
-        }
-      })
-      .catch(() => {})
-  }, [])
 
   const filteredLocations = useMemo(() => {
     const query = locationSearch.trim().toLowerCase()
@@ -1401,8 +1447,9 @@ export default function SettingsPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   )
 
-  function getTabForPanel(id: PanelId): TabId {
-    return panelLayout.other.includes(id) ? 'other' : 'general'
+  function getTabForPanel(id: PanelId): string {
+    const found = Object.entries(panelLayout).find(([, ids]) => ids.includes(id))
+    return found ? found[0] : (availableTabs[0]?.slug ?? 'general')
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -1416,15 +1463,18 @@ export default function SettingsPage() {
     const activeId = active.id as PanelId
     const overId = over.id as string
     // Dropped on a tab drop zone
-    if (overId === 'drop-tab-general' || overId === 'drop-tab-other') {
-      const targetTab: TabId = overId === 'drop-tab-general' ? 'general' : 'other'
+    // Check if overId matches any available tab drop zone
+    const tabPrefix = 'drop-tab-'
+    const matchingTabSlug = overId.startsWith(tabPrefix)
+      ? overId.slice(tabPrefix.length)
+      : null
+    const isTabDropZone = matchingTabSlug !== null && availableTabs.some(t => t.slug === matchingTabSlug)
+    if (isTabDropZone) {
+      const targetTab = matchingTabSlug!
       const sourceTab = getTabForPanel(activeId)
       if (sourceTab === targetTab) return
-      const newLayout: PanelLayout = {
-        general: panelLayout.general.filter(id => id !== activeId),
-        other: panelLayout.other.filter(id => id !== activeId),
-      }
-      newLayout[targetTab] = [...newLayout[targetTab], activeId]
+      const newLayout: PanelLayout = { ...panelLayout, [sourceTab]: panelLayout[sourceTab].filter(id => id !== activeId) }
+      newLayout[targetTab] = [...(newLayout[targetTab] ?? []), activeId]
       setPanelLayout(newLayout)
       setActiveTab(targetTab)
       updatePreference(SETTINGS_LAYOUT_PREF, JSON.stringify(newLayout)).catch(() => {})
@@ -1455,6 +1505,108 @@ export default function SettingsPage() {
     const newLayout: PanelLayout = { ...panelLayout, [sourceTab]: newList }
     setPanelLayout(newLayout)
     updatePreference(SETTINGS_LAYOUT_PREF, JSON.stringify(newLayout)).catch(() => {})
+  }
+
+  async function handleCreateTab() {
+    if (!newTabName.trim() || !newTabSlug.trim()) return
+    setTabSaving(true)
+    setTabError(null)
+    try {
+      const created = await createSettingsTab({ name: newTabName.trim(), slug: newTabSlug.trim(), visibleTo: newTabVisibility })
+      setAvailableTabs(prev => [...prev, created].sort((a, b) => a.sortOrder - b.sortOrder))
+      setPanelLayout(prev => ({ ...prev, [created.slug]: [] }))
+      setNewTabName('')
+      setNewTabSlug('')
+      setNewTabVisibility('all')
+    } catch (err) {
+      setTabError((err as Error).message)
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  async function handleSaveTabEdit(tab: SettingsTab) {
+    if (!editingTabName.trim()) return
+    setTabSaving(true)
+    setTabError(null)
+    try {
+      const updated = await updateSettingsTab(tab.id, { name: editingTabName.trim() })
+      setAvailableTabs(prev => prev.map(t => t.id === tab.id ? updated : t))
+      setEditingTabId(null)
+      setEditingTabName('')
+    } catch (err) {
+      setTabError((err as Error).message)
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  async function handleToggleTabVisibility(tab: SettingsTab) {
+    setTabSaving(true)
+    setTabError(null)
+    try {
+      const nextVisibility = tab.visibleTo === 'all' ? 'super_admin_only' : 'all'
+      const updated = await updateSettingsTab(tab.id, { visibleTo: nextVisibility })
+      setAvailableTabs(prev => prev.map(t => t.id === tab.id ? updated : t))
+    } catch (err) {
+      setTabError((err as Error).message)
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  async function handleDeleteTab(tab: SettingsTab) {
+    if (availableTabs.length <= 1) {
+      setTabError('At least one tab must remain.')
+      return
+    }
+    if (!window.confirm(`Delete tab "${tab.name}"? Its panels will move to the first remaining tab.`)) return
+    setTabSaving(true)
+    setTabError(null)
+    try {
+      await deleteSettingsTab(tab.id)
+      const remaining = availableTabs.filter(t => t.id !== tab.id)
+      setAvailableTabs(remaining)
+      const movedPanels = panelLayout[tab.slug] ?? []
+      const fallbackSlug = remaining[0]?.slug
+      const rest: PanelLayout = {}
+      for (const [slug, ids] of Object.entries(panelLayout)) {
+        if (slug !== tab.slug) rest[slug] = ids
+      }
+      if (fallbackSlug) {
+        rest[fallbackSlug] = [...(rest[fallbackSlug] ?? []), ...movedPanels]
+      }
+      setPanelLayout(rest)
+      updatePreference(SETTINGS_LAYOUT_PREF, JSON.stringify(rest)).catch(() => {})
+      if (activeTab === tab.slug && fallbackSlug) {
+        setActiveTab(fallbackSlug)
+      }
+    } catch (err) {
+      setTabError((err as Error).message)
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  async function handleReorderTab(tab: SettingsTab, direction: 'up' | 'down') {
+    const sorted = [...availableTabs].sort((a, b) => a.sortOrder - b.sortOrder)
+    const index = sorted.findIndex(t => t.id === tab.id)
+    const swapIndex = direction === 'up' ? index - 1 : index + 1
+    if (index === -1 || swapIndex < 0 || swapIndex >= sorted.length) return
+    const reordered = [...sorted]
+    const tmp = reordered[index]
+    reordered[index] = reordered[swapIndex]
+    reordered[swapIndex] = tmp
+    setTabSaving(true)
+    setTabError(null)
+    try {
+      await reorderSettingsTabs(reordered.map(t => t.id))
+      setAvailableTabs(reordered.map((t, i) => ({ ...t, sortOrder: i })))
+    } catch (err) {
+      setTabError((err as Error).message)
+    } finally {
+      setTabSaving(false)
+    }
   }
 
   if (loading) {
@@ -4412,6 +4564,186 @@ export default function SettingsPage() {
         )}
       </section>
       )
+      case 'manage-tabs': return (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setManageTabsExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <LayoutList size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Manage Tabs</h2>
+              <p className="text-sm text-[#64748B] mt-1">Create, rename, reorder, and control visibility of Settings tabs.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-xs font-medium text-[#64748B]">{availableTabs.length} total</span>
+            {manageTabsExpanded ? (
+              <ChevronDown size={18} className="text-[#64748B]" />
+            ) : (
+              <ChevronRight size={18} className="text-[#64748B]" />
+            )}
+          </div>
+        </button>
+
+        {manageTabsExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+            {tabError && <p className="text-sm text-red-500">{tabError}</p>}
+
+            <div className="space-y-2">
+              {[...availableTabs].sort((a, b) => a.sortOrder - b.sortOrder).map((tab, index, sorted) => (
+                <div
+                  key={tab.id}
+                  className="flex items-center gap-3 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-3 py-2"
+                >
+                  <div className="flex flex-col">
+                    <button
+                      type="button"
+                      onClick={() => handleReorderTab(tab, 'up')}
+                      disabled={index === 0 || tabSaving}
+                      className="text-[#94A3B8] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] disabled:opacity-30"
+                      aria-label={`Move ${tab.name} up`}
+                    >
+                      <ChevronRight size={14} className="-rotate-90" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleReorderTab(tab, 'down')}
+                      disabled={index === sorted.length - 1 || tabSaving}
+                      className="text-[#94A3B8] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] disabled:opacity-30"
+                      aria-label={`Move ${tab.name} down`}
+                    >
+                      <ChevronRight size={14} className="rotate-90" />
+                    </button>
+                  </div>
+
+                  {editingTabId === tab.id ? (
+                    <input
+                      type="text"
+                      value={editingTabName}
+                      onChange={e => setEditingTabName(e.target.value)}
+                      className="flex-1 rounded-md border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-sm text-[#1E293B] dark:text-[#F1F5F9] px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                      autoFocus
+                    />
+                  ) : (
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">{tab.name}</span>
+                      <span className="ml-2 text-xs text-[#94A3B8]">/{tab.slug}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleTabVisibility(tab)}
+                    disabled={tabSaving}
+                    className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-[2px] ${
+                      tab.visibleTo === 'super_admin_only'
+                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                    }`}
+                    title="Click to toggle visibility"
+                  >
+                    {tab.visibleTo === 'super_admin_only' ? 'Super Admin only' : 'All admins'}
+                  </button>
+
+                  {editingTabId === tab.id ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveTabEdit(tab)}
+                        disabled={tabSaving}
+                        className="p-1.5 rounded text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
+                        aria-label={`Save ${tab.name}`}
+                      >
+                        <Save size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setEditingTabId(null); setEditingTabName('') }}
+                        className="p-1.5 rounded text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#334155]"
+                        aria-label="Cancel edit"
+                      >
+                        <X size={14} />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { setEditingTabId(tab.id); setEditingTabName(tab.name) }}
+                      className="p-1.5 rounded text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[#334155]"
+                      aria-label={`Rename ${tab.name}`}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTab(tab)}
+                    disabled={tabSaving}
+                    className="p-1.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    aria-label={`Delete ${tab.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end border-t border-[#E2E8F0] dark:border-[#334155] pt-4">
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-[#475569] dark:text-[#CBD5E1]">Name</label>
+                <input
+                  type="text"
+                  value={newTabName}
+                  onChange={e => {
+                    const value = e.target.value
+                    setNewTabName(value)
+                    setNewTabSlug(value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
+                  }}
+                  placeholder="Tab name"
+                  className="rounded-md border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-sm text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                />
+              </div>
+              <div className="flex-1 flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-[#475569] dark:text-[#CBD5E1]">Slug</label>
+                <input
+                  type="text"
+                  value={newTabSlug}
+                  onChange={e => setNewTabSlug(e.target.value.trim().toLowerCase())}
+                  placeholder="tab-slug"
+                  className="rounded-md border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-sm text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-[#475569] dark:text-[#CBD5E1]">Visibility</label>
+                <select
+                  value={newTabVisibility}
+                  onChange={e => setNewTabVisibility(e.target.value === 'super_admin_only' ? 'super_admin_only' : 'all')}
+                  className="rounded-md border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] text-sm text-[#1E293B] dark:text-[#F1F5F9] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                >
+                  <option value="all">All admins</option>
+                  <option value="super_admin_only">Super Admin only</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={handleCreateTab}
+                disabled={tabSaving || !newTabName.trim() || !newTabSlug.trim()}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#2563EB] text-white text-sm font-medium px-4 py-2 hover:bg-[#1D4ED8] disabled:opacity-50 transition-colors"
+              >
+                <Plus size={14} />
+                Add Tab
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+      )
       default: return null
     }
   }
@@ -4435,26 +4767,25 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="flex border-b border-[#E2E8F0] dark:border-[#334155] mb-6">
-          <DroppableTabButton
-            tab="general"
-            label="General"
-            isActive={activeTab === 'general'}
-            isDragging={draggingId !== null}
-            onClick={() => setActiveTab('general')}
-          />
-          <DroppableTabButton
-            tab="other"
-            label="Other"
-            isActive={activeTab === 'other'}
-            isDragging={draggingId !== null}
-            onClick={() => setActiveTab('other')}
-          />
+        <div className="flex items-center border-b border-[#E2E8F0] dark:border-[#334155] mb-6">
+          {availableTabs.map(tab => (
+            <DroppableTabButton
+              key={tab.slug}
+              tab={tab.slug}
+              label={tab.name}
+              isActive={activeTab === tab.slug}
+              isDragging={draggingId !== null}
+              onClick={() => setActiveTab(tab.slug)}
+            />
+          ))}
+          {tabsLoading && <span className="px-3 text-xs text-[#94A3B8]">Loading tabs…</span>}
         </div>
 
-        <SortableContext items={panelLayout[activeTab]} strategy={verticalListSortingStrategy}>
+        <SortableContext items={panelLayout[activeTab] ?? []} strategy={verticalListSortingStrategy}>
           <div className="space-y-6">
-            {panelLayout[activeTab].map(id => (
+            {(panelLayout[activeTab] ?? [])
+              .filter(id => id !== 'manage-tabs' || isGlobalAdmin)
+              .map(id => (
               <SettingsSortablePanel key={id} id={id}>
                 <PanelErrorBoundary label={PANEL_LABELS[id]}>
                   {renderPanel(id)}

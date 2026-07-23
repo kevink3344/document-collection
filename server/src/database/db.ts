@@ -1010,6 +1010,29 @@ function applyIncrementalSchema(database: AppDatabase): void {
   for (const col of ['title', 'reason']) {
     try { database.exec(`ALTER TABLE collection_versions ADD COLUMN ${col} TEXT`) } catch { /* already exists */ }
   }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS settings_tabs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      slug        TEXT    NOT NULL UNIQUE,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      visible_to  TEXT    NOT NULL DEFAULT 'all'
+                          CHECK(visible_to IN ('all', 'super_admin_only')),
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_settings_tabs_sort ON settings_tabs(sort_order)
+  `)
+  const settingsTabsCount = (database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined)?.n ?? 0
+  if (settingsTabsCount === 0) {
+    database.exec(`
+      INSERT INTO settings_tabs (name, slug, sort_order, visible_to)
+      VALUES ('General', 'general', 0, 'all'),
+             ('Other', 'other', 1, 'all')
+    `)
+  }
 }
 
 
