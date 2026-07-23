@@ -440,11 +440,11 @@ router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
 
   if (key === 'database_mode') {
     const normalized = value.toLowerCase()
-    if (normalized !== 'turso' && normalized !== 'sqlserver' && normalized !== 'sqlite') {
-      res.status(400).json({ error: 'database_mode must be one of: turso, sqlserver, sqlite' })
+    if (normalized !== 'turso' && normalized !== 'sqlserver') {
+      res.status(400).json({ error: 'database_mode must be one of: turso, sqlserver' })
       return
     }
-    setConfiguredDatabaseMode(normalized as 'turso' | 'sqlserver' | 'sqlite')
+    setConfiguredDatabaseMode(normalized as 'turso' | 'sqlserver')
   }
 
   if (key === 'document_storage_mode') {

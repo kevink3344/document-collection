@@ -6,7 +6,8 @@ import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
-import { setupDatabase, resetDbIfStreamError, getDbAsync, runSqlServerSeedFile, getConfiguredDatabaseMode } from './database/db'
+import { setupDatabase, resetDbIfStreamError, getDbAsync, runSqlServerSeedFile, getConfiguredDatabaseMode, DatabaseUnavailableError } from './database/db'
+import { requireDatabase } from './middleware/dbCheck'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
@@ -69,7 +70,13 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // ── Database ─────────────────────────────────────────────────
-setupDatabase()
+// Never crash startup on DB failure: the server stays alive so static
+// assets keep serving, and API routes return 503 until connectivity recovers.
+try {
+  setupDatabase()
+} catch (err) {
+  console.warn('[server] Database setup failed at startup (server will continue):', (err as Error).message)
+}
 
 // ── Super Admin bootstrap ────────────────────────────────────
 async function syncSuperAdmin() {
@@ -173,6 +180,7 @@ setInterval(() => { void runNotificationSweep() }, NOTIFICATION_SWEEP_INTERVAL_M
 setupSwagger(app)
 
 // ── Routes ───────────────────────────────────────────────────
+app.use('/api', requireDatabase)
 app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/organizations', organizationsRouter)
@@ -201,6 +209,10 @@ app.get('/health', (_req: express.Request, res: express.Response) => {
 // ── Global error handler: resets Turso connection on stream expiry ──────────
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   resetDbIfStreamError(err)
+  if (err instanceof DatabaseUnavailableError) {
+    res.status(503).json({ error: err.message })
+    return
+  }
   const status = typeof (err as { status?: unknown }).status === 'number'
     ? (err as { status: number }).status
     : 500

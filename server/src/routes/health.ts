@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getConfiguredDatabaseMode } from '../database/db'
+import { getConfiguredDatabaseMode, isDatabaseAvailable } from '../database/db'
 import { isGoogleDriveConfigured } from '../services/googleDrive'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pkg = require('../../package.json') as { version: string }
@@ -13,10 +13,10 @@ const router = Router()
  *     tags:
  *       - Health
  *     summary: Health check endpoint
- *     description: Returns the server health status and current timestamp. Used by load balancers, monitoring systems, and platform probes.
+ *     description: Returns the server health status, database connectivity, and current timestamp. Used by load balancers, monitoring systems, and platform probes.
  *     responses:
  *       200:
- *         description: Server is healthy
+ *         description: Server is healthy and database is reachable
  *         content:
  *           application/json:
  *             schema:
@@ -26,14 +26,28 @@ const router = Router()
  *                   type: string
  *                   example: ok
  *                   description: Server status indicator
+ *                 database:
+ *                   type: string
+ *                   example: connected
  *                 timestamp:
  *                   type: string
  *                   format: date-time
  *                   example: 2026-05-09T12:34:56.789Z
  *                   description: Current server timestamp in ISO 8601 format
+ *       503:
+ *         description: Database connectivity not available
  */
 router.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  if (!isDatabaseAvailable()) {
+    res.status(503).json({
+      status: 'error',
+      database: 'disconnected',
+      message: 'Database connectivity not available. Please try again later.',
+      timestamp: new Date().toISOString(),
+    })
+    return
+  }
+  res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() })
 })
 
 router.get('/info', (_req: Request, res: Response) => {

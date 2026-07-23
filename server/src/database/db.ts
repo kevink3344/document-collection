@@ -4,16 +4,14 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 
-import { createSchema, seedData } from './schema'
 import type { AppDatabase } from './types'
 import type { DbAdapter } from './adapter'
 import { LibsqlAdapter } from './adapters/libsql-adapter'
 import { MssqlAdapter } from './adapters/mssql-adapter'
 
 let db: AppDatabase | null = null
-let dbConnectedMode: 'turso' | 'sqlite' | null = null
+let dbConnectedMode: 'turso' | null = null
 let dbLastVerifiedAt = 0
-let dbTursoLastFailedAt = 0
 
 // SQL Server connection pool (created once, reused across requests)
 let mssqlPool: sql.ConnectionPool | null = null
@@ -21,8 +19,14 @@ let mssqlPoolConnecting: Promise<sql.ConnectionPool> | null = null
 
 // Turso Hrana streams expire after ~5 min of idle; reconnect proactively.
 const TURSO_VERIFY_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
-// When Turso fails at startup and we fall back to SQLite, retry Turso after this interval.
-const TURSO_RETRY_AFTER_FALLBACK_MS = 30 * 1000 // 30 seconds
+
+/** Thrown when no database backend is configured or reachable. Routes/middleware should catch this and return HTTP 503. */
+export class DatabaseUnavailableError extends Error {
+  constructor(message = 'Database connectivity not available. Please try again later.') {
+    super(message)
+    this.name = 'DatabaseUnavailableError'
+  }
+}
 
 function isStreamExpiredError(err: unknown): boolean {
   const message = (err as { message?: string })?.message ?? ''
@@ -60,19 +64,22 @@ export function resetDbIfStreamError(err: unknown): void {
 type DbTarget =
   | { mode: 'turso'; url: string; authToken: string }
   | { mode: 'sqlserver'; server: string; database: string; user: string; password: string }
-  | { mode: 'sqlite'; dbPath: string }
 
 const DATABASE_MODE_FILE = path.resolve(process.cwd(), '.db-mode')
 
-function normalizeDatabaseMode(value: string | undefined): 'turso' | 'sqlserver' | 'sqlite' | null {
+function normalizeDatabaseMode(value: string | undefined): 'turso' | 'sqlserver' | null {
   const normalized = value?.trim().toLowerCase()
-  if (normalized === 'turso' || normalized === 'sqlserver' || normalized === 'sqlite') {
+  if (normalized === 'sqlite') {
+    console.warn('[db] Ignoring unsupported database mode "sqlite" — local SQLite is no longer supported.')
+    return null
+  }
+  if (normalized === 'turso' || normalized === 'sqlserver') {
     return normalized
   }
   return null
 }
 
-function readPersistedDatabaseMode(): 'turso' | 'sqlserver' | 'sqlite' | null {
+function readPersistedDatabaseMode(): 'turso' | 'sqlserver' | null {
   try {
     if (!fs.existsSync(DATABASE_MODE_FILE)) return null
     const raw = fs.readFileSync(DATABASE_MODE_FILE, 'utf8').trim()
@@ -109,11 +116,11 @@ function looksLikeValidTursoConnection(url: string | undefined, authToken: strin
   }
 }
 
-export function getConfiguredDatabaseMode(): 'turso' | 'sqlserver' | 'sqlite' {
+export function getConfiguredDatabaseMode(): 'turso' | 'sqlserver' {
   return normalizeDatabaseMode(process.env.DB_MODE) ?? normalizeDatabaseMode(process.env.DATABASE_MODE) ?? readPersistedDatabaseMode() ?? 'turso'
 }
 
-export function setConfiguredDatabaseMode(mode: 'turso' | 'sqlserver' | 'sqlite'): void {
+export function setConfiguredDatabaseMode(mode: 'turso' | 'sqlserver'): void {
   fs.writeFileSync(DATABASE_MODE_FILE, JSON.stringify({ mode }), 'utf8')
 }
 
@@ -540,24 +547,7 @@ function tableExists(database: AppDatabase, tableName: string): boolean {
   return Boolean(row)
 }
 
-function normalizeSqlitePath(databaseUrl: string): string {
-  return databaseUrl.replace(/^sqlite:\/\//, '').trim()
-}
-
-function resolveDbPath(): string {
-  const databaseUrl = process.env.DATABASE_URL?.trim()
-  if (databaseUrl?.startsWith('sqlite://')) {
-    return normalizeSqlitePath(databaseUrl)
-  }
-
-  const defaultDbPath =
-    process.env.NODE_ENV === 'production'
-      ? '/home/data/data.db'
-      : path.join(__dirname, '../../data.db')
-  return process.env.DATABASE_PATH ?? defaultDbPath
-}
-
-function resolveDbTarget(): DbTarget {
+function resolveDbTarget(): DbTarget | null {
   const configuredMode = getConfiguredDatabaseMode()
 
   // ── Explicit DB_MODE=sqlserver override ──────────────────────────────────
@@ -569,18 +559,8 @@ function resolveDbTarget(): DbTarget {
     if (sqlServer && sqlDatabase && sqlUser && sqlPassword) {
       return { mode: 'sqlserver', server: sqlServer, database: sqlDatabase, user: sqlUser, password: sqlPassword }
     }
-    console.warn('[db] DB_MODE=sqlserver set but AZURE_SQL_* credentials are missing — checking Turso/SQLite fallbacks.')
-  }
-
-  // ── Auto-detect: SQL Server credentials present (no DB_MODE needed) ──────
-  if (configuredMode !== 'turso' && configuredMode !== 'sqlite') {
-    const sqlServer   = process.env.AZURE_SQL_SERVER?.trim()
-    const sqlDatabase = process.env.AZURE_SQL_DATABASE?.trim()
-    const sqlUser     = process.env.AZURE_SQL_USER?.trim()
-    const sqlPassword = process.env.AZURE_SQL_PASSWORD?.trim()
-    if (sqlServer && sqlDatabase && sqlUser && sqlPassword) {
-      return { mode: 'sqlserver', server: sqlServer, database: sqlDatabase, user: sqlUser, password: sqlPassword }
-    }
+    console.warn('[db] DB_MODE=sqlserver set but AZURE_SQL_* credentials are missing.')
+    return null
   }
 
   // ── Turso: check all known credential variable names ─────────────────────
@@ -590,77 +570,9 @@ function resolveDbTarget(): DbTarget {
     return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
   }
 
-  // ── No valid database configured ─────────────────────────────────────────
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      '[db] No database configured. Set AZURE_SQL_* credentials for SQL Server or ' +
-      'TURSO_DATABASE_URL + TURSO_AUTH_TOKEN for Turso. Local SQLite is not available in production.'
-    )
-  }
-
-  // Development-only SQLite fallback
-  console.warn('[db] No SQL Server or Turso credentials found — falling back to local SQLite (development only).')
-  return { mode: 'sqlite', dbPath: resolveDbPath() }
-}
-
-function isMalformedDbError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') {
-    return false
-  }
-  const message = (err as { message?: string }).message ?? ''
-  return message.toLowerCase().includes('malformed')
-}
-
-function cleanupDatabaseFiles(dbPath: string): void {
-  const auxiliaryFiles = [
-    dbPath,
-    `${dbPath}-wal`,
-    `${dbPath}-shm`,
-    `${dbPath}-journal`,
-  ]
-
-  for (const file of auxiliaryFiles) {
-    if (fs.existsSync(file)) {
-      try {
-        fs.unlinkSync(file)
-        console.log(`[db] Removed corrupted artifact: ${file}`)
-      } catch (err) {
-        console.warn(`[db] Could not remove ${file}:`, (err as Error).message)
-      }
-    }
-  }
-}
-
-function resetDatabase(dbPath: string): void {
-  if (db) {
-    try {
-      db.close()
-    } catch {}
-    db = null
-  }
-  cleanupDatabaseFiles(dbPath)
-}
-
-function applyPragmas(database: AppDatabase): void {
-  // Some cloud/shared filesystems do not support WAL mode.
-  // Fall back to DELETE so startup still succeeds.
-  try {
-    database.exec('PRAGMA journal_mode = WAL;')
-  } catch {
-    try {
-      database.exec('PRAGMA journal_mode = DELETE;')
-    } catch (err) {
-      // If even DELETE fails, the database may be corrupted or locked.
-      // Log the error but continue - schema setup may still work or provide a better error.
-      console.warn('[db] Warning: Could not set journal mode:', (err as Error).message)
-    }
-  }
-  
-  try {
-    database.exec('PRAGMA foreign_keys = ON;')
-  } catch (err) {
-    console.warn('[db] Warning: Could not enable foreign keys:', (err as Error).message)
-  }
+  // ── No valid database configured — caller must handle gracefully (HTTP 503) ──
+  console.warn('[db] No valid Turso credentials found (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN or DATABASE_URL/DATABASE_AUTH_TOKEN). Local SQLite is not supported.')
+  return null
 }
 
 /**
@@ -699,144 +611,76 @@ export function getDb(): AppDatabase {
     }
   }
 
-  // â”€â”€ If we previously fell back to SQLite, retry Turso periodically â”€â”€
-  const target = resolveDbTarget()
-  if (db && dbConnectedMode === 'sqlite' && target.mode === 'turso') {
-    const now = Date.now()
-    if (now - dbTursoLastFailedAt > TURSO_RETRY_AFTER_FALLBACK_MS) {
-      const urlsToTry = [target.url]
-      if (target.url.startsWith('libsql://')) {
-        urlsToTry.push(target.url.replace(/^libsql:\/\//, 'https://'))
-      }
-      for (const url of urlsToTry) {
-        let candidate: AppDatabase | undefined
-        try {
-          const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
-          for (const suffix of ['-wal', '-shm', '-info']) {
-            try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
-          }
-          candidate = new Database(replicaPath, { syncUrl: url, authToken: target.authToken } as Database.Options)
-          candidate.sync()
-          console.log(`[db] Reconnected to Turso via embedded replica`)
-          try { db.close() } catch { /* ignore */ }
-          db = candidate
-          dbConnectedMode = 'turso'
-          dbLastVerifiedAt = now
-          dbTursoLastFailedAt = 0
-          return db
-        } catch {
-          // Close the failed candidate so its file handle doesn't linger and
-          // block a subsequent unlink/retry (especially on Windows, where an
-          // open handle prevents file deletion).
-          try { candidate?.close() } catch { /* ignore */ }
-        }
-      }
-      dbTursoLastFailedAt = now
-    }
-  }
-
   if (!db) {
+    const target = resolveDbTarget()
+    if (!target) {
+      throw new DatabaseUnavailableError()
+    }
+
     if (target.mode === 'sqlserver') {
-      // SQL Server is handled by getDbAsync() — fall through to SQLite here only
-      // as a last resort if getDbAsync() hasn't been called yet.
-      console.warn('[db] SQL Server mode detected in getDb() — use getDbAsync() for SQL Server connections.')
+      // SQL Server connections are handled by getDbAsync(); getDb() only supports Turso.
+      throw new DatabaseUnavailableError('SQL Server mode requires getDbAsync(). getDb() only supports Turso.')
     }
 
-    if (target.mode === 'turso') {
-      // Use embedded replica: libsql syncs from Turso into a local file.
-      // This avoids the hrana protocol 502 issues with the native binary.
-      const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
+    // Use embedded replica: libsql syncs from Turso into a local file.
+    // This avoids the hrana protocol 502 issues with the native binary.
+    const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
 
-      // Always remove stale WAL/SHM sidecars before opening; they are safe to
-      // delete because the replica can be fully re-synced from Turso.
-      for (const suffix of ['-wal', '-shm']) {
-        try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present — fine */ }
-      }
-
-      const tryOpenReplica = (): AppDatabase => {
-        const candidate = new Database(replicaPath, { syncUrl: target.url, authToken: target.authToken } as Database.Options)
-        try {
-          candidate.sync()
-        } catch (syncErr) {
-          // Close the failed candidate immediately so its file handle doesn't
-          // linger and block the corruption-recovery unlink/retry below
-          // (especially on Windows, where an open handle prevents deletion).
-          try { candidate.close() } catch { /* ignore */ }
-          throw syncErr
-        }
-        return candidate
-      }
-
-      try {
-        console.log(`[db] Connecting to Turso via embedded replica: ${target.url}`)
-        db = tryOpenReplica()
-        dbConnectedMode = 'turso'
-        dbLastVerifiedAt = Date.now()
-        dbTursoLastFailedAt = 0
-        console.log('[db] Turso embedded replica ready')
-        return db
-      } catch (err) {
-        const msg = (err as Error).message ?? ''
-        let finalMsg = msg
-        const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists') || msg.toLowerCase().includes('malformed')
-        if (isCorrupted) {
-          console.warn('[db] Turso replica corrupted, wiping and retrying:', msg)
-          try { db?.close() } catch { /* ignore */ }
-          db = null
-          for (const suffix of ['', '-wal', '-shm', '-info']) {
-            try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
-          }
-          try {
-            db = tryOpenReplica()
-            dbConnectedMode = 'turso'
-            dbLastVerifiedAt = Date.now()
-            dbTursoLastFailedAt = 0
-            console.log('[db] Turso embedded replica ready (after wipe)')
-            return db
-          } catch (retryErr) {
-            finalMsg = (retryErr as Error).message ?? msg
-            console.warn('[db] Turso retry also failed, falling back to local SQLite:', finalMsg)
-            try { db?.close() } catch { /* ignore */ }
-            db = null
-          }
-        } else {
-          console.warn('[db] Turso embedded replica failed, falling back to local SQLite:', msg)
-          try { db?.close() } catch { /* ignore */ }
-          db = null
-        }
-        dbTursoLastFailedAt = Date.now()
-        if (process.env.NODE_ENV === 'production') {
-          throw new Error(`[db] Turso connection failed in production: ${finalMsg}. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.`)
-        }
-      }
+    // Always remove stale WAL/SHM sidecars before opening; they are safe to
+    // delete because the replica can be fully re-synced from Turso.
+    for (const suffix of ['-wal', '-shm']) {
+      try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present — fine */ }
     }
 
-    const dbPath = resolveDbPath()
-    const dbDir = path.dirname(dbPath)
-
-    console.log(`[db] Using local SQLite path: ${dbPath}`)
-    fs.mkdirSync(dbDir, { recursive: true })
-
-    if (fs.existsSync(dbPath)) {
+    const tryOpenReplica = (): AppDatabase => {
+      const candidate = new Database(replicaPath, { syncUrl: target.url, authToken: target.authToken } as Database.Options)
       try {
-        db = new Database(dbPath)
-        applyPragmas(db)
-        db.prepare('SELECT name FROM sqlite_master LIMIT 1').all()
-        dbConnectedMode = 'sqlite'
-        return db
-      } catch (err) {
-        console.warn('[db] Existing local database is corrupted, cleaning up and starting fresh:', (err as Error).message)
-        resetDatabase(dbPath)
+        candidate.sync()
+      } catch (syncErr) {
+        // Close the failed candidate immediately so its file handle doesn't
+        // linger and block the corruption-recovery unlink/retry below
+        // (especially on Windows, where an open handle prevents deletion).
+        try { candidate.close() } catch { /* ignore */ }
+        throw syncErr
       }
+      return candidate
     }
 
     try {
-      db = new Database(dbPath)
-      applyPragmas(db)
-      dbConnectedMode = 'sqlite'
+      console.log(`[db] Connecting to Turso via embedded replica: ${target.url}`)
+      db = tryOpenReplica()
+      dbConnectedMode = 'turso'
+      dbLastVerifiedAt = Date.now()
+      console.log('[db] Turso embedded replica ready')
+      return db
     } catch (err) {
-      console.error('[db] FATAL: Could not create local SQLite database:', (err as Error).message)
-      throw err
+      const msg = (err as Error).message ?? ''
+      const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists') || msg.toLowerCase().includes('malformed')
+      if (isCorrupted) {
+        console.warn('[db] Turso replica corrupted, wiping and retrying:', msg)
+        try { db?.close() } catch { /* ignore */ }
+        db = null
+        for (const suffix of ['', '-wal', '-shm', '-info']) {
+          try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
+        }
+        try {
+          db = tryOpenReplica()
+          dbConnectedMode = 'turso'
+          dbLastVerifiedAt = Date.now()
+          console.log('[db] Turso embedded replica ready (after wipe)')
+          return db
+        } catch (retryErr) {
+          const finalMsg = (retryErr as Error).message ?? msg
+          console.warn('[db] Turso replica recovery failed, database unavailable:', finalMsg)
+          try { db?.close() } catch { /* ignore */ }
+          db = null
+          throw new DatabaseUnavailableError()
+        }
+      }
+      console.warn('[db] Turso embedded replica connection failed, database unavailable:', msg)
+      try { db?.close() } catch { /* ignore */ }
+      db = null
+      throw new DatabaseUnavailableError()
     }
   }
   return db!
@@ -851,6 +695,9 @@ export function getDb(): AppDatabase {
  */
 export async function getDbAsync(): Promise<DbAdapter> {
   const target = resolveDbTarget()
+  if (!target) {
+    throw new DatabaseUnavailableError()
+  }
 
   if (target.mode === 'sqlserver') {
     if (mssqlPool?.connected) {
@@ -899,7 +746,7 @@ export async function getDbAsync(): Promise<DbAdapter> {
     }
   }
 
-  // turso / sqlite — wrap libsql in LibsqlAdapter
+  // turso — wrap libsql in LibsqlAdapter
   const rawDb = getDb()
   return new LibsqlAdapter(rawDb)
 }
@@ -951,7 +798,7 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
   }
 
   const target = resolveDbTarget()
-  if (target.mode !== 'sqlserver') {
+  if (!target || target.mode !== 'sqlserver') {
     throw new Error('[db] runSqlServerSeedFile: unexpected non-sqlserver target')
   }
 
@@ -985,7 +832,7 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
 
 /**
  * Apply DDL statements that should be idempotent across all database modes
- * (Turso, SQLite). SQL Server uses its own migration path via runSqlServerSeedFile.
+ * (Turso). SQL Server uses its own migration path via runSqlServerSeedFile.
  *
  * Add `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
  * here for tables that were added after the initial Turso schema was deployed.
@@ -1051,68 +898,43 @@ function applyIncrementalSchema(database: AppDatabase): void {
 
 
 export function setupDatabase(): void {
-  // SQL Server and Turso: skip full local schema/migration setup, but still
-  // apply incremental DDL so newly-added tables are provisioned in Turso.
+  // SQL Server and Turso are the only supported modes. Local standalone SQLite
+  // is not supported. If the configured backend can't be reached, the server
+  // stays alive (non-fatal) and API routes return HTTP 503 via the
+  // requireDatabase middleware / DatabaseUnavailableError until it recovers.
   const mode = getConfiguredDatabaseMode()
   if (mode === 'sqlserver') {
     console.log('[db] sqlserver mode — skipping local schema/migration setup')
     return
   }
-  if (mode === 'turso') {
-    console.log('[db] turso mode — applying incremental schema to Turso')
-    try {
-      const database = getDb()
-      applyIncrementalSchema(database)
-      try { database.sync() } catch { /* sync failure is non-fatal */ }
-      console.log('[db] Turso incremental schema applied')
-    } catch (err) {
-      console.warn('[db] Turso incremental schema failed (non-fatal):', (err as Error).message)
-    }
-    return
-  }
 
-  const initialize = (database: AppDatabase) => {
-    createSchema(database)
-    runMigrations(database)
-    seedData(database)
+  console.log('[db] turso mode — applying incremental schema to Turso')
+  try {
+    const database = getDb()
+    applyIncrementalSchema(database)
+    try { database.sync() } catch { /* sync failure is non-fatal */ }
+    console.log('[db] Turso incremental schema applied')
+  } catch (err) {
+    console.warn('[db] Turso incremental schema failed at startup (non-fatal, server will continue):', (err as Error).message)
   }
+}
 
-  const isTursoError = (err: unknown) =>
-    String((err as { message?: string })?.message ?? '').includes('502')
-    || String((err as { message?: string })?.message ?? '').includes('Hrana')
-
-  let lastErr: unknown
-  const maxAttempts = 3
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const database = getDb()
-      // Re-sync embedded replica before each attempt to wake Turso
-      if (dbConnectedMode === 'turso') {
-        try { database.sync() } catch { /* ignore â€” sync failure handled below */ }
-      }
-      initialize(database)
-      console.log('[db] Database ready')
-      return
-    } catch (err) {
-      lastErr = err
-      if (isMalformedDbError(err)) {
-        const target = resolveDbTarget()
-        if (target.mode !== 'sqlite') throw err
-        console.warn('[db] Malformed local SQLite database detected during setup, rebuilding from scratch...')
-        resetDatabase(target.dbPath)
-        initialize(getDb())
-        console.log('[db] Database ready after recovery')
-        return
-      }
-      if (isTursoError(err) && attempt < maxAttempts) {
-        console.warn(`[db] Turso error during setup (attempt ${attempt}/${maxAttempts}), retrying after sync...`)
-        try { db?.sync() } catch { /* ignore */ }
-        continue
-      }
-      throw err
-    }
+/**
+ * Returns true if a database backend appears configured/reachable.
+ * Used by the requireDatabase middleware and the /api/health endpoint.
+ * Note: for Turso this checks credential validity, not live connectivity —
+ * getDb()/getDbAsync() will still throw DatabaseUnavailableError on actual
+ * connection failure.
+ */
+export function isDatabaseAvailable(): boolean {
+  try {
+    if (db) return true
+    if (mssqlPool?.connected) return true
+    const target = resolveDbTarget()
+    return target !== null
+  } catch {
+    return false
   }
-  throw lastErr
 }
 
 function runMigrations(db: AppDatabase): void {

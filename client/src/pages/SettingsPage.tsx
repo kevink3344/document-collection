@@ -1253,7 +1253,7 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleDatabaseModeChange(nextValue: 'turso' | 'sqlserver' | 'sqlite') {
+  async function handleDatabaseModeChange(nextValue: 'turso' | 'sqlserver') {
     setDatabaseMode(nextValue)
     setDatabaseModeSaving(true)
     setDatabaseModeError(null)
