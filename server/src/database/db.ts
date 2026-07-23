@@ -709,12 +709,13 @@ export function getDb(): AppDatabase {
         urlsToTry.push(target.url.replace(/^libsql:\/\//, 'https://'))
       }
       for (const url of urlsToTry) {
+        let candidate: AppDatabase | undefined
         try {
           const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
           for (const suffix of ['-wal', '-shm', '-info']) {
             try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
           }
-          const candidate = new Database(replicaPath, { syncUrl: url, authToken: target.authToken } as Database.Options)
+          candidate = new Database(replicaPath, { syncUrl: url, authToken: target.authToken } as Database.Options)
           candidate.sync()
           console.log(`[db] Reconnected to Turso via embedded replica`)
           try { db.close() } catch { /* ignore */ }
@@ -724,7 +725,10 @@ export function getDb(): AppDatabase {
           dbTursoLastFailedAt = 0
           return db
         } catch {
-          try { /* candidate?.close() */ } catch { /* ignore */ }
+          // Close the failed candidate so its file handle doesn't linger and
+          // block a subsequent unlink/retry (especially on Windows, where an
+          // open handle prevents file deletion).
+          try { candidate?.close() } catch { /* ignore */ }
         }
       }
       dbTursoLastFailedAt = now
@@ -751,7 +755,15 @@ export function getDb(): AppDatabase {
 
       const tryOpenReplica = (): AppDatabase => {
         const candidate = new Database(replicaPath, { syncUrl: target.url, authToken: target.authToken } as Database.Options)
-        candidate.sync()
+        try {
+          candidate.sync()
+        } catch (syncErr) {
+          // Close the failed candidate immediately so its file handle doesn't
+          // linger and block the corruption-recovery unlink/retry below
+          // (especially on Windows, where an open handle prevents deletion).
+          try { candidate.close() } catch { /* ignore */ }
+          throw syncErr
+        }
         return candidate
       }
 
@@ -765,6 +777,7 @@ export function getDb(): AppDatabase {
         return db
       } catch (err) {
         const msg = (err as Error).message ?? ''
+        let finalMsg = msg
         const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists') || msg.toLowerCase().includes('malformed')
         if (isCorrupted) {
           console.warn('[db] Turso replica corrupted, wiping and retrying:', msg)
@@ -781,7 +794,8 @@ export function getDb(): AppDatabase {
             console.log('[db] Turso embedded replica ready (after wipe)')
             return db
           } catch (retryErr) {
-            console.warn('[db] Turso retry also failed, falling back to local SQLite:', (retryErr as Error).message)
+            finalMsg = (retryErr as Error).message ?? msg
+            console.warn('[db] Turso retry also failed, falling back to local SQLite:', finalMsg)
             try { db?.close() } catch { /* ignore */ }
             db = null
           }
@@ -792,7 +806,7 @@ export function getDb(): AppDatabase {
         }
         dbTursoLastFailedAt = Date.now()
         if (process.env.NODE_ENV === 'production') {
-          throw new Error(`[db] Turso connection failed in production: ${msg}. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.`)
+          throw new Error(`[db] Turso connection failed in production: ${finalMsg}. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.`)
         }
       }
     }
