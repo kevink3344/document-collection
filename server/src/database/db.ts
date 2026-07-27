@@ -58,6 +58,24 @@ export function resetDbIfStreamError(err: unknown): void {
     for (const suffix of ['', '-wal', '-shm', '-info']) {
       try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
     }
+    return
+  }
+  // Stale local replica missing a table that exists on the remote primary
+  // (e.g. a table added to applyIncrementalSchema() while this process was
+  // already running, or a sync that silently didn't pick up new DDL). This
+  // used to require manually killing the server and deleting turso-replica.db*
+  // by hand. Self-heal instead: wipe the replica so the very next request
+  // triggers a full fresh sync from Turso via tryOpenReplica() in getDb().
+  if (dbConnectedMode === 'turso' && /no such table/i.test(message)) {
+    console.warn('[db] Turso replica missing a table that exists remotely -- wiping replica to force full resync:', message)
+    try { db?.close() } catch { /* ignore */ }
+    db = null
+    dbConnectedMode = null
+    dbLastVerifiedAt = 0
+    const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
+    for (const suffix of ['', '-wal', '-shm', '-info']) {
+      try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
+    }
   }
 }
 
