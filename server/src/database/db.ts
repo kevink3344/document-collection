@@ -891,11 +891,26 @@ function applyIncrementalSchema(database: AppDatabase): void {
   // this, a fresh environment (new container, other deployment slot, etc.)
   // that just created settings_tabs above can fail the very next read with
   // "no such table: settings_tabs" because the local file hasn't caught up.
-  try { database.sync() } catch { /* non-fatal; read below may retry via next incremental-schema run */ }
-  const settingsTabsCount = (database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined)?.n ?? 0
+  // Retry sync + read up to 5 times (~2.5 s total) to overcome Turso sync lag.
+  let settingsTabsCount = 0
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try { database.sync() } catch { /* retry below */ }
+    try {
+      const row = database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined
+      if (row !== undefined) {
+        settingsTabsCount = row.n
+        break
+      }
+    } catch {
+      // Table not yet visible in local replica — wait and retry
+    }
+    // Exponential backoff: 100ms, 200ms, 400ms, 800ms
+    const delayMs = 100 * Math.pow(2, attempt)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs)
+  }
   if (settingsTabsCount === 0) {
     database.exec(`
-      INSERT INTO settings_tabs (name, slug, sort_order, visible_to)
+      INSERT OR IGNORE INTO settings_tabs (name, slug, sort_order, visible_to)
       VALUES ('General', 'general', 0, 'all'),
              ('Other', 'other', 1, 'all')
     `)

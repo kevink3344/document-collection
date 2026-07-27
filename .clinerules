@@ -32,8 +32,13 @@ Activate this protocol when the user requests:
    - **Impacted Files**: List of existing files that will need editing, or new files to be created.
    - **Rollback / Verification Plan**: How to test if the plan succeeded, or undo it if it fails.
 
-5. **Chat Interface Response**:
+5. **Optional Notion Sync**:
+   After saving the plan, offer to sync it to Notion:
+   > "Would you like me to also create this plan as a Notion page using the MCP tool?"
+   If the user agrees, use the `sync_plan_to_notion` MCP tool with `filename: "<filename>"`.
+
+6. **Chat Interface Response**:
    In the Cline chat panel, do not output the entire plan. Instead:
    - Provide a concise 2-3 sentence summary of the plan.
    - Inform the user of the exact path where the `.md` file has been saved.
-   - Explicitly stop and ask: *"The detailed plan has been archived to your docs. Would you like to review/edit it, or are you ready for me to begin implementing Step 1?"*
+   - Ask if they'd like to review, begin implementation, or sync to Notion.

@@ -7,7 +7,7 @@ import type { DbAdapter } from '../database/types'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, isAdministrator, isAdminOrSuperAdmin, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
 import { parseAttachmentValue, stringifyAttachmentValue, type AttachmentReference } from '../lib/attachmentValue'
-import { uploadDocument, downloadDocument, deleteDocument } from '../services/documentStorage'
+import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
 import { sendNotificationEmail, isEmailDeliveryConfigured } from '../services/notificationEmail'
 import {
   actOnWorkflowStage,
@@ -1186,17 +1186,34 @@ router.get('/public/:slug/cover-photo', async (req: Request, res: Response) => {
     return
   }
 
-  try {
-    const file = await downloadDocument(row.drive_file_id, row.file_data)
+  // Local DB storage — serve directly from base64 field
+  if (row.drive_file_id.startsWith('local:')) {
+    if (!row.file_data) {
+      res.status(404).json({ error: 'Cover photo file data not found' })
+      return
+    }
+    const buffer = Buffer.from(row.file_data, 'base64')
     res.setHeader('Content-Type', row.mime_type)
     res.setHeader('Cache-Control', 'public, max-age=300')
-    res.send(file.buffer)
+    res.send(buffer)
+    return
+  }
+
+  try {
+    const file = await downloadDriveFile(row.drive_file_id)
+    res.setHeader('Content-Type', file.mimeType)
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    file.stream.pipe(res)
   } catch (err) {
     res.status(500).json({ error: (err as Error).message || 'Failed to load cover photo' })
   }
 })
 
 router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUpload.single('file'), async (req: Request, res: Response) => {
+  if (!isGoogleDriveConfigured()) {
+    res.status(503).json({ error: 'Attachment uploads are not configured' })
+    return
+  }
 
   const db = await getDbAsync()
   const col = await db.queryOne<{
@@ -1254,8 +1271,54 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
 
   const uploadToken = crypto.randomUUID()
 
+  if (!isGoogleDriveConfigured()) {
+    // ── Local DB storage fallback ──────────────────────────────────────────
+    const localId = `local:${crypto.randomUUID()}`
+    const fileDataBase64 = req.file.buffer.toString('base64')
+
+    const result = await db.execute(`
+        INSERT INTO response_attachments (
+          collection_id,
+          response_id,
+          field_id,
+          uploaded_by_user_id,
+          temp_upload_token,
+          file_name,
+          mime_type,
+          size_bytes,
+          drive_file_id,
+          drive_web_view_url,
+          drive_download_url,
+          file_data,
+          status
+        ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'uploaded')
+      `, [
+        col.id,
+        fieldId,
+        req.user?.sub ?? null,
+        uploadToken,
+        req.file.originalname,
+        req.file.mimetype || 'application/octet-stream',
+        req.file.buffer.byteLength,
+        localId,
+        fileDataBase64,
+      ])
+
+    const attachmentId = Number(result.lastInsertRowid)
+    res.status(201).json({
+      attachmentId,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype || 'application/octet-stream',
+      sizeBytes: req.file.buffer.byteLength,
+      downloadUrl: buildAttachmentDownloadUrl(attachmentId),
+      webViewUrl: null,
+      uploadToken,
+    })
+    return
+  }
+
   try {
-    const uploaded = await uploadDocument({
+    const uploaded = await uploadBufferToDrive({
       fileName: req.file.originalname,
       mimeType: req.file.mimetype || 'application/octet-stream',
       buffer: req.file.buffer,
@@ -1274,29 +1337,27 @@ router.post('/public/:slug/attachments', optionalAuthenticateToken, attachmentUp
           drive_file_id,
           drive_web_view_url,
           drive_download_url,
-          file_data,
           status
-        ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded')
+        ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded')
       `, [
         col.id,
         fieldId,
         req.user?.sub ?? null,
         uploadToken,
-        req.file.originalname,
-        req.file.mimetype || 'application/octet-stream',
-        req.file.buffer.byteLength,
-        uploaded.driveFileId,
+        uploaded.name,
+        uploaded.mimeType,
+        uploaded.sizeBytes,
+        uploaded.id,
         uploaded.webViewUrl,
         uploaded.webContentUrl,
-        uploaded.fileDataBase64,
       ])
 
     const attachmentId = Number(result.lastInsertRowid)
     res.status(201).json({
       attachmentId,
-      fileName: req.file.originalname,
-      mimeType: req.file.mimetype || 'application/octet-stream',
-      sizeBytes: req.file.buffer.byteLength,
+      fileName: uploaded.name,
+      mimeType: uploaded.mimeType,
+      sizeBytes: uploaded.sizeBytes,
       downloadUrl: buildAttachmentDownloadUrl(attachmentId),
       webViewUrl: uploaded.webViewUrl,
       uploadToken,
@@ -1365,8 +1426,13 @@ router.delete('/public/:slug/attachments/:attachmentId', optionalAuthenticateTok
     return
   }
 
-  // Delete from storage backend (no-op for local files)
-  await deleteDocument(attachment.drive_file_id)
+  if (!attachment.drive_file_id.startsWith('local:')) {
+    try {
+      await deleteDriveFile(attachment.drive_file_id)
+    } catch {
+      // If the Drive file is already gone, continue and clean up the metadata row.
+    }
+  }
 
   await db.execute(`
     UPDATE response_attachments
@@ -1435,12 +1501,25 @@ router.get('/attachments/:attachmentId/download', authenticateToken, async (req:
     return
   }
 
-  try {
-    const file = await downloadDocument(attachment.drive_file_id, attachment.file_data)
+  // Local DB storage — serve directly from base64 field
+  if (attachment.drive_file_id.startsWith('local:')) {
+    if (!attachment.file_data) {
+      res.status(404).json({ error: 'Attachment file data not found' })
+      return
+    }
+    const buffer = Buffer.from(attachment.file_data, 'base64')
     res.setHeader('Content-Type', attachment.mime_type)
-    res.setHeader('Content-Disposition', `inline; filename="${sanitizeDownloadFilename(file.fileName)}"`)
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeDownloadFilename(attachment.file_name)}"`)
     res.setHeader('Cache-Control', 'private, max-age=300')
-    res.send(file.buffer)
+    res.send(buffer)
+    return
+  }
+
+  try {
+    const file = await downloadDriveFile(attachment.drive_file_id)
+    res.setHeader('Content-Type', file.mimeType)
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeDownloadFilename(file.fileName)}"`)
+    file.stream.pipe(res)
   } catch (err) {
     res.status(500).json({ error: (err as Error).message || 'Failed to download attachment' })
   }

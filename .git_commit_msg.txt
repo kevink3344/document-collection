@@ -1,0 +1,1 @@
+fix: resilient settings_tabs creation in Turso embedded replica mode  

@@ -1,4 +1,4 @@
-# Plan: Add Location Assignment to "Add New User"
+# Plan: Add Location Assignment for "Add New User"
 
 ## Overview
 
