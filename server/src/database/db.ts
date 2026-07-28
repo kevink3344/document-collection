@@ -47,35 +47,16 @@ export function resetDbIfStreamError(err: unknown): void {
     dbLastVerifiedAt = 0
     return
   }
-  // Malformed replica: wipe files so getDb() rebuilds from Turso on next request
-  if (dbConnectedMode === 'turso' && message.toLowerCase().includes('malformed')) {
-    console.warn('[db] Turso replica malformed -- wiping replica for rebuild on next request')
+  // Malformed connection or schema-drift error: just drop the cached client so
+  // the next request opens a brand-new connection straight to Turso. There is
+  // no local replica file anymore, so there is nothing to wipe from disk —
+  // the remote database is always the single source of truth.
+  if (dbConnectedMode === 'turso' && (message.toLowerCase().includes('malformed') || /no such table/i.test(message))) {
+    console.warn('[db] Turso connection error -- reconnecting on next request:', message)
     try { db?.close() } catch { /* ignore */ }
     db = null
     dbConnectedMode = null
     dbLastVerifiedAt = 0
-    const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
-    for (const suffix of ['', '-wal', '-shm', '-info']) {
-      try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
-    }
-    return
-  }
-  // Stale local replica missing a table that exists on the remote primary
-  // (e.g. a table added to applyIncrementalSchema() while this process was
-  // already running, or a sync that silently didn't pick up new DDL). This
-  // used to require manually killing the server and deleting turso-replica.db*
-  // by hand. Self-heal instead: wipe the replica so the very next request
-  // triggers a full fresh sync from Turso via tryOpenReplica() in getDb().
-  if (dbConnectedMode === 'turso' && /no such table/i.test(message)) {
-    console.warn('[db] Turso replica missing a table that exists remotely -- wiping replica to force full resync:', message)
-    try { db?.close() } catch { /* ignore */ }
-    db = null
-    dbConnectedMode = null
-    dbLastVerifiedAt = 0
-    const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
-    for (const suffix of ['', '-wal', '-shm', '-info']) {
-      try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
-    }
   }
 }
 
@@ -612,15 +593,16 @@ function wakeUpTurso(url: string, authToken: string): void {
 }
 
 export function getDb(): AppDatabase {
-  // â”€â”€ Turso health check: re-verify the stream every TURSO_VERIFY_INTERVAL_MS â”€â”€
+  // â”€â”€ Turso health check: re-verify the connection every TURSO_VERIFY_INTERVAL_MS â”€â”€
+  // (Hrana streams expire after ~5 min idle, so ping with a cheap query.)
   if (db && dbConnectedMode === 'turso') {
     const now = Date.now()
     if (now - dbLastVerifiedAt > TURSO_VERIFY_INTERVAL_MS) {
       try {
-        db.sync()
+        db.prepare('SELECT 1').get()
         dbLastVerifiedAt = now
       } catch (err) {
-        console.warn('[db] Turso sync failed during health check, reconnecting:', (err as Error).message)
+        console.warn('[db] Turso health check failed, reconnecting:', (err as Error).message)
         try { db.close() } catch { /* ignore */ }
         db = null
         dbConnectedMode = null
@@ -640,62 +622,21 @@ export function getDb(): AppDatabase {
       throw new DatabaseUnavailableError('SQL Server mode requires getDbAsync(). getDb() only supports Turso.')
     }
 
-    // Use embedded replica: libsql syncs from Turso into a local file.
-    // This avoids the hrana protocol 502 issues with the native binary.
-    const replicaPath = path.resolve(process.cwd(), 'turso-replica.db')
-
-    // Always remove stale WAL/SHM sidecars before opening; they are safe to
-    // delete because the replica can be fully re-synced from Turso.
-    for (const suffix of ['-wal', '-shm']) {
-      try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present — fine */ }
-    }
-
-    const tryOpenReplica = (): AppDatabase => {
-      const candidate = new Database(replicaPath, { syncUrl: target.url, authToken: target.authToken } as Database.Options)
-      try {
-        candidate.sync()
-      } catch (syncErr) {
-        // Close the failed candidate immediately so its file handle doesn't
-        // linger and block the corruption-recovery unlink/retry below
-        // (especially on Windows, where an open handle prevents deletion).
-        try { candidate.close() } catch { /* ignore */ }
-        throw syncErr
-      }
-      return candidate
-    }
-
+    // Connect directly to Turso online — no local embedded replica file.
+    // Reads/writes always go straight to the remote primary, so there is no
+    // local cache that can drift out of sync with the remote schema (this
+    // used to cause "no such table" errors after a fresh table was added).
     try {
-      console.log(`[db] Connecting to Turso via embedded replica: ${target.url}`)
-      db = tryOpenReplica()
+      console.log(`[db] Connecting to Turso (remote): ${target.url}`)
+      wakeUpTurso(target.url, target.authToken)
+      db = new Database(target.url, { authToken: target.authToken } as Database.Options)
       dbConnectedMode = 'turso'
       dbLastVerifiedAt = Date.now()
-      console.log('[db] Turso embedded replica ready')
+      console.log('[db] Turso connection ready')
       return db
     } catch (err) {
       const msg = (err as Error).message ?? ''
-      const isCorrupted = msg.includes('WalConflict') || msg.includes('InvalidLocalState') || msg.includes('metadata file exists') || msg.toLowerCase().includes('malformed')
-      if (isCorrupted) {
-        console.warn('[db] Turso replica corrupted, wiping and retrying:', msg)
-        try { db?.close() } catch { /* ignore */ }
-        db = null
-        for (const suffix of ['', '-wal', '-shm', '-info']) {
-          try { fs.unlinkSync(replicaPath + suffix) } catch { /* not present */ }
-        }
-        try {
-          db = tryOpenReplica()
-          dbConnectedMode = 'turso'
-          dbLastVerifiedAt = Date.now()
-          console.log('[db] Turso embedded replica ready (after wipe)')
-          return db
-        } catch (retryErr) {
-          const finalMsg = (retryErr as Error).message ?? msg
-          console.warn('[db] Turso replica recovery failed, database unavailable:', finalMsg)
-          try { db?.close() } catch { /* ignore */ }
-          db = null
-          throw new DatabaseUnavailableError()
-        }
-      }
-      console.warn('[db] Turso embedded replica connection failed, database unavailable:', msg)
+      console.warn('[db] Turso connection failed, database unavailable:', msg)
       try { db?.close() } catch { /* ignore */ }
       db = null
       throw new DatabaseUnavailableError()
@@ -904,28 +845,11 @@ function applyIncrementalSchema(database: AppDatabase): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_settings_tabs_sort ON settings_tabs(sort_order)
   `)
-  // Turso embedded replicas proxy writes to the remote primary but do not
-  // reflect them in the local replica file until an explicit sync(); without
-  // this, a fresh environment (new container, other deployment slot, etc.)
-  // that just created settings_tabs above can fail the very next read with
-  // "no such table: settings_tabs" because the local file hasn't caught up.
-  // Retry sync + read up to 5 times (~2.5 s total) to overcome Turso sync lag.
-  let settingsTabsCount = 0
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try { database.sync() } catch { /* retry below */ }
-    try {
-      const row = database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined
-      if (row !== undefined) {
-        settingsTabsCount = row.n
-        break
-      }
-    } catch {
-      // Table not yet visible in local replica — wait and retry
-    }
-    // Exponential backoff: 100ms, 200ms, 400ms, 800ms
-    const delayMs = 100 * Math.pow(2, attempt)
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs)
-  }
+  // Direct remote connection — no embedded replica sync-lag to wait out.
+  // Seed the default tabs once, right after ensuring the table exists.
+  const settingsTabsCount = (
+    database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined
+  )?.n ?? 0
   if (settingsTabsCount === 0) {
     database.exec(`
       INSERT OR IGNORE INTO settings_tabs (name, slug, sort_order, visible_to)
@@ -951,7 +875,6 @@ export function setupDatabase(): void {
   try {
     const database = getDb()
     applyIncrementalSchema(database)
-    try { database.sync() } catch { /* sync failure is non-fatal */ }
     console.log('[db] Turso incremental schema applied')
   } catch (err) {
     console.warn('[db] Turso incremental schema failed at startup (non-fatal, server will continue):', (err as Error).message)
