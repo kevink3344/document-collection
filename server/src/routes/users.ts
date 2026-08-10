@@ -4,6 +4,7 @@ import type { DbAdapter } from '../database/adapter'
 import { authenticateToken } from '../middleware/auth'
 import { loadRequestUserContext, type RequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole, type UserOrganizationMembership } from '../lib/userAccess'
+import { hashPassword } from './invitations'
 
 const router = Router()
 
@@ -368,9 +369,16 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
         }
       }
 
+      const defaultPw = process.env.DEFAULT_USER_PASSWORD
+      if (!defaultPw) {
+        throw new HttpError(500, 'DEFAULT_USER_PASSWORD is not set in environment variables')
+      }
+      const passwordHash = hashPassword(defaultPw)
+
       const inserted = await tx.execute(
-        'INSERT INTO users (name, email, role) VALUES (?, ?, ?)',
-        [name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user']
+        `INSERT INTO users (name, email, role, password_hash, must_change_password, invite_token)
+         VALUES (?, ?, ?, ?, 1, NULL)`,
+        [name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user', passwordHash]
       )
       const userId = Number(inserted.lastInsertRowid)
       await persistMemberships(userId, parsedPayload.systemRole, parsedPayload.memberships, tx)

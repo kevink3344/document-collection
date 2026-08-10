@@ -72,7 +72,7 @@ export default function CollectionTypePage() {
         <button
           type="button"
           onClick={handleSignupSheet}
-          className="h-full flex flex-col text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all"
+          className="h-full flex flex-col text-left rounded-2xl border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0F172A] p-6 shadow-sm hover:border-[#2563EB] hover:shadow-md transition-all relative overflow-hidden"
         >
           <div className="flex items-center gap-3 text-[#2563EB]">
             <CalendarCheck size={18} />
@@ -82,6 +82,9 @@ export default function CollectionTypePage() {
           <p className="mt-2 text-sm text-[#475569] dark:text-[#CBD5E1]">
             Create a list of date and time slots that people can sign up for, with configurable capacity per slot.
           </p>
+          <span className="absolute top-0 right-0 inline-flex items-center rounded-bl-lg rounded-tr-2xl bg-[#FEF3C7] px-3 py-1 text-xs font-semibold text-[#92400E] dark:bg-[#78350F] dark:text-[#FDE68A]">
+            Coming soon
+          </span>
         </button>
       </div>
     </div>
