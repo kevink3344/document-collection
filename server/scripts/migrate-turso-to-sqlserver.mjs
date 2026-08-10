@@ -90,7 +90,13 @@ function getSqlServerCreateTableStatement(tableName) {
           [role] NVARCHAR(50) NOT NULL CONSTRAINT [DF_users_role] DEFAULT 'user',
           [organization] NVARCHAR(255) NULL,
           [organization_id] INT NULL CONSTRAINT [FK_users_organization] FOREIGN KEY REFERENCES [dbo].[organizations]([id]),
-          [created_at] DATETIME2 NOT NULL CONSTRAINT [DF_users_created_at] DEFAULT GETDATE()
+          [created_at] DATETIME2 NOT NULL CONSTRAINT [DF_users_created_at] DEFAULT GETDATE(),
+          [password_hash] NVARCHAR(512) NULL,
+          [must_change_password] BIT NOT NULL CONSTRAINT [DF_users_must_change_password] DEFAULT 0,
+          [invite_token] NVARCHAR(255) NULL,
+          [invite_token_expires_at] DATETIME2 NULL,
+          [reset_token] NVARCHAR(255) NULL,
+          [reset_token_expires_at] DATETIME2 NULL
         )
       `
 

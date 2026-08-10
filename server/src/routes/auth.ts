@@ -420,20 +420,29 @@ router.post('/change-password', authenticateToken, async (req: Request, res: Res
   }
 
   const newHash = hashPassword(newPassword)
-  await db.execute(
+  const result = await db.execute(
     'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
     [newHash, row.id]
   )
 
-  // Re-issue cookie with updated token so mustChangePassword is cleared
-  const updatedUser = await loadUserAccessProfile(row.id)
-  if (updatedUser) {
-    const token = signUserToken(updatedUser)
-    setAuthCookie(res, token)
-    res.json({ message: 'Password changed successfully.', user: toApiUser(updatedUser) })
-  } else {
-    res.json({ message: 'Password changed successfully.' })
+  if (result.changes === 0) {
+    console.error(`[auth] change-password: UPDATE affected 0 rows for user ${row.id}`)
+    res.status(500).json({ error: 'Failed to update password. Please try again.' })
+    return
   }
+
+  // Re-issue cookie with updated token so mustChangePassword is cleared.
+  // Use the same db adapter instance so we read from the same connection
+  // pool and avoid any stale-read edge cases.
+  const updatedUser = await loadUserAccessProfile(row.id, undefined, db)
+  if (!updatedUser) {
+    res.status(500).json({ error: 'Failed to load user profile after password change.' })
+    return
+  }
+
+  const token = signUserToken(updatedUser)
+  setAuthCookie(res, token)
+  res.json({ message: 'Password changed successfully.', user: toApiUser(updatedUser) })
 })
 
 router.post('/forgot-password', async (req: Request, res: Response) => {

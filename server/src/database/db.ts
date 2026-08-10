@@ -860,6 +860,59 @@ function applyIncrementalSchema(database: AppDatabase): void {
 }
 
 
+/**
+ * Apply idempotent ALTER TABLE migrations to SQL Server.
+ * Called once at startup when DB_MODE=sqlserver.
+ * Each statement is wrapped in its own try/catch so one failure doesn't
+ * block the rest — columns that already exist will throw and we ignore that.
+ */
+async function applySqlServerMigrations(): Promise<void> {
+  const adapter = await getDbAsync()
+  if (adapter.dialect !== 'sqlserver') return
+
+  const migrations: Array<{ name: string; sql: string }> = [
+    {
+      name: 'users.password_hash',
+      sql: `ALTER TABLE [users] ADD [password_hash] NVARCHAR(512) NULL`,
+    },
+    {
+      name: 'users.must_change_password',
+      sql: `ALTER TABLE [users] ADD [must_change_password] BIT NOT NULL CONSTRAINT [DF_users_must_change_password] DEFAULT 0`,
+    },
+    {
+      name: 'users.invite_token',
+      sql: `ALTER TABLE [users] ADD [invite_token] NVARCHAR(255) NULL`,
+    },
+    {
+      name: 'users.invite_token_expires_at',
+      sql: `ALTER TABLE [users] ADD [invite_token_expires_at] DATETIME2 NULL`,
+    },
+    {
+      name: 'users.reset_token',
+      sql: `ALTER TABLE [users] ADD [reset_token] NVARCHAR(255) NULL`,
+    },
+    {
+      name: 'users.reset_token_expires_at',
+      sql: `ALTER TABLE [users] ADD [reset_token_expires_at] DATETIME2 NULL`,
+    },
+  ]
+
+  for (const migration of migrations) {
+    try {
+      await adapter.execute(migration.sql)
+      console.log(`[db] SQL Server migration applied: ${migration.name}`)
+    } catch (err) {
+      const msg = (err as Error).message ?? ''
+      // Ignore "column already exists" errors (idempotent)
+      if (/already exists|duplicate column/i.test(msg)) {
+        // column already present — nothing to do
+      } else {
+        console.warn(`[db] SQL Server migration failed (${migration.name}):`, msg)
+      }
+    }
+  }
+}
+
 export function setupDatabase(): void {
   // SQL Server and Turso are the only supported modes. Local standalone SQLite
   // is not supported. If the configured backend can't be reached, the server
@@ -867,7 +920,10 @@ export function setupDatabase(): void {
   // requireDatabase middleware / DatabaseUnavailableError until it recovers.
   const mode = getConfiguredDatabaseMode()
   if (mode === 'sqlserver') {
-    console.log('[db] sqlserver mode — skipping local schema/migration setup')
+    console.log('[db] sqlserver mode — applying SQL Server migrations')
+    applySqlServerMigrations().catch(err => {
+      console.warn('[db] SQL Server migrations failed (non-fatal):', (err as Error).message)
+    })
     return
   }
 
