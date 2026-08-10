@@ -39,6 +39,7 @@ export default function ChangePasswordModal({ onSuccess }: Props) {
         body: JSON.stringify({ currentPassword: current, newPassword: next }),
       })
       const data = await res.json() as { message?: string; error?: string; user?: import('../../types').User }
+      console.log('[change-password] response', { ok: res.ok, status: res.status, data })
       if (!res.ok) {
         setError(data.error ?? 'Failed to change password.')
         return

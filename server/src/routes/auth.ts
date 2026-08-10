@@ -424,6 +424,7 @@ router.post('/change-password', authenticateToken, async (req: Request, res: Res
     'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
     [newHash, row.id]
   )
+  console.log(`[auth] change-password: dialect=${db.dialect} userId=${row.id} changes=${result.changes}`)
 
   if (result.changes === 0) {
     console.error(`[auth] change-password: UPDATE affected 0 rows for user ${row.id}`)
@@ -439,6 +440,7 @@ router.post('/change-password', authenticateToken, async (req: Request, res: Res
     res.status(500).json({ error: 'Failed to load user profile after password change.' })
     return
   }
+  console.log(`[auth] change-password: post-update mustChangePassword=${updatedUser.mustChangePassword} passwordHashPresent=${!!updatedUser.passwordHash}`)
 
   const token = signUserToken(updatedUser)
   setAuthCookie(res, token)
