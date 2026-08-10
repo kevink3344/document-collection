@@ -169,5 +169,6 @@ export function toApiUser(profile: UserAccessProfile) {
     createdAt: profile.createdAt,
     organizations: profile.organizations,
     mustChangePassword: profile.mustChangePassword,
+    hasPassword: Boolean(profile.passwordHash),
   }
 }

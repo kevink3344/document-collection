@@ -28,6 +28,7 @@ export interface User {
   createdAt: string
   organizations: UserOrganizationMembership[]
   mustChangePassword?: boolean
+  hasPassword?: boolean
 }
 
 export interface Organization {

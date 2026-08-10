@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import type { UserRole } from './types'
-import ChangePasswordModal from './components/common/ChangePasswordModal'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import CollectionsPage from './pages/CollectionsPage'
@@ -24,6 +23,7 @@ import ApprovalsPage from './pages/ApprovalsPage'
 import SignupSheetBuilderPage from './pages/SignupSheetBuilderPage'
 import SignupSheetFillPage from './pages/SignupSheetFillPage'
 import ExportCsvPage from './pages/ExportCsvPage'
+import ChangePasswordPage from './pages/ChangePasswordPage'
 
 function RequireAuth() {
   const { user } = useAuth()
@@ -39,7 +39,7 @@ function RequireRole({ allowed, fallback = '/dashboard' }: { allowed: UserRole[]
 }
 
 export default function App() {
-  const { user, clearMustChangePassword } = useAuth()
+  const { user } = useAuth()
   const defaultAuthenticatedRoute = user?.role === 'user'
     ? '/dashboard'
     : user?.role === 'reviewer'
@@ -48,11 +48,6 @@ export default function App() {
 
   return (
     <>
-      {/* Force-change password modal — shown over everything until resolved.
-          Super admins are exempt since their password is managed via SUPER_ADMIN_PASSWORD env var. */}
-      {user?.mustChangePassword && user?.role !== 'super_admin' && (
-        <ChangePasswordModal onSuccess={clearMustChangePassword} />
-      )}
     <Routes>
       {/* Public */}
       <Route
@@ -68,6 +63,7 @@ export default function App() {
           <Route index element={<Navigate to={defaultAuthenticatedRoute} replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/my-submissions" element={<MySubmissionsPage />} />
           <Route path="/my-submissions/:responseId" element={<MySubmissionDetailPage />} />

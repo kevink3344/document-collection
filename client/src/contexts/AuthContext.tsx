@@ -8,7 +8,7 @@ interface AuthContextValue {
   signIn: (user: User, token: string) => void
   signOut: () => void
   switchOrganization: (organizationId: number) => Promise<void>
-  clearMustChangePassword: (updatedUser: User) => void
+  updateUser: (updatedUser: User) => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -112,13 +112,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const clearMustChangePassword = (updatedUser: User) => {
+  const updateUser = (updatedUser: User) => {
     setUser(updatedUser)
     localStorage.setItem('dcp-user', JSON.stringify(updatedUser))
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, signIn, signOut, switchOrganization, clearMustChangePassword }}>
+    <AuthContext.Provider value={{ user, token, signIn, signOut, switchOrganization, updateUser }}>
       {children}
     </AuthContext.Provider>
   )

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import TopNavBar from '../components/layout/TopNavBar'
 import SideNav from '../components/layout/SideNav'
+import DefaultPasswordBanner from '../components/layout/DefaultPasswordBanner'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function HomePage() {
@@ -11,6 +12,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen flex flex-col bg-[#FAFAFA] dark:bg-[#0F172A] overflow-x-hidden">
       <TopNavBar onAppIconClick={() => setMobileNavOpen(open => !open)} />
+      <DefaultPasswordBanner />
       <div className="flex flex-1 overflow-hidden">
         <SideNav
           mobileDrawerOpen={mobileNavOpen}
