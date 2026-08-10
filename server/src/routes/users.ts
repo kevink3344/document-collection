@@ -522,6 +522,7 @@ router.post('/:id/reset-password', authenticateToken, async (req: Request, res: 
   }
 
   const newHash = hashPassword(defaultPw)
+  console.log(`[users] reset-password: userId=${id} defaultPwLen=${defaultPw.length} newHashLen=${newHash.length}`)
   await db.execute(
     'UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?',
     [newHash, id]

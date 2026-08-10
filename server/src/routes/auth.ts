@@ -414,6 +414,9 @@ router.post('/change-password', authenticateToken, async (req: Request, res: Res
     return
   }
 
+  const [storedSalt, storedHash] = row.password_hash.split(':')
+  console.log(`[auth] change-password: userId=${row.id} currentPwLen=${currentPassword.length} storedHashLen=${row.password_hash.length} saltLen=${storedSalt?.length} hashLen=${storedHash?.length}`)
+
   if (!verifyPassword(currentPassword, row.password_hash)) {
     res.status(401).json({ error: 'Current password is incorrect' })
     return
