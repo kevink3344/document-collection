@@ -857,6 +857,27 @@ function applyIncrementalSchema(database: AppDatabase): void {
              ('Other', 'other', 1, 'all')
     `)
   }
+
+  // collections.status CHECK constraint was created without 'archived' — rebuild the
+  // table (SQLite can't ALTER a CHECK constraint in place) so archiving no longer 500s.
+  try {
+    const collectionsTableSql = (
+      database.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collections'`).get() as { sql?: string } | undefined
+    )?.sql
+    if (collectionsTableSql && !/'archived'/.test(collectionsTableSql)) {
+      const rebuiltSql = collectionsTableSql
+        .replace(/CREATE TABLE(?:\s+IF NOT EXISTS)?\s+collections\b/i, 'CREATE TABLE collections_new')
+        .replace(/CHECK\(status IN \('draft',\s*'published'\)\)/i, "CHECK(status IN ('draft', 'published', 'archived'))")
+      database.exec(rebuiltSql)
+      database.exec(`INSERT INTO collections_new SELECT * FROM collections`)
+      database.exec(`DROP TABLE collections`)
+      database.exec(`ALTER TABLE collections_new RENAME TO collections`)
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_collections_source_template ON collections(source_template_collection_id)`)
+      console.log('[db] Migration: expanded collections.status CHECK constraint to include archived')
+    }
+  } catch (err) {
+    console.error('[db] Migration: failed to expand collections.status CHECK constraint:', (err as Error).message)
+  }
 }
 
 

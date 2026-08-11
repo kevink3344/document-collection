@@ -481,13 +481,16 @@ export default function CollectionBuilderPage() {
 
   useEffect(() => {
     fetch('/api/info')
-      .then(r => r.json() as Promise<{ approvalWorkflowEnabled?: boolean; ticketSystemEnabled?: boolean }>)
+      .then(r => r.json() as Promise<{ approvalWorkflowEnabled?: boolean; ticketSystemEnabled?: boolean; defaultImageLogoUrl?: string | null }>)
       .then(info => {
         setApprovalWorkflowFeatureEnabled(info.approvalWorkflowEnabled !== false)
         setTicketSystemFeatureEnabled(info.ticketSystemEnabled !== false)
+        if (!isEdit && info.defaultImageLogoUrl) {
+          setLogoUrl(current => current || info.defaultImageLogoUrl!)
+        }
       })
       .catch(() => { /* keep defaults enabled */ })
-  }, [])
+  }, [isEdit])
 
   // Load existing collection when editing
   useEffect(() => {
