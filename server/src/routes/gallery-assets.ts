@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from 'express'
 import multer from 'multer'
-import { getDbAsync } from '../database/db'
+import { getDbAsync, getConfiguredDatabaseMode } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { isAdminOrSuperAdmin, loadRequestUserContext, resolveManagedOrganizationId } from '../middleware/organizationAccess'
-import { uploadDocument, downloadDocument, deleteDocument, getDocumentStorageMode } from '../services/documentStorage'
+import { uploadDocument, downloadDocument, deleteDocument } from '../services/documentStorage'
 
 const router = Router()
 
@@ -50,6 +50,10 @@ function serialiseTags(raw: string | undefined): string | null {
   return tags.length > 0 ? JSON.stringify(tags) : null
 }
 
+function resolveLocalStorageLocation(): 'turso_db' | 'sql_server' {
+  return getConfiguredDatabaseMode() === 'sqlserver' ? 'sql_server' : 'turso_db'
+}
+
 function toApiGalleryAsset(row: DbGalleryAssetRow) {
   return {
     id: row.id,
@@ -62,7 +66,7 @@ function toApiGalleryAsset(row: DbGalleryAssetRow) {
     sizeBytes: row.size_bytes,
     usageCount: row.usage_count ?? 0,
     fileUrl: `/api/gallery-assets/${row.id}/file`,
-    storageLocation: row.drive_file_id.startsWith('local:') ? 'turso_db' as const : 'google_drive' as const,
+    storageLocation: row.drive_file_id.startsWith('local:') ? resolveLocalStorageLocation() : ('google_drive' as const),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
