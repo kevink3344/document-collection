@@ -2311,10 +2311,14 @@ router.put('/:id', authenticateToken, async (req: Request, res: Response) => {
       const { versionId } = await createCollectionVersion(id, req.user!.sub, requestedStatus, incomingFields)
       targetVersionId = versionId
     } else if (responseCount === 0) {
-      await db.execute('DELETE FROM collection_fields WHERE collection_id = ? AND version_id = ?', [id, activeVersionId])
-      if (incomingFields.length) {
-        await insertFieldsForVersion(id, activeVersionId, incomingFields)
-      }
+      // Atomic: if the insert fails partway through, the delete rolls back too,
+      // so a failed save never leaves the collection with zero fields.
+      await db.transaction(async (tx) => {
+        await tx.execute('DELETE FROM collection_fields WHERE collection_id = ? AND version_id = ?', [id, activeVersionId])
+        if (incomingFields.length) {
+          await insertFieldsForVersion(id, activeVersionId, incomingFields)
+        }
+      })
     }
 
     await db.execute(

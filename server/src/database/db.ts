@@ -1,4 +1,4 @@
-﻿import Database from 'libsql'
+import Database from 'libsql'
 import sql from 'mssql'
 import { execSync } from 'child_process'
 import fs from 'fs'
@@ -45,7 +45,7 @@ function isConnectionResetError(err: unknown): boolean {
 export function resetDbIfStreamError(err: unknown): void {
   const message = (err as { message?: string })?.message ?? ''
   if (isStreamExpiredError(err) || isConnectionResetError(err)) {
-    console.warn('[db] Turso stream expired/reset â€“ resetting connection for next request')
+    console.warn('[db] Turso stream expired/reset – resetting connection for next request')
     try { db?.close() } catch { /* ignore */ }
     db = null
     dbConnectedMode = null
@@ -54,7 +54,7 @@ export function resetDbIfStreamError(err: unknown): void {
   }
   // Malformed connection or schema-drift error: just drop the cached client so
   // the next request opens a brand-new connection straight to Turso. There is
-  // no local replica file anymore, so there is nothing to wipe from disk —
+  // no local replica file anymore, so there is nothing to wipe from disk �
   // the remote database is always the single source of truth.
   if (dbConnectedMode === 'turso' && (message.toLowerCase().includes('malformed') || /no such table/i.test(message))) {
     console.warn('[db] Turso connection error -- reconnecting on next request:', message)
@@ -74,7 +74,7 @@ const DATABASE_MODE_FILE = path.resolve(process.cwd(), '.db-mode')
 function normalizeDatabaseMode(value: string | undefined): 'turso' | 'sqlserver' | null {
   const normalized = value?.trim().toLowerCase()
   if (normalized === 'sqlite') {
-    console.warn('[db] Ignoring unsupported database mode "sqlite" — local SQLite is no longer supported.')
+    console.warn('[db] Ignoring unsupported database mode "sqlite" � local SQLite is no longer supported.')
     return null
   }
   if (normalized === 'turso' || normalized === 'sqlserver') {
@@ -207,7 +207,7 @@ function rebuildCollectionResponseValues(database: AppDatabase): void {
     })()
     console.log('[db] Migration: rebuilt collection_response_values to refresh collection_fields foreign key')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -245,7 +245,7 @@ function rebuildCollectionTableColumns(database: AppDatabase, preserveListOption
     })()
     console.log('[db] Migration: rebuilt collection_table_columns to refresh collection_fields foreign key')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -315,7 +315,7 @@ function rebuildTicketFields(database: AppDatabase): void {
     })()
     console.log('[db] Migration: rebuilt ticket_fields for template ownership')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -353,7 +353,7 @@ function rebuildTicketTableColumns(database: AppDatabase, preserveListOptions: b
     })()
     console.log('[db] Migration: rebuilt ticket_table_columns to refresh ticket_fields foreign key')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -413,7 +413,7 @@ function rebuildTicketResponses(database: AppDatabase): void {
     })()
     console.log('[db] Migration: rebuilt ticket_responses for multi-ticket support')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -440,7 +440,7 @@ function rebuildTicketResponseValues(database: AppDatabase): void {
     })()
     console.log('[db] Migration: rebuilt ticket_response_values to refresh ticket foreign keys')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -499,7 +499,7 @@ function rebuildTicketHistory(database: AppDatabase): void {
     })()
     console.log('[db] Migration: rebuilt ticket_history to refresh ticket_responses foreign key')
   } finally {
-    database.exec('PRAGMA foreign_keys = ON')
+    database.exec('PRAGMA foreign_keys = OFF')
   }
 }
 
@@ -554,7 +554,7 @@ function tableExists(database: AppDatabase, tableName: string): boolean {
 function resolveDbTarget(): DbTarget | null {
   const configuredMode = getConfiguredDatabaseMode()
 
-  // ── Explicit DB_MODE=sqlserver override ──────────────────────────────────
+  // -- Explicit DB_MODE=sqlserver override ----------------------------------
   if (configuredMode === 'sqlserver') {
     const sqlServer   = process.env.AZURE_SQL_SERVER?.trim()
     const sqlDatabase = process.env.AZURE_SQL_DATABASE?.trim()
@@ -567,14 +567,14 @@ function resolveDbTarget(): DbTarget | null {
     return null
   }
 
-  // ── Turso: check all known credential variable names ─────────────────────
+  // -- Turso: check all known credential variable names ---------------------
   const tursoUrl   = (process.env.DATABASE_URL ?? process.env.TURSO_DATABASE_URL)?.trim()
   const tursoToken = (process.env.DATABASE_AUTH_TOKEN ?? process.env.TURSO_AUTH_TOKEN)?.trim()
   if (looksLikeValidTursoConnection(tursoUrl, tursoToken)) {
     return { mode: 'turso', url: tursoUrl!, authToken: tursoToken! }
   }
 
-  // ── No valid database configured — caller must handle gracefully (HTTP 503) ──
+  // -- No valid database configured � caller must handle gracefully (HTTP 503) --
   console.warn('[db] No valid Turso credentials found (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN or DATABASE_URL/DATABASE_AUTH_TOKEN). Local SQLite is not supported.')
   return null
 }
@@ -593,12 +593,12 @@ function wakeUpTurso(url: string, authToken: string): void {
     })
     console.log('[db] Turso wake-up ping succeeded')
   } catch {
-    // ignore â€” native libsql will report the real error
+    // ignore — native libsql will report the real error
   }
 }
 
 export function getDb(): AppDatabase {
-  // â”€â”€ Turso health check: re-verify the connection every TURSO_VERIFY_INTERVAL_MS â”€â”€
+  // ── Turso health check: re-verify the connection every TURSO_VERIFY_INTERVAL_MS ──
   // (Hrana streams expire after ~5 min idle, so ping with a cheap query.)
   if (db && dbConnectedMode === 'turso') {
     const now = Date.now()
@@ -627,7 +627,7 @@ export function getDb(): AppDatabase {
       throw new DatabaseUnavailableError('SQL Server mode requires getDbAsync(). getDb() only supports Turso.')
     }
 
-    // Connect directly to Turso online — no local embedded replica file.
+    // Connect directly to Turso online � no local embedded replica file.
     // Reads/writes always go straight to the remote primary, so there is no
     // local cache that can drift out of sync with the remote schema (this
     // used to cause "no such table" errors after a fresh table was added).
@@ -635,6 +635,14 @@ export function getDb(): AppDatabase {
       console.log(`[db] Connecting to Turso (remote): ${target.url}`)
       wakeUpTurso(target.url, target.authToken)
       db = new Database(target.url, { authToken: target.authToken } as Database.Options)
+      // libsql defaults foreign_keys ON for direct Turso connections (unlike
+      // vanilla sqlite3, which defaults OFF). This app was never built/tested
+      // with FK enforcement on, and several historical table-rebuild migrations
+      // left dangling FK references (renamed-away tables) that would otherwise
+      // cause spurious "FOREIGN KEY constraint failed" errors and, worse,
+      // implicit cascade deletes on DROP TABLE. Force it off to match the
+      // behavior this codebase has always assumed.
+      try { db.exec('PRAGMA foreign_keys = OFF') } catch { /* ignore if unsupported */ }
       dbConnectedMode = 'turso'
       dbLastVerifiedAt = Date.now()
       console.log('[db] Turso connection ready')
@@ -710,7 +718,7 @@ export async function getDbAsync(): Promise<DbAdapter> {
     }
   }
 
-  // turso — wrap libsql in LibsqlAdapter
+  // turso � wrap libsql in LibsqlAdapter
   const rawDb = getDb()
   return new LibsqlAdapter(rawDb, () => {
     try { db?.close() } catch { /* ignore */ }
@@ -735,7 +743,7 @@ export async function closeMssqlPool(): Promise<void> {
  * against the SQL Server connection pool. No-op in non-sqlserver modes.
  *
  * Batches that contain only SET IDENTITY_INSERT are merged with the
- * immediately following batch so the setting stays active — mssql's
+ * immediately following batch so the setting stays active � mssql's
  * connection pool calls sp_reset_connection between requests, which
  * would otherwise reset IDENTITY_INSERT before the INSERT runs.
  */
@@ -755,7 +763,7 @@ export async function runSqlServerSeedFile(filePath: string): Promise<void> {
     .filter((b) => b.length > 0)
 
   // Merge any batch that ends with SET IDENTITY_INSERT ... ON with the
-  // next batch so they run in the same request — mssql's connection pool
+  // next batch so they run in the same request � mssql's connection pool
   // calls sp_reset_connection between requests, which would otherwise
   // reset IDENTITY_INSERT before the INSERT runs.
   const batches: string[] = []
@@ -856,7 +864,7 @@ function applyIncrementalSchema(database: AppDatabase): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_settings_tabs_sort ON settings_tabs(sort_order)
   `)
-  // Direct remote connection — no embedded replica sync-lag to wait out.
+  // Direct remote connection � no embedded replica sync-lag to wait out.
   // Seed the default tabs once, right after ensuring the table exists.
   const settingsTabsCount = (
     database.prepare('SELECT COUNT(*) AS n FROM settings_tabs').get() as { n: number } | undefined
@@ -869,25 +877,84 @@ function applyIncrementalSchema(database: AppDatabase): void {
     `)
   }
 
-  // collections.status CHECK constraint was created without 'archived' — rebuild the
+  // collections.status CHECK constraint was created without 'archived' � rebuild the
   // table (SQLite can't ALTER a CHECK constraint in place) so archiving no longer 500s.
   try {
     const collectionsTableSql = (
       database.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collections'`).get() as { sql?: string } | undefined
     )?.sql
     if (collectionsTableSql && !/'archived'/.test(collectionsTableSql)) {
-      const rebuiltSql = collectionsTableSql
-        .replace(/CREATE TABLE(?:\s+IF NOT EXISTS)?\s+collections\b/i, 'CREATE TABLE collections_new')
-        .replace(/CHECK\(status IN \('draft',\s*'published'\)\)/i, "CHECK(status IN ('draft', 'published', 'archived'))")
-      database.exec(rebuiltSql)
-      database.exec(`INSERT INTO collections_new SELECT * FROM collections`)
-      database.exec(`DROP TABLE collections`)
-      database.exec(`ALTER TABLE collections_new RENAME TO collections`)
-      database.exec(`CREATE INDEX IF NOT EXISTS idx_collections_source_template ON collections(source_template_collection_id)`)
-      console.log('[db] Migration: expanded collections.status CHECK constraint to include archived')
+      database.exec('PRAGMA foreign_keys = OFF')
+      try {
+        const rebuiltSql = collectionsTableSql
+          .replace(/CREATE TABLE(?:\s+IF NOT EXISTS)?\s+collections\b/i, 'CREATE TABLE collections_new')
+          .replace(/CHECK\(status IN \('draft',\s*'published'\)\)/i, "CHECK(status IN ('draft', 'published', 'archived'))")
+        database.exec(rebuiltSql)
+        database.exec(`INSERT INTO collections_new SELECT * FROM collections`)
+        database.exec(`DROP TABLE collections`)
+        database.exec(`ALTER TABLE collections_new RENAME TO collections`)
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_collections_source_template ON collections(source_template_collection_id)`)
+        console.log('[db] Migration: expanded collections.status CHECK constraint to include archived')
+      } finally {
+        database.exec('PRAGMA foreign_keys = OFF')
+      }
     }
   } catch (err) {
     console.error('[db] Migration: failed to expand collections.status CHECK constraint:', (err as Error).message)
+  }
+
+  // collection_table_columns.field_id may still reference a long-dropped,
+  // renamed-away collection_fields table (e.g. collection_fields_pre_document)
+  // left over from an earlier table-rebuild migration. Rebuild it to point at
+  // the current collection_fields table.
+  try {
+    const tableColNames = new Set(getTableColumns(database, 'collection_table_columns').map(c => c.name))
+    const tableSqlRow = (
+      database.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_table_columns'`).get() as { sql?: string } | undefined
+    )
+    const supportsListType = tableSqlRow?.sql?.includes("'list'") ?? false
+    const hasListOptionsColumn = tableColNames.has('list_options')
+    const hasStaleTableColumnsFieldFk =
+      hasForeignKeyTarget(database, 'collection_table_columns', 'collection_fields_old') ||
+      hasForeignKeyTarget(database, 'collection_table_columns', 'collection_fields_pre_location') ||
+      hasForeignKeyTarget(database, 'collection_table_columns', 'collection_fields_pre_document')
+
+    if (!supportsListType || !hasListOptionsColumn || hasStaleTableColumnsFieldFk) {
+      rebuildCollectionTableColumns(database, hasListOptionsColumn)
+      console.log('[db] Migration: rebuilt collection_table_columns to refresh collection_fields foreign key')
+    }
+  } catch (err) {
+    console.error('[db] Migration: failed to rebuild collection_table_columns:', (err as Error).message)
+  }
+
+  // Repair collections whose active_version_id points at a collection_versions
+  // row that no longer exists (e.g. lost to a cascade delete). Runs every
+  // startup (not one-time-guarded) since it's a cheap, idempotent check.
+  try {
+    const orphanedCollections = database
+      .prepare(`
+        SELECT c.id, c.active_version_id, c.status, c.created_by
+        FROM collections c
+        LEFT JOIN collection_versions v ON v.id = c.active_version_id
+        WHERE c.active_version_id IS NOT NULL AND v.id IS NULL
+      `)
+      .all() as unknown as Array<{ id: number; active_version_id: number; status: string; created_by: number }>
+
+    if (orphanedCollections.length > 0) {
+      database.transaction(() => {
+        for (const col of orphanedCollections) {
+          database
+            .prepare(
+              `INSERT INTO collection_versions (id, collection_id, version_number, status, created_by, published_at)
+               VALUES (?, ?, 1, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`
+            )
+            .run(col.active_version_id, col.id, col.status === 'archived' ? 'published' : col.status, col.created_by, col.status)
+        }
+      })()
+      console.log(`[db] Migration: recreated ${orphanedCollections.length} orphaned collection_versions row(s) for collections with a dangling active_version_id`)
+    }
+  } catch (err) {
+    console.error('[db] Migration: failed to repair orphaned collection_versions:', (err as Error).message)
   }
 }
 
@@ -896,7 +963,7 @@ function applyIncrementalSchema(database: AppDatabase): void {
  * Apply idempotent ALTER TABLE migrations to SQL Server.
  * Called once at startup when DB_MODE=sqlserver.
  * Each statement is wrapped in its own try/catch so one failure doesn't
- * block the rest — columns that already exist will throw and we ignore that.
+ * block the rest � columns that already exist will throw and we ignore that.
  */
 async function applySqlServerMigrations(): Promise<void> {
   const adapter = await getDbAsync()
@@ -937,7 +1004,7 @@ async function applySqlServerMigrations(): Promise<void> {
       const msg = (err as Error).message ?? ''
       // Ignore "column already exists" errors (idempotent)
       if (/already exists|duplicate column/i.test(msg)) {
-        // column already present — nothing to do
+        // column already present � nothing to do
       } else {
         console.warn(`[db] SQL Server migration failed (${migration.name}):`, msg)
       }
@@ -952,14 +1019,14 @@ export function setupDatabase(): void {
   // requireDatabase middleware / DatabaseUnavailableError until it recovers.
   const mode = getConfiguredDatabaseMode()
   if (mode === 'sqlserver') {
-    console.log('[db] sqlserver mode — applying SQL Server migrations')
+    console.log('[db] sqlserver mode � applying SQL Server migrations')
     applySqlServerMigrations().catch(err => {
       console.warn('[db] SQL Server migrations failed (non-fatal):', (err as Error).message)
     })
     return
   }
 
-  console.log('[db] turso mode — applying incremental schema to Turso')
+  console.log('[db] turso mode � applying incremental schema to Turso')
   try {
     const database = getDb()
     applyIncrementalSchema(database)
@@ -972,7 +1039,7 @@ export function setupDatabase(): void {
 /**
  * Returns true if a database backend appears configured/reachable.
  * Used by the requireDatabase middleware and the /api/health endpoint.
- * Note: for Turso this checks credential validity, not live connectivity —
+ * Note: for Turso this checks credential validity, not live connectivity �
  * getDb()/getDbAsync() will still throw DatabaseUnavailableError on actual
  * connection failure.
  */
@@ -988,7 +1055,7 @@ export function isDatabaseAvailable(): boolean {
 }
 
 function runMigrations(db: AppDatabase): void {
-  // â”€â”€ Migration tracking table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Migration tracking table ─────────────────────────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id         TEXT PRIMARY KEY,
@@ -1208,11 +1275,11 @@ function runMigrations(db: AppDatabase): void {
       })()
       console.log('[db] Migration: rebuilt collection_fields to support date, rating, comment, and matrix_likert_scale types')
     } finally {
-      db.exec('PRAGMA foreign_keys = ON')
+      db.exec('PRAGMA foreign_keys = OFF')
     }
   }
 
-  // â”€â”€ Add 'location' to collection_fields CHECK constraint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Add 'location' to collection_fields CHECK constraint ─────────────────
   const fieldsSqlRowForLocation = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='collection_fields'`)
     .get() as unknown as { sql: string } | undefined
@@ -1254,7 +1321,7 @@ function runMigrations(db: AppDatabase): void {
       })()
       console.log('[db] Migration: rebuilt collection_fields to support location type')
     } finally {
-      db.exec('PRAGMA foreign_keys = ON')
+      db.exec('PRAGMA foreign_keys = OFF')
     }
   }
 
@@ -1321,7 +1388,7 @@ function runMigrations(db: AppDatabase): void {
       })()
       console.log('[db] Migration: rebuilt collection_fields to support document type')
     } finally {
-      db.exec('PRAGMA foreign_keys = ON')
+      db.exec('PRAGMA foreign_keys = OFF')
     }
   }
 
@@ -1372,10 +1439,39 @@ function runMigrations(db: AppDatabase): void {
   const hasListOptionsColumn = tableColNames.has('list_options')
   const hasStaleTableColumnsFieldFk =
     hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_old') ||
-    hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_pre_location')
+    hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_pre_location') ||
+    hasForeignKeyTarget(db, 'collection_table_columns', 'collection_fields_pre_document')
 
   if (!supportsListType || !hasListOptionsColumn || hasStaleTableColumnsFieldFk) {
     rebuildCollectionTableColumns(db, hasListOptionsColumn)
+  }
+
+  // Repair collections whose active_version_id points at a collection_versions
+  // row that no longer exists (e.g. lost to a cascade delete). Runs every
+  // startup (not one-time-guarded) since it's a cheap, idempotent check.
+  {
+    const orphanedCollections = db
+      .prepare(`
+        SELECT c.id, c.active_version_id, c.status, c.created_by
+        FROM collections c
+        LEFT JOIN collection_versions v ON v.id = c.active_version_id
+        WHERE c.active_version_id IS NOT NULL AND v.id IS NULL
+      `)
+      .all() as unknown as Array<{ id: number; active_version_id: number; status: string; created_by: number }>
+
+    if (orphanedCollections.length > 0) {
+      db.transaction(() => {
+        for (const col of orphanedCollections) {
+          db
+            .prepare(
+              `INSERT INTO collection_versions (id, collection_id, version_number, status, created_by, published_at)
+               VALUES (?, ?, 1, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`
+            )
+            .run(col.active_version_id, col.id, col.status === 'archived' ? 'published' : col.status, col.created_by, col.status)
+        }
+      })()
+      console.log(`[db] Migration: recreated ${orphanedCollections.length} orphaned collection_versions row(s) for collections with a dangling active_version_id`)
+    }
   }
 
   // Backfill collection versions and version links for legacy data.
@@ -1792,7 +1888,7 @@ function runMigrations(db: AppDatabase): void {
     markRan('migrate-legacy-notifications')
   }
 
-  // â”€â”€ Categories: add organization_id and enforce per-org uniqueness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Categories: add organization_id and enforce per-org uniqueness ──────────
   const existingCategoryCols = getTableColumns(db, 'categories')
   const categoryColNames = new Set(existingCategoryCols.map(c => c.name))
 
@@ -1844,7 +1940,7 @@ function runMigrations(db: AppDatabase): void {
     console.log(`[db] Seeded default "General" category for organization ${org.id}`)
   }
 
-  // â”€â”€ Rebuild users table if CHECK constraint is missing super_admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Rebuild users table if CHECK constraint is missing super_admin ──────────
   const usersSchema = (
     db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='users'`)
       .get() as unknown as { sql: string } | undefined
@@ -1873,11 +1969,11 @@ function runMigrations(db: AppDatabase): void {
       console.log('[db] Migration: rebuilt users table to add super_admin to role CHECK constraint')
     } finally {
       db.exec('PRAGMA legacy_alter_table = OFF')
-      db.exec('PRAGMA foreign_keys = ON')
+      db.exec('PRAGMA foreign_keys = OFF')
     }
   }
 
-  // â”€â”€ Promote null-org administrators to super_admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Promote null-org administrators to super_admin ──────────────────────────
   const promoted = db
     .prepare(`UPDATE users SET role = 'super_admin' WHERE role = 'administrator' AND organization_id IS NULL`)
     .run()
@@ -1885,7 +1981,7 @@ function runMigrations(db: AppDatabase): void {
     console.log(`[db] Migration: promoted ${promoted.changes} global administrator(s) to super_admin`)
   }
 
-  // â”€â”€ Invite / password columns on users â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Invite / password columns on users ──────────────────────────────────────
   const allUserCols = getTableColumns(db, 'users')
   const userColSet = new Set(allUserCols.map(c => c.name))
 
@@ -1914,7 +2010,7 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: added users.reset_token_expires_at')
   }
 
-  // â”€â”€ Rebuild users table to include 'reviewer' role â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Rebuild users table to include 'reviewer' role ──────────────────────────
   const usersSchemaV2 = (
     db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='users'`)
       .get() as unknown as { sql: string } | undefined
@@ -1959,7 +2055,7 @@ function runMigrations(db: AppDatabase): void {
       console.log("[db] Migration: rebuilt users table to add 'reviewer' to role CHECK constraint")
     } finally {
       try { db.exec('PRAGMA legacy_alter_table = OFF') } catch { /* Turso: not needed */ }
-      try { db.exec('PRAGMA foreign_keys = ON') } catch { /* Turso: not needed */ }
+      try { db.exec('PRAGMA foreign_keys = OFF') } catch { /* Turso: not needed */ }
     }
   }
 
@@ -2034,7 +2130,7 @@ function runMigrations(db: AppDatabase): void {
     }
   }
 
-  // â”€â”€ Locations table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Locations table ──────────────────────────────────────────────────────────
   if (!tableExists(db, 'locations')) {
     db.exec(`
       CREATE TABLE locations (
@@ -2088,7 +2184,7 @@ function runMigrations(db: AppDatabase): void {
     }
   }
 
-  // â”€â”€ Repair user_locations FK if broken by ALTER TABLE users RENAME â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Repair user_locations FK if broken by ALTER TABLE users RENAME ───────────
   // When legacy_alter_table is OFF (default on Turso), renaming `users` to
   // `users_old` rewrites the FK in user_locations to reference `users_old`.
   // After `users_old` is dropped the FK is dangling and every INSERT fails.
@@ -2114,8 +2210,8 @@ function runMigrations(db: AppDatabase): void {
     }
   }
 
-  // â”€â”€ General repair: fix ALL tables whose FK still points to dropped users_old â”€
-  // The V2 users migration renamed `users` â†’ `users_old` then dropped it.
+  // ── General repair: fix ALL tables whose FK still points to dropped users_old ─
+  // The V2 users migration renamed `users` → `users_old` then dropped it.
   // Turso's ALTER TABLE RENAME rewrites FK references in all dependent tables.
   // Only user_locations was explicitly repaired above; this block catches the rest
   // (collections, collection_versions, notifications, notification_deliveries,
@@ -2143,16 +2239,16 @@ function runMigrations(db: AppDatabase): void {
             stmt.run(...cols.map(c => (row[c] !== undefined ? row[c] : null)))
           }
         }
-        console.log(`[db] Migration: repaired ${name} FK (users_old â†’ users)`)
+        console.log(`[db] Migration: repaired ${name} FK (users_old → users)`)
       } finally {
-        db.exec('PRAGMA foreign_keys = ON')
+        db.exec('PRAGMA foreign_keys = OFF')
       }
     } catch (repairErr) {
       console.warn(`[db] Could not repair ${name} FK:`, (repairErr as Error).message)
     }
   }
 
-  // â”€â”€ Groups, Group Members, Collection Shares â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Groups, Group Members, Collection Shares ────────────────────────────────
   if (!tableExists(db, 'groups')) {
     db.exec(`
       CREATE TABLE groups (
@@ -2198,7 +2294,7 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: created collection_shares table')
   }
 
-  // ── Saved Export Presets ────────────────────────────────────────────────────
+  // -- Saved Export Presets ----------------------------------------------------
   if (!tableExists(db, 'saved_export_presets')) {
     db.exec(`
       CREATE TABLE saved_export_presets (
@@ -2221,7 +2317,7 @@ function runMigrations(db: AppDatabase): void {
     console.log('[db] Migration: created saved_export_presets table')
   }
 
-  // ── Organization Menu Labels ────────────────────────────────────────────────
+  // -- Organization Menu Labels ------------------------------------------------
   if (!tableExists(db, 'organization_menu_labels')) {
     db.exec(`
       CREATE TABLE organization_menu_labels (
