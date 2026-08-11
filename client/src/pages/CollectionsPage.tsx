@@ -24,6 +24,7 @@ import { listCollections, deleteCollection, archiveCollection } from '../api/col
 import { getPreference, updatePreference } from '../api/preferences'
 import { htmlToPlainText } from '../utils/richText'
 import { getCategoryColorClasses } from '../utils/categoryColors'
+import { PLACEHOLDER_COVER_URL, getCoverPhotoKind } from '../utils/coverPhoto'
 import { useToast } from '../contexts/ToastContext'
 import { useAuth } from '../contexts/AuthContext'
 import type { Collection } from '../types'
@@ -148,10 +149,10 @@ function SortableCollectionCard({
       }}
       className={`bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden flex flex-col ${isDragging ? 'opacity-70 shadow-xl z-10' : ''}`}
     >
-      {collection.coverPhotoUrl && (
+      {getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) !== 'none' && (
         <div className="h-28 bg-[#F1F5F9] dark:bg-[#0F172A] overflow-hidden">
           <img
-            src={collection.coverPhotoUrl}
+            src={getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) === 'placeholder' ? PLACEHOLDER_COVER_URL : collection.coverPhotoUrl!}
             alt=""
             className="w-full h-full object-cover"
             onError={e => {

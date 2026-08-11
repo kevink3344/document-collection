@@ -11,6 +11,7 @@ import { isLegacyAttachmentValue, parseAttachmentValue, stringifyAttachmentValue
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { getDocumentEmbedUrl, parseDocumentFieldConfig } from '../utils/documentField'
 import { sanitizeRichText } from '../utils/richText'
+import { PLACEHOLDER_COVER_URL, getCoverPhotoKind } from '../utils/coverPhoto'
 import { useAuth } from '../contexts/AuthContext'
 import RichTextEditor from '../components/common/RichTextEditor'
 import QRCode from 'qrcode'
@@ -1581,10 +1582,10 @@ export default function CollectionFillPage() {
       )}
 
       {/* Cover photo */}
-      {collection.coverPhotoUrl && (
+      {getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) !== 'none' && (
         <div className="relative h-48 md:h-64 bg-[#1E293B] overflow-hidden">
           <img
-            src={collection.coverPhotoUrl}
+            src={getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) === 'placeholder' ? PLACEHOLDER_COVER_URL : collection.coverPhotoUrl!}
             alt=""
             className="w-full h-full object-cover opacity-70"
             onError={e => {
@@ -1634,7 +1635,7 @@ export default function CollectionFillPage() {
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
         {/* Title + metadata block (no cover photo) */}
         <div className="space-y-1">
-          {!collection.coverPhotoUrl && (
+          {getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) === 'none' && (
             <>
               {collection.logoUrl && (
                 <div style={logoPaddingStyle} className="inline-flex max-w-[112px] md:max-w-[150px] bg-white shadow-sm border border-[#E2E8F0]">

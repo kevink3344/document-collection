@@ -58,6 +58,7 @@ import RichTextEditor from '../components/common/RichTextEditor'
 import { toEmbedUrl } from '../utils/docPreviewUrl'
 import { getDocumentEmbedUrl, parseDocumentFieldConfig, serialiseDocumentFieldConfig, type DocumentFieldKind } from '../utils/documentField'
 import { htmlToPlainText } from '../utils/richText'
+import { PLACEHOLDER_COVER_URL, getCoverPhotoKind } from '../utils/coverPhoto'
 import { useToast } from '../contexts/ToastContext'
 import { useAuth } from '../contexts/AuthContext'
 import type { FieldBranchRule } from '../types'
@@ -249,6 +250,7 @@ export default function CollectionBuilderPage() {
   const [dateDue, setDateDue] = useState('')
   const [coverPhotoUrl, setCoverPhotoUrl] = useState('')
   const [coverPhotoAssetId, setCoverPhotoAssetId] = useState<number | null>(null)
+  const [coverPhotoMode, setCoverPhotoMode] = useState<'none' | 'placeholder' | 'gallery'>('none')
   const [logoUrl, setLogoUrl] = useState('')
   const [anonymous, setAnonymous] = useState(false)
   const [status, setStatus] = useState<CollectionStatus>('draft')
@@ -344,6 +346,12 @@ export default function CollectionBuilderPage() {
     () => galleryAssets.find(asset => asset.id === coverPhotoAssetId) ?? null,
     [galleryAssets, coverPhotoAssetId],
   )
+
+  const coverPreviewUrl = useMemo(() => {
+    if (coverPhotoMode === 'placeholder') return PLACEHOLDER_COVER_URL
+    if (coverPhotoMode === 'gallery' && coverPhotoUrl.trim()) return coverPhotoUrl.trim()
+    return null
+  }, [coverPhotoMode, coverPhotoUrl])
 
   const logoPaddingStyle = useMemo<CSSProperties>(() => ({
     paddingTop: `${logoPadding.top}px`,
@@ -453,6 +461,7 @@ export default function CollectionBuilderPage() {
     setDateDue(asTemplate ? '' : col.dateDue ?? '')
     setCoverPhotoUrl(col.coverPhotoUrl ?? '')
     setCoverPhotoAssetId(col.coverPhotoAssetId ?? null)
+    setCoverPhotoMode(getCoverPhotoKind(col.coverPhotoUrl ?? null, col.coverPhotoAssetId ?? null))
     setLogoUrl(col.logoUrl ?? '')
     setAnonymous(col.anonymous)
     setAllowSubmissionEdits(col.allowSubmissionEdits)
@@ -854,6 +863,11 @@ export default function CollectionBuilderPage() {
   // ── Save ──────────────────────────────────────────────────
 
   function buildPayload(statusOverride: CollectionStatus = status) {
+    const resolvedCover = (() => {
+      if (coverPhotoMode === 'none') return { coverPhotoUrl: undefined as string | undefined, coverPhotoAssetId: null as number | null }
+      if (coverPhotoMode === 'placeholder') return { coverPhotoUrl: PLACEHOLDER_COVER_URL, coverPhotoAssetId: null as number | null }
+      return { coverPhotoUrl: coverPhotoUrl.trim() || undefined, coverPhotoAssetId }
+    })()
     const rawHours = Number(submissionEditWindowHours)
     const normalizedHours = Number.isFinite(rawHours)
       ? Math.max(1, Math.min(168, Math.floor(rawHours)))
@@ -885,8 +899,8 @@ export default function CollectionBuilderPage() {
       description: description.trim() || undefined,
       category: category.trim() || undefined,
       dateDue: dateDue || undefined,
-      coverPhotoUrl: coverPhotoUrl.trim() || undefined,
-      coverPhotoAssetId,
+      coverPhotoUrl: resolvedCover.coverPhotoUrl,
+      coverPhotoAssetId: resolvedCover.coverPhotoAssetId,
       logoUrl: logoUrl.trim() || undefined,
       instructions: instructions || undefined,
       instructionsDocUrl: instructionsDocUrl.trim() || undefined,
@@ -1997,78 +2011,120 @@ export default function CollectionBuilderPage() {
                 <p className="mt-1 text-xs text-[#94A3B8]">Displayed at the top of the survey banner (max 150px wide). Supports SVG, PNG, etc.</p>
               </div>
               <div>
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <label className={LABEL}>Cover Photo Gallery</label>
-                    <p className="text-xs text-[#94A3B8]">Choose a cover photo from your organization gallery. Upload new images in Settings first.</p>
-                  </div>
+                <label className={LABEL}>Cover Photo</label>
+                <p className="text-xs text-[#94A3B8] mb-3">Choose how this collection is presented. &quot;No cover&quot; shows no banner image.</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <button
                     type="button"
                     onClick={() => {
+                      setCoverPhotoMode('none')
                       setCoverPhotoAssetId(null)
                       setCoverPhotoUrl('')
                     }}
-                    className="inline-flex items-center gap-1.5 border border-[#CBD5E1] dark:border-[#334155] text-[#475569] dark:text-[#CBD5E1] text-sm font-medium px-3 py-2 rounded hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] transition-colors"
+                    className={`text-left rounded-lg border p-3 transition-colors ${coverPhotoMode === 'none' ? 'border-[#2563EB] bg-blue-50 dark:bg-blue-900/20' : 'border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]'}`}
                   >
-                    <X size={14} />
-                    Clear Cover
+                    <span className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${coverPhotoMode === 'none' ? 'border-[#2563EB]' : 'border-[#CBD5E1] dark:border-[#475569]'}`}>
+                        {coverPhotoMode === 'none' && <span className="w-2 h-2 rounded-full bg-[#2563EB]" />}
+                      </span>
+                      <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">No cover</span>
+                    </span>
+                    <p className="mt-1 text-xs text-[#64748B]">No banner image</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCoverPhotoMode('placeholder')
+                      setCoverPhotoAssetId(null)
+                      setCoverPhotoUrl(PLACEHOLDER_COVER_URL)
+                    }}
+                    className={`text-left rounded-lg border p-3 transition-colors ${coverPhotoMode === 'placeholder' ? 'border-[#2563EB] bg-blue-50 dark:bg-blue-900/20' : 'border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]'}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${coverPhotoMode === 'placeholder' ? 'border-[#2563EB]' : 'border-[#CBD5E1] dark:border-[#475569]'}`}>
+                        {coverPhotoMode === 'placeholder' && <span className="w-2 h-2 rounded-full bg-[#2563EB]" />}
+                      </span>
+                      <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Use default</span>
+                    </span>
+                    <div className="mt-2 h-16 rounded overflow-hidden border border-[#E2E8F0] dark:border-[#334155]">
+                      <img src={PLACEHOLDER_COVER_URL} alt="" className="w-full h-full object-cover" />
+                    </div>
+                    <p className="mt-1 text-xs text-[#64748B]">Branded default cover</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCoverPhotoMode('gallery')
+                      if (coverPhotoUrl === PLACEHOLDER_COVER_URL) setCoverPhotoUrl('')
+                    }}
+                    className={`text-left rounded-lg border p-3 transition-colors ${coverPhotoMode === 'gallery' ? 'border-[#2563EB] bg-blue-50 dark:bg-blue-900/20' : 'border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]'}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${coverPhotoMode === 'gallery' ? 'border-[#2563EB]' : 'border-[#CBD5E1] dark:border-[#475569]'}`}>
+                        {coverPhotoMode === 'gallery' && <span className="w-2 h-2 rounded-full bg-[#2563EB]" />}
+                      </span>
+                      <span className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Select gallery image</span>
+                    </span>
+                    <p className="mt-1 text-xs text-[#64748B]">Choose from gallery</p>
                   </button>
                 </div>
-                {galleryError && <p className="text-sm text-red-500 mt-2">{galleryError}</p>}
-                {galleryLoading ? (
-                  <p className="text-sm text-[#64748B] mt-3">Loading gallery…</p>
-                ) : galleryAssets.length === 0 ? (
-                  <div className="mt-3 rounded-lg border border-dashed border-[#CBD5E1] dark:border-[#334155] p-4 text-sm text-[#64748B]">
-                    No gallery images are available yet. Upload cover images in Settings before assigning one here.
-                  </div>
-                ) : (
+                {coverPhotoMode === 'gallery' && (
                   <div className="mt-3 space-y-3">
-                    <select
-                      value={coverPhotoAssetId == null ? '' : String(coverPhotoAssetId)}
-                      onChange={e => {
-                        const value = e.target.value
-                        if (!value) {
-                          setCoverPhotoAssetId(null)
-                          setCoverPhotoUrl('')
-                          return
-                        }
-
-                        const selectedId = Number.parseInt(value, 10)
-                        const asset = galleryAssets.find(item => item.id === selectedId)
-                        setCoverPhotoAssetId(selectedId)
-                        setCoverPhotoUrl(asset?.fileUrl ?? '')
-                      }}
-                      className={INPUT}
-                    >
-                      <option value="">Select a gallery image…</option>
-                      {galleryAssets.map(asset => (
-                        <option key={asset.id} value={asset.id}>
-                          {asset.name} ({asset.usageCount} in use)
-                        </option>
-                      ))}
-                    </select>
-
-                    {selectedCoverAsset && (
-                      <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-3">
-                        <div className="flex items-center justify-between gap-3 text-sm">
-                          <div>
-                            <p className="font-medium text-[#1E293B] dark:text-[#F1F5F9]">{selectedCoverAsset.name}</p>
-                            <p className="mt-1 text-xs text-[#64748B]">Used by {selectedCoverAsset.usageCount} collection{selectedCoverAsset.usageCount === 1 ? '' : 's'}</p>
-                          </div>
-                          {selectedCoverAsset.tags.length > 0 && (
-                            <span className="text-xs text-[#94A3B8]">{selectedCoverAsset.tags.join(', ')}</span>
-                          )}
-                        </div>
+                    {galleryError && <p className="text-sm text-red-500">{galleryError}</p>}
+                    {galleryLoading ? (
+                      <p className="text-sm text-[#64748B]">Loading gallery…</p>
+                    ) : galleryAssets.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-[#CBD5E1] dark:border-[#334155] p-4 text-sm text-[#64748B]">
+                        No gallery images are available yet. Upload cover images in Settings before assigning one here.
                       </div>
+                    ) : (
+                      <>
+                        <select
+                          value={coverPhotoAssetId == null ? '' : String(coverPhotoAssetId)}
+                          onChange={e => {
+                            const value = e.target.value
+                            if (!value) {
+                              setCoverPhotoAssetId(null)
+                              setCoverPhotoUrl('')
+                              return
+                            }
+                            const selectedId = Number.parseInt(value, 10)
+                            const asset = galleryAssets.find(item => item.id === selectedId)
+                            setCoverPhotoAssetId(selectedId)
+                            setCoverPhotoUrl(asset?.fileUrl ?? '')
+                          }}
+                          className={INPUT}
+                        >
+                          <option value="">Select a gallery image…</option>
+                          {galleryAssets.map(asset => (
+                            <option key={asset.id} value={asset.id}>
+                              {asset.name} ({asset.usageCount} in use)
+                            </option>
+                          ))}
+                        </select>
+                        {selectedCoverAsset && (
+                          <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-3">
+                            <div className="flex items-center justify-between gap-3 text-sm">
+                              <div>
+                                <p className="font-medium text-[#1E293B] dark:text-[#F1F5F9]">{selectedCoverAsset.name}</p>
+                                <p className="mt-1 text-xs text-[#64748B]">Used by {selectedCoverAsset.usageCount} collection{selectedCoverAsset.usageCount === 1 ? '' : 's'}</p>
+                              </div>
+                              {selectedCoverAsset.tags.length > 0 && (
+                                <span className="text-xs text-[#94A3B8]">{selectedCoverAsset.tags.join(', ')}</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
               </div>
 
-              {coverPhotoUrl ? (
+              {coverPreviewUrl ? (
                 <div className="relative h-44 rounded-lg overflow-hidden bg-[#F1F5F9] dark:bg-[#0F172A] border border-[#E2E8F0] dark:border-[#334155]">
                   <img
-                    src={coverPhotoUrl}
+                    src={coverPreviewUrl}
                     alt="Cover"
                     className="w-full h-full object-cover"
                     onError={e => {
@@ -2094,9 +2150,9 @@ export default function CollectionBuilderPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-xs text-[#94A3B8]">
+                <div className="flex items-center gap-2 text-xs text-[#94A3B8] border border-dashed border-[#CBD5E1] dark:border-[#334155] rounded-lg p-4">
                   <ImageIcon size={14} />
-                  No cover photo selected yet.
+                  No cover photo — banner will show title only.
                 </div>
               )}
             </div>
