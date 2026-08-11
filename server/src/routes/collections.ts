@@ -2143,7 +2143,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
  */
 router.get('/archived', authenticateToken, async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
-  if (!context || !isAdministrator(context)) {
+  if (!context || !isAdminOrSuperAdmin(context)) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
@@ -2713,7 +2713,7 @@ router.post('/:id/archive', authenticateToken, async (req: Request, res: Respons
   if (isNaN(id)) { res.status(400).json({ error: 'Invalid collection ID' }); return }
 
   const context = await loadRequestUserContext(req)
-  if (!context || !isAdministrator(context)) {
+  if (!context || !isAdminOrSuperAdmin(context)) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
@@ -2734,7 +2734,7 @@ router.post('/:id/unarchive', authenticateToken, async (req: Request, res: Respo
   if (isNaN(id)) { res.status(400).json({ error: 'Invalid collection ID' }); return }
 
   const context = await loadRequestUserContext(req)
-  if (!context || !isAdministrator(context)) {
+  if (!context || !isAdminOrSuperAdmin(context)) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
