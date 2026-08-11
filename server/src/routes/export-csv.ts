@@ -428,11 +428,6 @@ router.post('/collections/:id/export', authenticateToken, async (req: Request, r
     return
   }
 
-  if (ticketTemplateId !== null && ticketColumnKeys.length === 0) {
-    res.status(400).json({ error: 'At least one ticket column is required when a ticket template is selected' })
-    return
-  }
-
   const schema = await buildSchema(db, id, collection.anonymous === 1, collection.active_version_id)
   const validSubmissionKeys = new Set(schema.submissionColumns.map(c => c.key))
   const selectedSubmissionKeys = submissionColumnKeys.filter(k => validSubmissionKeys.has(k))
@@ -451,10 +446,6 @@ router.post('/collections/:id/export', authenticateToken, async (req: Request, r
     }
     const validTicketKeys = new Set(ticketTemplate.columns.map(c => c.key))
     selectedTicketKeys = ticketColumnKeys.filter(k => validTicketKeys.has(k))
-    if (selectedTicketKeys.length === 0) {
-      res.status(400).json({ error: 'No valid ticket columns selected' })
-      return
-    }
   }
 
   const responseIds = await fetchFilteredResponseIds(db, id, context)
@@ -505,7 +496,7 @@ router.post('/collections/:id/export', authenticateToken, async (req: Request, r
   let ticketResponses: DbTicketResponse[] = []
   let ticketValues = new Map<number, Map<number, string | null>>()
   let ticketFieldTypeById = new Map<number, string>()
-  if (ticketTemplateId !== null) {
+  if (ticketTemplateId !== null && selectedTicketKeys.length > 0) {
     ticketResponses = await db.queryAll<DbTicketResponse>(
       `SELECT tr.id, tr.collection_response_id, tr.ticket_template_id, tr.finalized, tr.finalized_at, tr.filled_at, tr.created_at,
               u.name AS finalized_by_name

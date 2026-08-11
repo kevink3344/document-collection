@@ -122,7 +122,7 @@ export default function ExportCsvPage() {
     return ticketColumns.map(c => c.key).filter(k => ticketPanel.selected.has(k))
   }, [ticketPanel, ticketColumns])
 
-  const canExport = selectedSubmissionKeys.length > 0 && (ticketTemplateId === null || selectedTicketKeys.length > 0)
+  const canExport = selectedSubmissionKeys.length > 0
 
   function toggleAllSubmission(checked: boolean) {
     setSubmissionPanel({
