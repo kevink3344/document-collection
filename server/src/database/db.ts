@@ -33,14 +33,19 @@ function isStreamExpiredError(err: unknown): boolean {
   return message.includes('stream not found') || message.includes('Hrana(Api')
 }
 
+function isConnectionResetError(err: unknown): boolean {
+  const message = (err as { message?: string })?.message ?? ''
+  return /forcibly closed|econnreset|hrana\(http/i.test(message)
+}
+
 /**
  * Call this when a database error bubbles up to the Express error handler.
  * Resets the cached connection so the next request gets a fresh one.
  */
 export function resetDbIfStreamError(err: unknown): void {
   const message = (err as { message?: string })?.message ?? ''
-  if (isStreamExpiredError(err)) {
-    console.warn('[db] Turso stream expired â€“ resetting connection for next request')
+  if (isStreamExpiredError(err) || isConnectionResetError(err)) {
+    console.warn('[db] Turso stream expired/reset â€“ resetting connection for next request')
     try { db?.close() } catch { /* ignore */ }
     db = null
     dbConnectedMode = null
@@ -707,7 +712,13 @@ export async function getDbAsync(): Promise<DbAdapter> {
 
   // turso — wrap libsql in LibsqlAdapter
   const rawDb = getDb()
-  return new LibsqlAdapter(rawDb)
+  return new LibsqlAdapter(rawDb, () => {
+    try { db?.close() } catch { /* ignore */ }
+    db = null
+    dbConnectedMode = null
+    dbLastVerifiedAt = 0
+    return getDb()
+  })
 }
 
 /** Gracefully close the SQL Server pool on server shutdown. */
