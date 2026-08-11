@@ -261,6 +261,8 @@ export default function CollectionBuilderPage() {
   const [workflowEnabled, setWorkflowEnabled] = useState(false)
   const [workflowStages, setWorkflowStages] = useState<ApprovalWorkflowStageDefinition[]>([blankWorkflowStage(0)])
   const [workflowUsers, setWorkflowUsers] = useState<AppUser[]>([])
+  const [approvalWorkflowFeatureEnabled, setApprovalWorkflowFeatureEnabled] = useState(true)
+  const [ticketSystemFeatureEnabled, setTicketSystemFeatureEnabled] = useState(true)
 
   // Share state
   const [shareUsers, setShareUsers] = useState<CollectionShare['users']>([])
@@ -476,6 +478,16 @@ export default function CollectionBuilderPage() {
       return builderPages[0]
     })
   }, [builderPages])
+
+  useEffect(() => {
+    fetch('/api/info')
+      .then(r => r.json() as Promise<{ approvalWorkflowEnabled?: boolean; ticketSystemEnabled?: boolean }>)
+      .then(info => {
+        setApprovalWorkflowFeatureEnabled(info.approvalWorkflowEnabled !== false)
+        setTicketSystemFeatureEnabled(info.ticketSystemEnabled !== false)
+      })
+      .catch(() => { /* keep defaults enabled */ })
+  }, [])
 
   // Load existing collection when editing
   useEffect(() => {
@@ -1601,7 +1613,7 @@ export default function CollectionBuilderPage() {
                 Versions
               </button>
             )}
-            {isEdit && (
+            {isEdit && ticketSystemFeatureEnabled && (
               <button
                 type="button"
                 onClick={() => setDetailsTab('ticket')}
@@ -1615,7 +1627,7 @@ export default function CollectionBuilderPage() {
                 Add Ticket
               </button>
             )}
-            {isEdit && (
+            {isEdit && ticketSystemFeatureEnabled && (
               <div className="relative sm:hidden ml-auto">
                 <button
                   type="button"
@@ -1767,6 +1779,7 @@ export default function CollectionBuilderPage() {
                   {anonymous ? 'No name or email required from respondents.' : 'Respondents must provide their name and email.'}
                 </p>
               </div>
+              {approvalWorkflowFeatureEnabled && (
               <div className="sm:col-span-2 rounded-lg border border-[#1E3A5F] bg-[#1E3A5F] p-4 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -1960,6 +1973,7 @@ export default function CollectionBuilderPage() {
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
 
@@ -2388,7 +2402,7 @@ export default function CollectionBuilderPage() {
         </div>
 
         {/* Ticket Assignment */}
-        {detailsTab === 'ticket' && isEdit && (
+        {detailsTab === 'ticket' && isEdit && ticketSystemFeatureEnabled && (
           <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">

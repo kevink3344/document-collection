@@ -1196,7 +1196,15 @@ export default function RecordsPage() {
   const [ticketsLoading, setTicketsLoading] = useState(false)
   const [ticketTemplateFilter, setTicketTemplateFilter] = useState<number | 'all'>('all')
   const [ticketStatusFilter, setTicketStatusFilter] = useState<'all' | 'open' | 'closed'>('all')
+  const [ticketSystemFeatureEnabled, setTicketSystemFeatureEnabled] = useState(true)
   const commentPollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({})
+  useEffect(() => {
+    fetch('/api/info')
+      .then(r => r.json() as Promise<{ ticketSystemEnabled?: boolean }>)
+      .then(info => setTicketSystemFeatureEnabled(info.ticketSystemEnabled !== false))
+      .catch(() => { /* keep default enabled */ })
+  }, [])
+
   useEffect(() => {
     listCollections()
       .then(items => {
@@ -1901,7 +1909,7 @@ export default function RecordsPage() {
                 >
                   Individual
                 </button>
-                {collectionTicketTemplates.length > 0 && (
+                {ticketSystemFeatureEnabled && collectionTicketTemplates.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setView('tickets')}

@@ -65,6 +65,8 @@ router.get('/info', (_req: Request, res: Response) => {
       ? loginModeOverride
       : null,
     loginScreenColor,
+    approvalWorkflowEnabled: process.env.APPROVAL_WORKFLOW_ENABLED !== 'false',
+    ticketSystemEnabled: process.env.TICKET_SYSTEM_ENABLED !== 'false',
   })
 })
 
