@@ -62,12 +62,15 @@ function translateSql(rawSql: string): string {
   //    in literal strings so a simple word-boundary replacement is safe here).
   s = s.replace(/\bkey\b/g, '[key]')
 
-  // 6. LIMIT n → TOP n  (SQL Server uses TOP, not LIMIT)
-  //    Moves TOP n to immediately after the SELECT keyword.
+  // 6. LIMIT n → TOP (n)  (SQL Server uses TOP, not LIMIT)
+  //    Moves TOP (n) to immediately after the SELECT keyword. Handles both a
+  //    literal count (LIMIT 50) and a bound parameter (LIMIT @p5) — this must
+  //    run AFTER placeholder conversion so a parameterized limit keeps its
+  //    named @pN reference (moving a bare `?` would desync positional params).
   s = s.replace(
-    /\bSELECT(\s+DISTINCT)?(\s+)([\s\S]*?)\s+LIMIT\s+(\d+)\b/gi,
+    /\bSELECT(\s+DISTINCT)?(\s+)([\s\S]*?)\s+LIMIT\s+(\d+|@p\d+)\b/gi,
     (_match, distinct, space, body, n) =>
-      `SELECT${distinct ?? ''}${space}TOP ${n} ${body}`,
+      `SELECT${distinct ?? ''}${space}TOP (${n}) ${body}`,
   )
 
   // 7. datetime('now', '-N days') → DATEADD(day, -N, GETUTCDATE())
@@ -245,7 +248,8 @@ class MssqlTransactionAdapter implements DbAdapter {
   constructor(private readonly tx: sql.Transaction) {}
 
   async queryAll<T = Record<string, unknown>>(rawSql: string, params: unknown[] = []): Promise<T[]> {
-    const { sql: converted, values } = convertPlaceholders(translateSql(rawSql), params)
+    const { sql: withNamedParams, values } = convertPlaceholders(rawSql, params)
+    const converted = translateSql(withNamedParams)
     const request = buildRequest(this.tx, converted, values)
     const result = await request.query<T>(converted)
     return normalizeRows(result.recordset)
@@ -277,7 +281,8 @@ export class MssqlAdapter implements DbAdapter {
   constructor(private readonly pool: sql.ConnectionPool) {}
 
   async queryAll<T = Record<string, unknown>>(rawSql: string, params: unknown[] = []): Promise<T[]> {
-    const { sql: converted, values } = convertPlaceholders(translateSql(rawSql), params)
+    const { sql: withNamedParams, values } = convertPlaceholders(rawSql, params)
+    const converted = translateSql(withNamedParams)
     const request = buildRequest(this.pool, converted, values)
     const result = await request.query<T>(converted)
     return normalizeRows(result.recordset)

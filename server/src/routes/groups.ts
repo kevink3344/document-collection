@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createGroupSchema, updateGroupSchema, groupIdParamSchema, groupMemberParamSchema, addGroupMemberSchema } from '../lib/schemas'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
 const router = Router()
@@ -63,13 +65,12 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
 })
 
 // ── POST /api/groups — create group ──────────────────────────────────────────
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createGroupSchema), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
-  const { name, description } = req.body as { name?: string; description?: string }
-  if (!name?.trim()) return void res.status(400).json({ error: 'name is required' })
+  const { name, description } = req.body as { name: string; description?: string | null }
 
   const orgId = context.organizationId
   if (!orgId) return void res.status(400).json({ error: 'Organization context required' })
@@ -113,14 +114,13 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
 })
 
 // ── PATCH /api/groups/:id — update name/description ──────────────────────────
-router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.patch('/:id', authenticateToken, validate(groupIdParamSchema, 'params'), validate(updateGroupSchema), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
-  const groupId = Number(req.params.id)
-  const { name, description } = req.body as { name?: string; description?: string }
-  if (!name?.trim()) return void res.status(400).json({ error: 'name is required' })
+  const { id: groupId } = req.params as unknown as { id: number }
+  const { name, description } = req.body as { name: string; description?: string | null }
 
   const db = await getDbAsync()
   const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
@@ -172,12 +172,12 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
 })
 
 // ── DELETE /api/groups/:id ────────────────────────────────────────────────────
-router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, validate(groupIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
-  const groupId = Number(req.params.id)
+  const { id: groupId } = req.params as unknown as { id: number }
   const db = await getDbAsync()
   const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
@@ -192,11 +192,11 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
 })
 
 // ── GET /api/groups/:id/members ─────────────────────────────────────────────
-router.get('/:id/members', authenticateToken, async (req: Request, res: Response) => {
+router.get('/:id/members', authenticateToken, validate(groupIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
 
-  const groupId = Number(req.params.id)
+  const { id: groupId } = req.params as unknown as { id: number }
   const db = await getDbAsync()
   const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 
@@ -224,14 +224,13 @@ router.get('/:id/members', authenticateToken, async (req: Request, res: Response
 })
 
 // ── POST /api/groups/:id/members — add user ───────────────────────────────────
-router.post('/:id/members', authenticateToken, async (req: Request, res: Response) => {
+router.post('/:id/members', authenticateToken, validate(groupIdParamSchema, 'params'), validate(addGroupMemberSchema), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
-  const groupId = Number(req.params.id)
-  const { userId } = req.body as { userId?: number }
-  if (!userId) return void res.status(400).json({ error: 'userId is required' })
+  const { id: groupId } = req.params as unknown as { id: number }
+  const { userId } = req.body as { userId: number }
 
   const db = await getDbAsync()
   const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
@@ -250,13 +249,12 @@ router.post('/:id/members', authenticateToken, async (req: Request, res: Respons
 })
 
 // ── DELETE /api/groups/:id/members/:userId — remove user ─────────────────────
-router.delete('/:id/members/:userId', authenticateToken, async (req: Request, res: Response) => {
+router.delete('/:id/members/:userId', authenticateToken, validate(groupMemberParamSchema, 'params'), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) return void res.status(401).json({ error: 'Authentication required' })
   if (!canManageGroups(context.role)) return void res.status(403).json({ error: 'Insufficient permissions' })
 
-  const groupId = Number(req.params.id)
-  const userId = Number(req.params.userId)
+  const { id: groupId, userId } = req.params as unknown as { id: number; userId: number }
   const db = await getDbAsync()
   const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT * FROM groups WHERE id = ?', [groupId])
 

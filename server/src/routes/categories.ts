@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createCategorySchema, categoryQuerySchema } from '../lib/schemas'
 
 const router = Router()
 
@@ -70,17 +72,15 @@ function toResponse(row: DbCategory) {
  *       401:
  *         description: Unauthorized
  */
-router.get('/', authenticateToken, async (req: Request, res: Response) => {
+router.get('/', authenticateToken, validate(categoryQuerySchema, 'query'), async (req: Request, res: Response) => {
   const db = await getDbAsync()
   const global = isGlobalAdmin(req)
   const userOrgId = req.user?.organizationId ?? null
 
   let orgFilter: number | null = null
   if (global) {
-    const q = req.query.organizationId
-    const parsed = q != null ? parseInt(q as string, 10) : NaN
-    // If an explicit org is requested use it, otherwise default to the super_admin's own org
-    orgFilter = Number.isFinite(parsed) ? parsed : userOrgId
+    const { organizationId } = req.query as unknown as { organizationId?: number }
+    orgFilter = organizationId ?? userOrgId
   } else {
     orgFilter = userOrgId
   }
@@ -135,7 +135,7 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
  *       409:
  *         description: Category already exists in this organization
  */
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createCategorySchema), async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) return
 
   const name = normalizeName((req.body as CategoryBody).name)

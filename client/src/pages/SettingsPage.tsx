@@ -1015,6 +1015,7 @@ export default function SettingsPage() {
         name,
         altText: galleryUploadAltText,
         tags: galleryUploadTags,
+        organizationId: user?.activeOrganizationId ?? undefined,
       })
       setGalleryAssets(prev => [created, ...prev])
       setGalleryUploadName('')

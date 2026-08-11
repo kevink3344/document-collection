@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync, setConfiguredDatabaseMode } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createSettingsTabSchema, reorderSettingsTabsSchema, updateSettingsTabSchema, settingsTabIdParamSchema, updateSettingSchema } from '../lib/schemas'
 import { getDocumentStorageMode, isStorageBackendAvailable, getFileCounts, type DocumentStorageMode } from '../services/documentStorage'
 
 const router = Router()
@@ -74,27 +76,13 @@ router.get('/tabs', authenticateToken, async (req: Request, res: Response) => {
  * Create a new settings tab. slug must be unique.
  * Body: { name: string, slug: string, visibleTo: 'all' | 'super_admin_only' }
  */
-router.post('/tabs', authenticateToken, async (req: Request, res: Response) => {
+router.post('/tabs', authenticateToken, validate(createSettingsTabSchema), async (req: Request, res: Response) => {
   if (req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Super admin access required' })
     return
   }
 
-  const { name, slug, visibleTo } = req.body as { name?: string; slug?: string; visibleTo?: string }
-  if (!name?.trim() || !slug?.trim()) {
-    res.status(400).json({ error: 'name and slug are required' })
-    return
-  }
-  if (visibleTo !== 'all' && visibleTo !== 'super_admin_only') {
-    res.status(400).json({ error: 'visibleTo must be "all" or "super_admin_only"' })
-    return
-  }
-
-  const slugPattern = /^[a-z0-9-]+$/
-  if (!slugPattern.test(slug.trim())) {
-    res.status(400).json({ error: 'slug must contain only lowercase letters, numbers, and hyphens' })
-    return
-  }
+  const { name, slug, visibleTo } = req.body as { name: string; slug: string; visibleTo: 'all' | 'super_admin_only' }
 
   const db = await getDbAsync()
 
@@ -137,17 +125,13 @@ router.post('/tabs', authenticateToken, async (req: Request, res: Response) => {
  * Batch reorder tabs. Body: { orderedIds: number[] }
  * NOTE: registered before PUT /tabs/:id so "reorder" isn't captured as an :id value.
  */
-router.put('/tabs/reorder', authenticateToken, async (req: Request, res: Response) => {
+router.put('/tabs/reorder', authenticateToken, validate(reorderSettingsTabsSchema), async (req: Request, res: Response) => {
   if (req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Super admin access required' })
     return
   }
 
-  const { orderedIds } = req.body as { orderedIds?: number[] }
-  if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
-    res.status(400).json({ error: 'orderedIds array is required' })
-    return
-  }
+  const { orderedIds } = req.body as { orderedIds: number[] }
 
   const db = await getDbAsync()
 
@@ -168,28 +152,14 @@ router.put('/tabs/reorder', authenticateToken, async (req: Request, res: Respons
  * Update a tab's name, visibility, and/or sort_order.
  * Body (any optional): { name?, visibleTo?, sortOrder? }
  */
-router.put('/tabs/:id', authenticateToken, async (req: Request, res: Response) => {
+router.put('/tabs/:id', authenticateToken, validate(settingsTabIdParamSchema, 'params'), validate(updateSettingsTabSchema), async (req: Request, res: Response) => {
   if (req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Super admin access required' })
     return
   }
 
-  const tabId = Number.parseInt(req.params.id, 10)
-  if (!Number.isInteger(tabId)) {
-    res.status(400).json({ error: 'Invalid tab id' })
-    return
-  }
-
+  const { id: tabId } = req.params as unknown as { id: number }
   const { name, visibleTo, sortOrder } = req.body as { name?: string; visibleTo?: string; sortOrder?: number }
-  if (!name?.trim() && visibleTo == null && sortOrder == null) {
-    res.status(400).json({ error: 'At least one field (name, visibleTo, sortOrder) is required' })
-    return
-  }
-
-  if (visibleTo != null && visibleTo !== 'all' && visibleTo !== 'super_admin_only') {
-    res.status(400).json({ error: 'visibleTo must be "all" or "super_admin_only"' })
-    return
-  }
 
   const db = await getDbAsync()
 
@@ -245,17 +215,13 @@ router.put('/tabs/:id', authenticateToken, async (req: Request, res: Response) =
  * DELETE /api/settings/tabs/:id
  * Delete a tab. Panels assigned to this tab are reassigned to the first remaining tab.
  */
-router.delete('/tabs/:id', authenticateToken, async (req: Request, res: Response) => {
+router.delete('/tabs/:id', authenticateToken, validate(settingsTabIdParamSchema, 'params'), async (req: Request, res: Response) => {
   if (req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Super admin access required' })
     return
   }
 
-  const tabId = Number.parseInt(req.params.id, 10)
-  if (!Number.isInteger(tabId)) {
-    res.status(400).json({ error: 'Invalid tab id' })
-    return
-  }
+  const { id: tabId } = req.params as unknown as { id: number }
 
   const db = await getDbAsync()
 
@@ -420,7 +386,7 @@ router.get('/:key', async (req: Request, res: Response) => {
  *       404:
  *         description: Setting key not found
  */
-router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
+router.put('/:key', authenticateToken, validate(updateSettingSchema), async (req: Request, res: Response) => {
   if (req.user?.role !== 'administrator' && req.user?.role !== 'super_admin') {
     res.status(403).json({ error: 'Administrator access required' })
     return
@@ -432,7 +398,7 @@ router.put('/:key', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const value = ((req.body as { value?: unknown }).value ?? '').toString()
+  const value = ((req.body as { value: string }).value ?? '').toString()
   if (!value.trim() && key !== 'maintenance_message') {
     res.status(400).json({ error: 'value is required' })
     return

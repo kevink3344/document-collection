@@ -3,6 +3,17 @@ import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import { getDbAsync } from '../database/db'
 import { authenticateToken, JWT_SECRET } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import {
+  loginSchema,
+  loginWithPasswordSchema,
+  changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  switchOrganizationSchema,
+  registerSchema,
+  authUsersQuerySchema,
+} from '../lib/schemas'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole } from '../lib/userAccess'
 import { verifyPassword, hashPassword } from './invitations'
@@ -68,23 +79,18 @@ router.get('/organizations', async (_req: Request, res: Response) => {
   res.json(orgs)
 })
 
-router.get('/users', async (req: Request, res: Response) => {
+router.get('/users', validate(authUsersQuerySchema, 'query'), async (req: Request, res: Response) => {
   const db = await getDbAsync()
-  const { organizationId } = req.query as { organizationId?: string }
+  const { organizationId } = req.query as unknown as { organizationId?: number }
 
   let userIds: Array<{ id: number }>
 
   if (organizationId !== undefined) {
-    const orgId = parseInt(organizationId, 10)
-    if (!Number.isInteger(orgId) || orgId < 1) {
-      res.status(400).json({ error: 'organizationId must be a positive integer' })
-      return
-    }
     userIds = await db.queryAll<{ id: number }>(
         `SELECT u.id FROM users u
          INNER JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = ?
          ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`,
-        [orgId]
+        [organizationId]
       )
   } else {
     userIds = await db.queryAll<{ id: number }>('SELECT id FROM users ORDER BY name COLLATE NOCASE ASC, id ASC')
@@ -118,13 +124,8 @@ router.get('/users', async (req: Request, res: Response) => {
  *       404:
  *         description: User not found
  */
-router.post('/login', async (req: Request, res: Response) => {
-  const { userId } = req.body as { userId: unknown }
-
-  if (typeof userId !== 'number' || !Number.isInteger(userId) || userId < 1) {
-    res.status(400).json({ error: 'userId must be a positive integer' })
-    return
-  }
+router.post('/login', validate(loginSchema), async (req: Request, res: Response) => {
+  const { userId } = req.body as { userId: number }
 
   const user = await loadUserAccessProfile(userId)
   if (!user) {
@@ -152,7 +153,7 @@ router.post('/logout', (_req: Request, res: Response) => {
   res.json({ message: 'Logged out' })
 })
 
-router.post('/register', authenticateToken, async (req: Request, res: Response) => {
+router.post('/register', authenticateToken, validate(registerSchema), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
@@ -160,19 +161,10 @@ router.post('/register', authenticateToken, async (req: Request, res: Response) 
   }
 
   const { name, email, role, organizationId } = req.body as {
-    name: unknown
-    email: unknown
-    role: unknown
-    organizationId: unknown
-  }
-
-  if (typeof name !== 'string' || !name.trim()) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
-  if (typeof email !== 'string' || !email.trim()) {
-    res.status(400).json({ error: 'email is required' })
-    return
+    name: string
+    email: string
+    role: UserRole
+    organizationId: number | null | undefined
   }
 
   const VALID_ROLES = ['super_admin', 'administrator', 'team_manager', 'reviewer', 'user'] as const
@@ -264,12 +256,8 @@ router.get('/me', authenticateToken, async (req: Request, res: Response) => {
   res.json(toApiUser(user))
 })
 
-router.post('/switch-organization', authenticateToken, async (req: Request, res: Response) => {
-  const { organizationId } = req.body as { organizationId?: unknown }
-  if (typeof organizationId !== 'number' || !Number.isInteger(organizationId) || organizationId < 1) {
-    res.status(400).json({ error: 'organizationId must be a positive integer' })
-    return
-  }
+router.post('/switch-organization', authenticateToken, validate(switchOrganizationSchema), async (req: Request, res: Response) => {
+  const { organizationId } = req.body as { organizationId: number }
 
   const user = await loadUserAccessProfile(req.user!.sub, organizationId)
   if (!user) {
@@ -324,13 +312,8 @@ router.post('/switch-organization', authenticateToken, async (req: Request, res:
  *       401:
  *         description: Invalid credentials
  */
-router.post('/login-with-password', async (req: Request, res: Response) => {
-  const { email, password } = req.body as { email: unknown; password: unknown }
-
-  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
-    res.status(400).json({ error: 'email and password are required' })
-    return
-  }
+router.post('/login-with-password', validate(loginWithPasswordSchema), async (req: Request, res: Response) => {
+  const { email, password } = req.body as { email: string; password: string }
 
   const db = await getDbAsync()
   const userRow = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE lower(email) = lower(?)', [email.trim()])
@@ -392,17 +375,8 @@ router.post('/login-with-password', async (req: Request, res: Response) => {
  *       401:
  *         description: Current password incorrect
  */
-router.post('/change-password', authenticateToken, async (req: Request, res: Response) => {
-  const { currentPassword, newPassword } = req.body as { currentPassword: unknown; newPassword: unknown }
-
-  if (typeof currentPassword !== 'string' || !currentPassword) {
-    res.status(400).json({ error: 'currentPassword is required' })
-    return
-  }
-  if (typeof newPassword !== 'string' || newPassword.length < 8) {
-    res.status(400).json({ error: 'New password must be at least 8 characters' })
-    return
-  }
+router.post('/change-password', authenticateToken, validate(changePasswordSchema), async (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string }
 
   const db = await getDbAsync()
   const row = await db.queryOne<{ id: number; password_hash: string }>(
@@ -450,13 +424,8 @@ router.post('/change-password', authenticateToken, async (req: Request, res: Res
   res.json({ message: 'Password changed successfully.', user: toApiUser(updatedUser) })
 })
 
-router.post('/forgot-password', async (req: Request, res: Response) => {
-  const { email } = req.body as { email: unknown }
-
-  if (typeof email !== 'string' || !email.trim()) {
-    res.status(400).json({ error: 'email is required' })
-    return
-  }
+router.post('/forgot-password', validate(forgotPasswordSchema), async (req: Request, res: Response) => {
+  const { email } = req.body as { email: string }
 
   const db2 = await getDbAsync()
   interface ResetUser { id: number; name: string; password_hash: string | null; invite_token: string | null }
@@ -512,17 +481,8 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
   res.json(responsePayload)
 })
 
-router.post('/reset-password', async (req: Request, res: Response) => {
-  const { token, newPassword } = req.body as { token: unknown; newPassword: unknown }
-
-  if (typeof token !== 'string' || !token.trim()) {
-    res.status(400).json({ error: 'token is required' })
-    return
-  }
-  if (typeof newPassword !== 'string' || newPassword.length < 8) {
-    res.status(400).json({ error: 'newPassword must be at least 8 characters' })
-    return
-  }
+router.post('/reset-password', validate(resetPasswordSchema), async (req: Request, res: Response) => {
+  const { token, newPassword } = req.body as { token: string; newPassword: string }
 
   const tokenHash = hashToken(token.trim())
   const db = await getDbAsync()

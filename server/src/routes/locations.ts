@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
 import { authenticateToken, optionalAuthenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createLocationSchema, locationQuerySchema } from '../lib/schemas'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
 function extractLocationNames(payload: unknown): string[] {
@@ -55,7 +57,7 @@ interface DbLocation {
 }
 
 // ── GET /api/locations — list / typeahead search (public) ────
-router.get('/', optionalAuthenticateToken, async (req: Request, res: Response) => {
+router.get('/', optionalAuthenticateToken, validate(locationQuerySchema, 'query'), async (req: Request, res: Response) => {
   const db = await getDbAsync()
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
 
@@ -129,7 +131,7 @@ router.get('/', optionalAuthenticateToken, async (req: Request, res: Response) =
 })
 
 // ── POST /api/locations — create (admin+) ────────────────────
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createLocationSchema), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
@@ -141,11 +143,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const { name } = req.body as { name?: unknown }
-  if (typeof name !== 'string' || !name.trim()) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
+  const { name } = req.body as { name: string }
 
   const db = await getDbAsync()
 

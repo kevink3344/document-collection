@@ -5,6 +5,8 @@ import multer from 'multer'
 import { getDbAsync } from '../database/db'
 import type { DbAdapter } from '../database/types'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createCollectionSchema, collectionIdParamSchema } from '../lib/schemas'
 import { loadRequestUserContext, isAdministrator, isAdminOrSuperAdmin, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
 import { parseAttachmentValue, stringifyAttachmentValue, type AttachmentReference } from '../lib/attachmentValue'
 import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
@@ -2015,7 +2017,7 @@ router.get('/', authenticateToken, async (_req: Request, res: Response) => {
  *       401:
  *         description: Unauthorized
  */
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createCollectionSchema), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context) {
     res.status(401).json({ error: 'Authentication required' })
@@ -2023,10 +2025,6 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
   }
 
   const body = req.body as CollectionBody
-  if (!body.title?.trim()) {
-    res.status(400).json({ error: 'title is required' })
-    return
-  }
 
   const db = await getDbAsync()
   const slug = await generateUniqueSlug(db, body.title)
@@ -2168,12 +2166,8 @@ router.get('/archived', authenticateToken, async (req: Request, res: Response) =
   })))
 })
 
-router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid collection ID' })
-    return
-  }
+router.get('/:id', authenticateToken, validate(collectionIdParamSchema, 'params'), async (req: Request, res: Response) => {
+  const { id } = req.params as unknown as { id: number }
 
   const context = await loadRequestUserContext(req)
   if (!context) {
@@ -2240,12 +2234,8 @@ router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.put('/:id', authenticateToken, async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid collection ID' })
-    return
-  }
+router.put('/:id', authenticateToken, validate(collectionIdParamSchema, 'params'), validate(createCollectionSchema), async (req: Request, res: Response) => {
+  const { id } = req.params as unknown as { id: number }
 
   const context = await loadRequestUserContext(req)
   if (!context) {
@@ -2254,10 +2244,6 @@ router.put('/:id', authenticateToken, async (req: Request, res: Response) => {
   }
 
   const body = req.body as CollectionBody
-  if (!body.title?.trim()) {
-    res.status(400).json({ error: 'title is required' })
-    return
-  }
 
   let organization: { id: number; name: string }
   let category: string | null

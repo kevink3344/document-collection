@@ -1,6 +1,13 @@
 import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import {
+  createOrganizationSchema,
+  updateOrganizationSchema,
+  deleteOrganizationSchema,
+  organizationIdParamSchema,
+} from '../lib/schemas'
 import {
   isAdminOrSuperAdmin,
   loadRequestUserContext,
@@ -157,20 +164,16 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
   res.json(rows.map(toApiOrganization))
 })
 
-router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, validate(organizationIdParamSchema, 'params'), async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (Number.isNaN(id)) {
-    res.status(400).json({ error: 'Invalid organization ID' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
 
   const db = await getDbAsync()
   const row = await db.queryOne<DbOrganization>(
-      `SELECT o.*, 
+      `SELECT o.*,
               (SELECT COUNT(*) FROM users u WHERE u.organization_id = o.id) AS user_count,
               (SELECT COUNT(*) FROM collections c WHERE c.organization_id = o.id) AS collection_count
        FROM organizations o
@@ -186,24 +189,13 @@ router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   res.json(toApiOrganization(row))
 })
 
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createOrganizationSchema), async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
 
-  const body = req.body as {
-    name?: unknown
-    slug?: unknown
-    description?: unknown
-    isActive?: unknown
-  }
-
-  const name = typeof body.name === 'string' ? body.name.trim() : ''
-  if (!name) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
-
+  const body = req.body as { name: string; slug?: string | null; description?: string | null; isActive?: boolean }
+  const name = body.name.trim()
   const slug = typeof body.slug === 'string' && body.slug.trim() ? body.slug.trim() : null
   const description = typeof body.description === 'string' && body.description.trim() ? body.description.trim() : null
   const isActive = body.isActive === false ? 0 : 1
@@ -239,23 +231,13 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
   res.status(201).json(toApiOrganization(created))
 })
 
-router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.patch('/:id', authenticateToken, validate(organizationIdParamSchema, 'params'), async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (Number.isNaN(id)) {
-    res.status(400).json({ error: 'Invalid organization ID' })
-    return
-  }
-
-  const body = req.body as {
-    name?: unknown
-    slug?: unknown
-    description?: unknown
-    isActive?: unknown
-  }
+  const { id } = req.params as unknown as { id: number }
+  const body = req.body as { name?: string; slug?: string | null; description?: string | null; isActive?: boolean }
 
   const db = await getDbAsync()
   const existing = await db.queryOne<DbOrganization>('SELECT * FROM organizations WHERE id = ?', [id])
@@ -311,23 +293,12 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
   res.json(toApiOrganization(updated))
 })
 
-router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, validate(organizationIdParamSchema, 'params'), validate(deleteOrganizationSchema), async (req: Request, res: Response) => {
   if (!requireAdministrator(req, res)) {
     return
   }
 
-  const body = req.body as { confirmationText?: unknown }
-  const confirmationText = typeof body.confirmationText === 'string' ? body.confirmationText.trim() : ''
-  if (confirmationText !== 'DELETE') {
-    res.status(400).json({ error: 'Type DELETE to confirm organization removal' })
-    return
-  }
-
-  const id = parseInt(req.params.id, 10)
-  if (Number.isNaN(id)) {
-    res.status(400).json({ error: 'Invalid organization ID' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
 
   const db = await getDbAsync()
   const existing = await db.queryOne<{ id: number }>('SELECT id FROM organizations WHERE id = ?', [id])

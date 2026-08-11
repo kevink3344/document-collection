@@ -2,6 +2,13 @@ import { Router, type Request, type Response } from 'express'
 import { getDbAsync } from '../database/db'
 import type { DbAdapter } from '../database/adapter'
 import { authenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import {
+  createUserSchema,
+  updateUserSchema,
+  updateUserLocationsSchema,
+  userIdParamSchema,
+} from '../lib/schemas'
 import { loadRequestUserContext, type RequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole, type UserOrganizationMembership } from '../lib/userAccess'
 import { hashPassword } from './invitations'
@@ -269,18 +276,14 @@ router.get('/', authenticateToken, async (_req: Request, res: Response) => {
  *       404:
  *         description: User not found
  */
-router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, validate(userIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid user ID' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
 
   const user = await loadAccessibleUserProfile(id, currentUser)
 
@@ -292,25 +295,20 @@ router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   res.json(toApiUser(user))
 })
 
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createUserSchema), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const { name, email } = req.body as {
-    name: unknown
-    email: unknown
-  }
-
-  if (typeof name !== 'string' || !name.trim()) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
-  if (typeof email !== 'string' || !email.trim()) {
-    res.status(400).json({ error: 'email is required' })
-    return
+  const { name, email, locationIds: rawLocationIds } = req.body as {
+    name: string
+    email: string
+    role?: unknown
+    organizationId?: unknown
+    memberships?: unknown
+    locationIds?: number[]
   }
 
   const parsedPayload = parseMembershipPayload(req.body as {
@@ -323,15 +321,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const rawLocationIds = (req.body as Record<string, unknown>).locationIds
-  let locationIds: number[] = []
-  if (rawLocationIds !== undefined) {
-    if (!Array.isArray(rawLocationIds) || rawLocationIds.some(x => typeof x !== 'number' || !Number.isInteger(x) || x < 1)) {
-      res.status(400).json({ error: 'locationIds must be an array of positive integers' })
-      return
-    }
-    locationIds = [...new Set(rawLocationIds as number[])]
-  }
+  const locationIds = rawLocationIds ? [...new Set(rawLocationIds)] : []
 
   const db = await getDbAsync()
   try {
@@ -407,32 +397,15 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
   }
 })
 
-router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.patch('/:id', authenticateToken, validate(updateUserSchema), validate(userIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Forbidden' })
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid user ID' })
-    return
-  }
-
-  const { name, email } = req.body as {
-    name: unknown
-    email: unknown
-  }
-
-  if (typeof name !== 'string' || !name.trim()) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
-  if (typeof email !== 'string' || !email.trim()) {
-    res.status(400).json({ error: 'email is required' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
+  const { name, email } = req.body as { name: string; email: string }
 
   const parsedPayload = parseMembershipPayload(req.body as {
     role?: unknown
@@ -488,18 +461,14 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
  * POST /api/users/:id/reset-password
  * Admin resets a user's password back to DEFAULT_USER_PASSWORD and flags must_change_password.
  */
-router.post('/:id/reset-password', authenticateToken, async (req: Request, res: Response) => {
+router.post('/:id/reset-password', authenticateToken, validate(userIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid user ID' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
 
   const defaultPw = process.env.DEFAULT_USER_PASSWORD
   if (!defaultPw) {
@@ -531,18 +500,14 @@ router.post('/:id/reset-password', authenticateToken, async (req: Request, res: 
   res.json({ message: 'Password reset to default. User will be prompted to change it on next login.' })
 })
 
-router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, validate(userIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Forbidden' })
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid user ID' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
 
   // Prevent self-deletion
   if (currentUser.id === id) {
@@ -568,18 +533,14 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
 
 // ── User location assignment ────────────────────────────────────────────
 
-router.get('/:id/locations', authenticateToken, async (req: Request, res: Response) => {
+router.get('/:id/locations', authenticateToken, validate(userIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid user ID' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
 
   const db = await getDbAsync()
   const locations = await db.queryAll<{ id: number; name: string }>(
@@ -593,24 +554,15 @@ router.get('/:id/locations', authenticateToken, async (req: Request, res: Respon
   res.json(locations)
 })
 
-router.put('/:id/locations', authenticateToken, async (req: Request, res: Response) => {
+router.put('/:id/locations', authenticateToken, validate(updateUserLocationsSchema), validate(userIdParamSchema, 'params'), async (req: Request, res: Response) => {
   const currentUser = await loadRequestUserContext(req)
   if (!currentUser || (currentUser.role !== 'administrator' && currentUser.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const id = parseInt(req.params.id, 10)
-  if (isNaN(id)) {
-    res.status(400).json({ error: 'Invalid user ID' })
-    return
-  }
-
-  const { locationIds } = req.body as { locationIds: unknown }
-  if (!Array.isArray(locationIds) || locationIds.some(x => typeof x !== 'number')) {
-    res.status(400).json({ error: 'locationIds must be an array of numbers' })
-    return
-  }
+  const { id } = req.params as unknown as { id: number }
+  const { locationIds } = req.body as { locationIds: number[] }
 
   const db = await getDbAsync()
   const user = await loadUserAccessProfile(id)

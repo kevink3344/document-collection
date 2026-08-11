@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
 import { getDbAsync } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createInvitationSchema, acceptInvitationSchema } from '../lib/schemas'
 import { loadRequestUserContext } from '../middleware/organizationAccess'
 
 const router = Router()
@@ -39,29 +41,15 @@ export function verifyPassword(plain: string, stored: string): boolean {
  * POST /api/invitations
  * Admin or super_admin sends an invite to an email address.
  */
-router.post('/', authenticateToken, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, validate(createInvitationSchema), async (req: Request, res: Response) => {
   const context = await loadRequestUserContext(req)
   if (!context || (context.role !== 'administrator' && context.role !== 'super_admin')) {
     res.status(403).json({ error: 'Administrator access required' })
     return
   }
 
-  const { email, name, role } = req.body as { email: unknown; name: unknown; role: unknown }
-
-  if (typeof email !== 'string' || !email.trim()) {
-    res.status(400).json({ error: 'email is required' })
-    return
-  }
-  if (typeof name !== 'string' || !name.trim()) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
-
-  const VALID_ROLES = ['administrator', 'team_manager', 'reviewer', 'user'] as const
-  const userRole =
-    typeof role === 'string' && (VALID_ROLES as readonly string[]).includes(role)
-      ? (role as typeof VALID_ROLES[number])
-      : 'user'
+  const { email, name, role: rawRole } = req.body as { email: string; name: string; role?: string }
+  const userRole = (rawRole ?? 'user') as 'administrator' | 'team_manager' | 'reviewer' | 'user'
 
   const organizationId = context.organizationId
   if (!organizationId) {
@@ -130,17 +118,8 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
  * POST /api/invitations/accept
  * Public endpoint — user sets their password using the token from the invite email.
  */
-router.post('/accept', async (req: Request, res: Response) => {
-  const { token, newPassword } = req.body as { token: unknown; newPassword: unknown }
-
-  if (typeof token !== 'string' || !token.trim()) {
-    res.status(400).json({ error: 'token is required' })
-    return
-  }
-  if (typeof newPassword !== 'string' || newPassword.length < 8) {
-    res.status(400).json({ error: 'Password must be at least 8 characters' })
-    return
-  }
+router.post('/accept', validate(acceptInvitationSchema), async (req: Request, res: Response) => {
+  const { token, newPassword } = req.body as { token: string; newPassword: string }
 
   const db = await getDbAsync()
   const tokenHash = hashToken(token.trim())
