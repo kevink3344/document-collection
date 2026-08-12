@@ -23,6 +23,7 @@ import ApprovalsPage from './pages/ApprovalsPage'
 import SignupSheetBuilderPage from './pages/SignupSheetBuilderPage'
 import SignupSheetFillPage from './pages/SignupSheetFillPage'
 import ExportCsvPage from './pages/ExportCsvPage'
+import ExportCsvPreviewPage from './pages/ExportCsvPreviewPage'
 import ChangePasswordPage from './pages/ChangePasswordPage'
 
 function RequireAuth() {
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="/collections" element={<CollectionsPage />} />
             <Route path="/records" element={<RecordsPage />} />
             <Route path="/records/:id/export-csv" element={<ExportCsvPage />} />
+            <Route path="/records/:id/export-csv/preview" element={<ExportCsvPreviewPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
           </Route>

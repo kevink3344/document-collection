@@ -1,4 +1,4 @@
-import type { ExportCsvSchema, ExportCsvPreset } from '../types'
+import type { ExportCsvSchema, ExportCsvPreset, ExportCsvPreviewResponse } from '../types'
 import { authHeaders, handleUnauthorizedResponse } from './authEvents'
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -21,10 +21,17 @@ export interface ExportCsvPayload {
   ticketColumnKeys: string[]
 }
 
-export async function exportCollectionCsv(collectionId: number, payload: ExportCsvPayload): Promise<Blob> {
+export interface ExportCsvRequestPayload extends ExportCsvPayload {
+  preview?: boolean
+}
+
+export async function exportCollectionCsv(collectionId: number, payload: ExportCsvRequestPayload): Promise<Blob> {
   const res = await fetch(`/api/export-csv/collections/${collectionId}/export`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: {
+      ...authHeaders(),
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(payload),
   })
   handleUnauthorizedResponse(res)
@@ -33,6 +40,18 @@ export async function exportCollectionCsv(collectionId: number, payload: ExportC
     throw new Error(body.error ?? `Export failed: ${res.status}`)
   }
   return res.blob()
+}
+
+export async function previewExportCsv(collectionId: number, payload: ExportCsvPayload): Promise<ExportCsvPreviewResponse> {
+  const res = await fetch(`/api/export-csv/collections/${collectionId}/export`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ ...payload, preview: true }),
+  })
+  return handleResponse<ExportCsvPreviewResponse>(res)
 }
 
 export async function listExportCsvPresets(collectionId: number): Promise<ExportCsvPreset[]> {

@@ -472,6 +472,14 @@ export interface ExportCsvSchema {
   ticketTemplates: ExportCsvTicketTemplate[]
 }
 
+export interface ExportCsvPreviewResponse {
+  collectionTitle: string
+  headers: string[]
+  rows: string[][]
+  rowCount: number
+  truncated: boolean
+}
+
 export interface ExportCsvPreset {
   id: number
   name: string

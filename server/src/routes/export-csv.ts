@@ -30,6 +30,26 @@ interface ExportSchemaResponse {
   ticketTemplates: ExportTicketTemplate[]
 }
 
+interface ExportRequestPayload {
+  submissionColumnKeys?: unknown
+  ticketTemplateId?: unknown
+  ticketColumnKeys?: unknown
+  preview?: unknown
+}
+
+interface ExportTableResult {
+  headers: string[]
+  rows: string[][]
+}
+
+interface ExportPreviewResponse {
+  collectionTitle: string
+  headers: string[]
+  rows: string[][]
+  rowCount: number
+  truncated: boolean
+}
+
 interface DbCollection {
   id: number
   title: string
@@ -228,6 +248,155 @@ async function fetchFilteredResponseIds(db: DbAdapter, collectionId: number, con
   return rows.map(r => r.id)
 }
 
+async function buildExportTable(
+  db: DbAdapter,
+  collectionId: number,
+  collection: DbCollection,
+  context: RequestUserContext,
+  schema: ExportSchemaResponse,
+  selectedSubmissionKeys: string[],
+  ticketTemplateId: number | null,
+  selectedTicketKeys: string[]
+): Promise<ExportTableResult> {
+  const responseIds = await fetchFilteredResponseIds(db, collectionId, context)
+
+  const headers = [
+    ...selectedSubmissionKeys.map(k => schema.submissionColumns.find(c => c.key === k)!.label),
+    ...selectedTicketKeys.map(k => {
+      const ticketTemplate = schema.ticketTemplates.find(t => t.templateId === ticketTemplateId)
+      return ticketTemplate?.columns.find(c => c.key === k)?.label ?? k
+    }),
+  ]
+
+  if (responseIds.length === 0) {
+    return { headers, rows: [] }
+  }
+
+  const responses = await db.queryAll<DbResponse>(
+    `SELECT id, respondent_name, respondent_email, submitted_at
+     FROM collection_responses
+     WHERE id IN (${responseIds.map(() => '?').join(',')})
+     ORDER BY submitted_at DESC`,
+    responseIds
+  )
+
+  // Join collection_fields to get the stable field_key so values from older
+  // collection versions (different field IDs, same field_key) are matched correctly.
+  const responseValueRows = await db.queryAll<DbResponseValue>(
+    `SELECT rv.response_id, cf.field_key, rv.value
+     FROM collection_response_values rv
+     JOIN collection_fields cf ON cf.id = rv.field_id
+     WHERE rv.response_id IN (${responseIds.map(() => '?').join(',')})`,
+    responseIds
+  )
+  const responseValues = new Map<number, Map<string, string | null>>()
+  for (const rv of responseValueRows) {
+    if (!rv.field_key) continue
+    const byResponse = responseValues.get(rv.response_id) ?? new Map<string, string | null>()
+    byResponse.set(rv.field_key, rv.value)
+    responseValues.set(rv.response_id, byResponse)
+  }
+
+  // field_key → type map, built from the active version's fields
+  const fieldTypeByKey = new Map<string, string>()
+  const fields = await fetchSubmissionFields(db, collectionId, collection.active_version_id)
+  for (const field of fields) {
+    if (field.field_key) fieldTypeByKey.set(field.field_key, field.type)
+  }
+
+  let ticketResponses: DbTicketResponse[] = []
+  let ticketValues = new Map<number, Map<number, string | null>>()
+  let ticketFieldTypeById = new Map<number, string>()
+  let ticketTemplate: ExportTicketTemplate | undefined
+  if (ticketTemplateId !== null && selectedTicketKeys.length > 0) {
+    ticketTemplate = schema.ticketTemplates.find(t => t.templateId === ticketTemplateId)
+    if (ticketTemplate) {
+      ticketResponses = await db.queryAll<DbTicketResponse>(
+        `SELECT tr.id, tr.collection_response_id, tr.ticket_template_id, tr.finalized, tr.finalized_at, tr.filled_at, tr.created_at,
+                u.name AS finalized_by_name
+         FROM ticket_responses tr
+         LEFT JOIN users u ON u.id = tr.finalized_by
+         WHERE tr.collection_id = ? AND tr.ticket_template_id = ? AND tr.collection_response_id IN (${responseIds.map(() => '?').join(',')})`,
+        [collectionId, ticketTemplateId, ...responseIds]
+      )
+
+      if (ticketResponses.length > 0) {
+        const ticketResponseIds = ticketResponses.map(tr => tr.id)
+        const ticketValueRows = await db.queryAll<DbTicketResponseValue>(
+          `SELECT ticket_response_id, ticket_field_id, value
+           FROM ticket_response_values
+           WHERE ticket_response_id IN (${ticketResponseIds.map(() => '?').join(',')})`,
+          ticketResponseIds
+        )
+        for (const tv of ticketValueRows) {
+          const byTicket = ticketValues.get(tv.ticket_response_id) ?? new Map<number, string | null>()
+          byTicket.set(tv.ticket_field_id, tv.value)
+          ticketValues.set(tv.ticket_response_id, byTicket)
+        }
+
+        const ticketFields = await fetchTicketFieldsForTemplate(db, ticketTemplateId)
+        for (const field of ticketFields) {
+          ticketFieldTypeById.set(field.id, field.type)
+        }
+      }
+    }
+  }
+
+  const ticketsByResponse = new Map<number, DbTicketResponse[]>()
+  for (const tr of ticketResponses) {
+    const arr = ticketsByResponse.get(tr.collection_response_id) ?? []
+    arr.push(tr)
+    ticketsByResponse.set(tr.collection_response_id, arr)
+  }
+
+  const rows: string[][] = []
+  for (const response of responses) {
+    const submissionValues = responseValues.get(response.id) ?? new Map<string, string | null>()
+    const baseCells = selectedSubmissionKeys.map(key => {
+      switch (key) {
+        case 'id': return String(response.id)
+        case 'submittedAt': return response.submitted_at ?? ''
+        case 'respondentName': return response.respondent_name ?? ''
+        case 'respondentEmail': return response.respondent_email ?? ''
+        default: {
+          // key is field_key (e.g. a UUID or human slug) from buildSchema
+          const type = fieldTypeByKey.get(key) ?? 'short_text'
+          return formatFieldValueForCsv(type, submissionValues.get(key) ?? null)
+        }
+      }
+    })
+
+    const responseTickets = ticketsByResponse.get(response.id) ?? []
+    if (responseTickets.length === 0) {
+      rows.push([...baseCells, ...selectedTicketKeys.map(() => '')])
+      continue
+    }
+
+    for (const ticket of responseTickets) {
+      const ticketValueMap = ticketValues.get(ticket.id) ?? new Map<number, string | null>()
+      const ticketCells = selectedTicketKeys.map(key => {
+        switch (key) {
+          case 'status': return ticket.finalized ? 'Closed' : 'Open'
+          case 'finalizedAt': return ticket.finalized_at ?? ''
+          case 'finalizedByName': return ticket.finalized_by_name ?? ''
+          case 'filledAt': return ticket.filled_at ?? ''
+          default: {
+            if (key.startsWith('field-')) {
+              const fieldId = parseInt(key.slice(6), 10)
+              const type = ticketFieldTypeById.get(fieldId) ?? 'short_text'
+              return formatFieldValueForCsv(type, ticketValueMap.get(fieldId) ?? null)
+            }
+            return ''
+          }
+        }
+      })
+      rows.push([...baseCells, ...ticketCells])
+    }
+  }
+
+  return { headers, rows }
+}
+
 function toCsvCell(value: string): string {
   if (/[",\n\r]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`
@@ -349,7 +518,7 @@ router.get('/collections/:id/schema', authenticateToken, async (req: Request, re
   for (const field of fields) {
     submissionColumns.push({
       fieldId: field.id,
-      key: `field-${field.id}`,
+        key: field.field_key ?? `field-${field.id}`,
       label: field.label,
     })
   }
@@ -409,11 +578,7 @@ router.post('/collections/:id/export', authenticateToken, async (req: Request, r
     return
   }
 
-  const body = req.body as {
-    submissionColumnKeys?: unknown
-    ticketTemplateId?: unknown
-    ticketColumnKeys?: unknown
-  }
+  const body = req.body as ExportRequestPayload
 
   const submissionColumnKeys = Array.isArray(body.submissionColumnKeys)
     ? body.submissionColumnKeys.filter((k): k is string => typeof k === 'string')
@@ -422,6 +587,7 @@ router.post('/collections/:id/export', authenticateToken, async (req: Request, r
   const ticketColumnKeys = Array.isArray(body.ticketColumnKeys)
     ? body.ticketColumnKeys.filter((k): k is string => typeof k === 'string')
     : []
+  const preview = body.preview === true
 
   if (submissionColumnKeys.length === 0) {
     res.status(400).json({ error: 'At least one submission column is required' })
@@ -448,148 +614,40 @@ router.post('/collections/:id/export', authenticateToken, async (req: Request, r
     selectedTicketKeys = ticketColumnKeys.filter(k => validTicketKeys.has(k))
   }
 
-  const responseIds = await fetchFilteredResponseIds(db, id, context)
-  if (responseIds.length === 0) {
-    const headers = [
-      ...selectedSubmissionKeys.map(k => schema.submissionColumns.find(c => c.key === k)!.label),
-      ...selectedTicketKeys.map(k => ticketTemplate!.columns.find(c => c.key === k)!.label),
-    ]
-    const csv = headers.map(toCsvCell).join(',')
-    res.setHeader('Content-Type', 'text/csv')
-    res.setHeader('Content-Disposition', `attachment; filename="${toSafeFilename(collection.title)}-export.csv"`)
-    res.send(csv)
+  const table = await buildExportTable(
+    db,
+    id,
+    collection,
+    context,
+    schema,
+    selectedSubmissionKeys,
+    ticketTemplateId,
+    selectedTicketKeys
+  )
+
+  if (preview) {
+    const rowLimit = 100
+    const previewRows = table.rows.slice(0, rowLimit)
+    const responseBody: ExportPreviewResponse = {
+      collectionTitle: collection.title,
+      headers: table.headers,
+      rows: previewRows,
+      rowCount: table.rows.length,
+      truncated: table.rows.length > rowLimit,
+    }
+    res.json(responseBody)
     return
   }
 
-  const responses = await db.queryAll<DbResponse>(
-    `SELECT id, respondent_name, respondent_email, submitted_at
-     FROM collection_responses
-     WHERE id IN (${responseIds.map(() => '?').join(',')})
-     ORDER BY submitted_at DESC`,
-    responseIds
-  )
-
-  // Join collection_fields to get the stable field_key so values from older
-  // collection versions (different field IDs, same field_key) are matched correctly.
-  const responseValueRows = await db.queryAll<DbResponseValue>(
-    `SELECT rv.response_id, cf.field_key, rv.value
-     FROM collection_response_values rv
-     JOIN collection_fields cf ON cf.id = rv.field_id
-     WHERE rv.response_id IN (${responseIds.map(() => '?').join(',')})`,
-    responseIds
-  )
-  const responseValues = new Map<number, Map<string, string | null>>()
-  for (const rv of responseValueRows) {
-    if (!rv.field_key) continue
-    const byResponse = responseValues.get(rv.response_id) ?? new Map<string, string | null>()
-    byResponse.set(rv.field_key, rv.value)
-    responseValues.set(rv.response_id, byResponse)
-  }
-
-  // field_key → type map, built from the active version's fields
-  const fieldTypeByKey = new Map<string, string>()
-  const fields = await fetchSubmissionFields(db, id, collection.active_version_id)
-  for (const field of fields) {
-    if (field.field_key) fieldTypeByKey.set(field.field_key, field.type)
-  }
-
-  let ticketResponses: DbTicketResponse[] = []
-  let ticketValues = new Map<number, Map<number, string | null>>()
-  let ticketFieldTypeById = new Map<number, string>()
-  if (ticketTemplateId !== null && selectedTicketKeys.length > 0) {
-    ticketResponses = await db.queryAll<DbTicketResponse>(
-      `SELECT tr.id, tr.collection_response_id, tr.ticket_template_id, tr.finalized, tr.finalized_at, tr.filled_at, tr.created_at,
-              u.name AS finalized_by_name
-       FROM ticket_responses tr
-       LEFT JOIN users u ON u.id = tr.finalized_by
-       WHERE tr.collection_id = ? AND tr.ticket_template_id = ? AND tr.collection_response_id IN (${responseIds.map(() => '?').join(',')})`,
-      [id, ticketTemplateId, ...responseIds]
-    )
-
-    if (ticketResponses.length > 0) {
-      const ticketResponseIds = ticketResponses.map(tr => tr.id)
-      const ticketValueRows = await db.queryAll<DbTicketResponseValue>(
-        `SELECT ticket_response_id, ticket_field_id, value
-         FROM ticket_response_values
-         WHERE ticket_response_id IN (${ticketResponseIds.map(() => '?').join(',')})`,
-        ticketResponseIds
-      )
-      for (const tv of ticketValueRows) {
-        const byTicket = ticketValues.get(tv.ticket_response_id) ?? new Map<number, string | null>()
-        byTicket.set(tv.ticket_field_id, tv.value)
-        ticketValues.set(tv.ticket_response_id, byTicket)
-      }
-
-      const ticketFields = await fetchTicketFieldsForTemplate(db, ticketTemplateId)
-      for (const field of ticketFields) {
-        ticketFieldTypeById.set(field.id, field.type)
-      }
-    }
-  }
-
-  const ticketsByResponse = new Map<number, DbTicketResponse[]>()
-  for (const tr of ticketResponses) {
-    const arr = ticketsByResponse.get(tr.collection_response_id) ?? []
-    arr.push(tr)
-    ticketsByResponse.set(tr.collection_response_id, arr)
-  }
-
-  const headers = [
-    ...selectedSubmissionKeys.map(k => schema.submissionColumns.find(c => c.key === k)!.label),
-    ...selectedTicketKeys.map(k => ticketTemplate!.columns.find(c => c.key === k)!.label),
-  ]
-
-  const lines: string[] = [headers.map(toCsvCell).join(',')]
-
-  for (const response of responses) {
-    const submissionValues = responseValues.get(response.id) ?? new Map<string, string | null>()
-    const baseCells = selectedSubmissionKeys.map(key => {
-      switch (key) {
-        case 'id': return String(response.id)
-        case 'submittedAt': return response.submitted_at ?? ''
-        case 'respondentName': return response.respondent_name ?? ''
-        case 'respondentEmail': return response.respondent_email ?? ''
-        default: {
-          // key is field_key (e.g. a UUID or human slug) from buildSchema
-          const type = fieldTypeByKey.get(key) ?? 'short_text'
-          return formatFieldValueForCsv(type, submissionValues.get(key) ?? null)
-        }
-      }
-    })
-
-    const responseTickets = ticketsByResponse.get(response.id) ?? []
-    if (responseTickets.length === 0) {
-      const cells = [...baseCells, ...selectedTicketKeys.map(() => '')]
-      lines.push(cells.map(toCsvCell).join(','))
-      continue
-    }
-
-    for (const ticket of responseTickets) {
-      const ticketValueMap = ticketValues.get(ticket.id) ?? new Map<number, string | null>()
-      const ticketCells = selectedTicketKeys.map(key => {
-        switch (key) {
-          case 'status': return ticket.finalized ? 'Closed' : 'Open'
-          case 'finalizedAt': return ticket.finalized_at ?? ''
-          case 'finalizedByName': return ticket.finalized_by_name ?? ''
-          case 'filledAt': return ticket.filled_at ?? ''
-          default: {
-            if (key.startsWith('field-')) {
-              const fieldId = parseInt(key.slice(6), 10)
-              const type = ticketFieldTypeById.get(fieldId) ?? 'short_text'
-              return formatFieldValueForCsv(type, ticketValueMap.get(fieldId) ?? null)
-            }
-            return ''
-          }
-        }
-      })
-      const cells = [...baseCells, ...ticketCells]
-      lines.push(cells.map(toCsvCell).join(','))
-    }
+  const lines: string[] = [table.headers.map(toCsvCell).join(',')]
+  for (const row of table.rows) {
+    lines.push(row.map(toCsvCell).join(','))
   }
 
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="${toSafeFilename(collection.title)}-export.csv"`)
   res.send(lines.join('\n'))
+
 })
 
 // ── Presets endpoints ─────────────────────────────────────────

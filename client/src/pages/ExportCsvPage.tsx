@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   Download,
@@ -26,8 +26,20 @@ interface PanelState {
   selected: Set<string>
 }
 
+function parseSelectionList(raw: string | null): string[] {
+  if (!raw) return []
+  return raw.split(',').map(value => value.trim()).filter(Boolean)
+}
+
+function parseOptionalNumber(raw: string | null): number | null {
+  if (!raw) return null
+  const parsed = parseInt(raw, 10)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
 export default function ExportCsvPage() {
   const { id } = useParams<{ id: string }>()
+  const location = useLocation()
   const navigate = useNavigate()
   const { showToast } = useToast()
 
@@ -70,6 +82,40 @@ export default function ExportCsvPage() {
         if (defaultTemplate) {
           setTicketPanel({ allChecked: true, selected: new Set(defaultTemplate.columns.map(c => c.key)) })
         }
+
+        const searchParams = new URLSearchParams(location.search)
+        const previewSubmissionKeys = parseSelectionList(searchParams.get('submission') ?? searchParams.get('submissionColumnKeys'))
+        const previewTicketKeys = parseSelectionList(searchParams.get('ticket') ?? searchParams.get('ticketColumnKeys'))
+        const previewTicketTemplateId = parseOptionalNumber(searchParams.get('ticketTemplateId'))
+
+        if (previewSubmissionKeys.length > 0) {
+          const validSubmissionKeys = new Set(sch.submissionColumns.map(c => c.key))
+          const nextSubmissionKeys = previewSubmissionKeys.filter(k => validSubmissionKeys.has(k))
+          if (nextSubmissionKeys.length > 0) {
+            setSubmissionPanel({
+              allChecked: nextSubmissionKeys.length === sch.submissionColumns.length,
+              selected: new Set(nextSubmissionKeys),
+            })
+          }
+        }
+
+        if (previewTicketTemplateId !== null) {
+          const previewTemplate = sch.ticketTemplates.find(t => t.templateId === previewTicketTemplateId) ?? null
+          setTicketTemplateId(previewTemplate?.templateId ?? null)
+          if (previewTemplate) {
+            const validTicketKeys = new Set(previewTemplate.columns.map(c => c.key))
+            const nextTicketKeys = previewTicketKeys.filter(k => validTicketKeys.has(k))
+            if (nextTicketKeys.length > 0) {
+              setTicketPanel({
+                allChecked: nextTicketKeys.length === previewTemplate.columns.length,
+                selected: new Set(nextTicketKeys),
+              })
+            } else {
+              setTicketPanel({ allChecked: false, selected: new Set() })
+            }
+          }
+        }
+
         // Load presets independently — failure here should not block the main page
         listExportCsvPresets(collectionId)
           .then(saved => { if (active) setPresets(saved) })
@@ -83,7 +129,7 @@ export default function ExportCsvPage() {
         if (active) setLoading(false)
       })
     return () => { active = false }
-  }, [collectionId, showToast])
+  }, [collectionId, showToast, location.search])
 
   const selectedTemplate = useMemo(() => {
     return schema?.ticketTemplates.find(t => t.templateId === ticketTemplateId) ?? null
@@ -183,6 +229,19 @@ export default function ExportCsvPage() {
     } finally {
       setExporting(false)
     }
+  }
+
+  function handlePreview() {
+    if (!collectionId || !canExport) return
+    const params = new URLSearchParams()
+    params.set('submission', selectedSubmissionKeys.join(','))
+    if (ticketTemplateId !== null) {
+      params.set('ticketTemplateId', String(ticketTemplateId))
+      if (selectedTicketKeys.length > 0) {
+        params.set('ticket', selectedTicketKeys.join(','))
+      }
+    }
+    navigate(`/records/${collectionId}/export-csv/preview?${params.toString()}`)
   }
 
   async function handleSavePreset() {
@@ -293,14 +352,24 @@ export default function ExportCsvPage() {
             {collection.title}
           </p>
         </div>
-        <button
-          onClick={handleExport}
-          disabled={!canExport || exporting}
-          className="inline-flex items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          Download CSV
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handlePreview}
+            disabled={!canExport || exporting}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Preview CSV
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={!canExport || exporting}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Download CSV
+          </button>
+        </div>
       </div>
 
       {/* Presets */}
