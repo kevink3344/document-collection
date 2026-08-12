@@ -122,18 +122,38 @@ function computeVisibleFields(fields: CollectionField[], values: Record<number, 
   const ordered = sortFields(fields)
   const logicKeyToIndex = new Map(ordered.map((field, index) => [getFieldLogicKey(field, index), index]))
   const visibleIndexes = new Set<number>()
+  const hiddenIndexes = new Set<number>()
   let index = 0
   let guard = 0
 
-  while (index < ordered.length && guard < ordered.length * 2) {
+  while (index < ordered.length && guard < ordered.length * 3) {
     guard += 1
+
+    if (hiddenIndexes.has(index)) {
+      index += 1
+      continue
+    }
+
     const field = ordered[index]
     visibleIndexes.add(index)
 
-    if (field.id !== undefined) {
-      const targetKey = resolveSingleChoiceBranchTarget(field, values[field.id] ?? '')
-      if (targetKey) {
-        const targetIndex = logicKeyToIndex.get(targetKey)
+    if (field.id !== undefined && field.type === 'single_choice' && (field.branchRules?.length ?? 0) > 0) {
+      const selectedTarget = resolveSingleChoiceBranchTarget(field, values[field.id] ?? '')
+      const allTargets = (field.branchRules ?? [])
+        .map(rule => rule.targetFieldKey?.trim() || null)
+        .filter((key): key is string => !!key)
+
+      for (const targetKey of allTargets) {
+        if (targetKey !== selectedTarget) {
+          const targetIndex = logicKeyToIndex.get(targetKey)
+          if (targetIndex !== undefined && targetIndex > index) {
+            hiddenIndexes.add(targetIndex)
+          }
+        }
+      }
+
+      if (selectedTarget) {
+        const targetIndex = logicKeyToIndex.get(selectedTarget)
         if (targetIndex !== undefined && targetIndex > index) {
           index = targetIndex
           continue
