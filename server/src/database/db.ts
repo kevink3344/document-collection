@@ -960,6 +960,59 @@ function applyIncrementalSchema(database: AppDatabase): void {
 
 
 /**
+ * Repair user_preferences PK on SQL Server.
+ * The original Turso→SQL Server migration created `key` as NVARCHAR(MAX)
+ * which cannot be part of a PRIMARY KEY, so the table was created with
+ * PK only on user_id. This breaks ON CONFLICT(user_id, key) upserts
+ * (e.g. settings_panel_layout). Fix: narrow [key] to NVARCHAR(255) and
+ * recreate the composite PK (user_id, [key]).
+ */
+async function fixUserPreferencesPk(adapter: DbAdapter): Promise<void> {
+  try {
+    const pkRows = await adapter.queryAll<{ COLUMN_NAME: string }>(
+      `SELECT KU.COLUMN_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE KU ON TC.CONSTRAINT_NAME=KU.CONSTRAINT_NAME WHERE TC.TABLE_NAME='user_preferences' AND TC.CONSTRAINT_TYPE='PRIMARY KEY' ORDER BY KU.ORDINAL_POSITION`,
+    )
+    const pkCols = pkRows.map((r) => r.COLUMN_NAME)
+    const isCorrect = pkCols.length === 2 && pkCols[0] === 'user_id' && pkCols[1] === 'key'
+    if (isCorrect) return
+
+    // Table may not exist yet (fresh DB) — nothing to fix
+    const tableExists = await adapter.queryAll<{ cnt: number }>(
+      `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='user_preferences'`,
+    )
+    if (!tableExists[0]?.cnt) return
+
+    console.log(`[db] SQL Server migration: fixing user_preferences PK (current: ${pkCols.join(',') || 'none'})`)
+
+    // Need to narrow [key] from NVARCHAR(MAX) to NVARCHAR(255) before it can be in PK
+    const colInfo = await adapter.queryAll<{ DATA_TYPE: string; CHARACTER_MAXIMUM_LENGTH: number }>(
+      `SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='user_preferences' AND COLUMN_NAME='key'`,
+    )
+    const maxLen = colInfo[0]?.CHARACTER_MAXIMUM_LENGTH
+    if (maxLen === -1) {
+      await adapter.execute(`ALTER TABLE [user_preferences] ALTER COLUMN [key] NVARCHAR(255) NOT NULL`)
+      console.log('[db] SQL Server migration: narrowed user_preferences.[key] to NVARCHAR(255)')
+    }
+
+    // Drop existing PK if any
+    if (pkCols.length > 0) {
+      const constraintRows = await adapter.queryAll<{ CONSTRAINT_NAME: string }>(
+        `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME='user_preferences' AND CONSTRAINT_TYPE='PRIMARY KEY'`,
+      )
+      const constraintName = constraintRows[0]?.CONSTRAINT_NAME
+      if (constraintName) {
+        await adapter.execute(`ALTER TABLE [user_preferences] DROP CONSTRAINT [${constraintName}]`)
+      }
+    }
+
+    await adapter.execute(`ALTER TABLE [user_preferences] ADD CONSTRAINT [PK_user_preferences] PRIMARY KEY ([user_id], [key])`)
+    console.log('[db] SQL Server migration: recreated PK_user_preferences as (user_id, [key])')
+  } catch (err) {
+    console.warn('[db] SQL Server migration failed (user_preferences PK fix):', (err as Error).message)
+  }
+}
+
+/**
  * Apply idempotent ALTER TABLE migrations to SQL Server.
  * Called once at startup when DB_MODE=sqlserver.
  * Each statement is wrapped in its own try/catch so one failure doesn't
@@ -968,6 +1021,8 @@ function applyIncrementalSchema(database: AppDatabase): void {
 async function applySqlServerMigrations(): Promise<void> {
   const adapter = await getDbAsync()
   if (adapter.dialect !== 'sqlserver') return
+
+  await fixUserPreferencesPk(adapter)
 
   const migrations: Array<{ name: string; sql: string }> = [
     {

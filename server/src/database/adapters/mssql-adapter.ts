@@ -32,13 +32,16 @@ function translateSql(rawSql: string): string {
     },
   )
 
-  // 4. SQLite UPSERT: INSERT INTO t (cols) VALUES (vals) ON CONFLICT(conflictCol) DO UPDATE SET col = excluded.col
+  // 4. SQLite UPSERT: INSERT INTO t (cols) VALUES (vals) ON CONFLICT(conflictCols) DO UPDATE SET col = excluded.col
   //    → SQL Server two-statement equivalent using named params (duplicates are fine with @pN)
+  //    Handles composite conflict keys like ON CONFLICT(user_id, key) correctly.
+  //    Uses ([\s\S]+?) for valsPart so values containing GETUTCDATE() (with parens) are captured correctly.
   s = s.replace(
-    /INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)\s*ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+([\s\S]+?)(?=;|$)/gi,
-    (_match, table: string, colsPart: string, valsPart: string, _conflictCol: string, setClause: string) => {
+    /INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([\s\S]+?)\)\s*ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+([\s\S]+?)(?=;|$)/gi,
+    (_match, table: string, colsPart: string, valsPart: string, conflictColPart: string, setClause: string) => {
       const cols = colsPart.split(',').map((c) => c.trim())
       const vals = valsPart.split(',').map((v) => v.trim())
+      const conflictCols = conflictColPart.split(',').map((c) => c.trim()).filter(Boolean)
       // Build SET assignments from the DO UPDATE clause, replacing excluded.col with the param value
       const setCols = setClause.trim().split(',').map((assignment) => {
         // "col = excluded.col" → find the col and get its param
@@ -47,10 +50,14 @@ function translateSql(rawSql: string): string {
         const paramVal = colIdx >= 0 ? vals[colIdx] : vals[0]
         return `${lhs} = ${paramVal}`
       }).join(', ')
-      const conflictColWrapped = cols[0] // first col is typically the conflict col
+      const whereClauses = conflictCols.map(col => {
+        const idx = cols.indexOf(col)
+        const paramVal = idx >= 0 ? vals[idx] : vals[0]
+        return `${col} = ${paramVal}`
+      }).join(' AND ')
       return (
-        `IF EXISTS (SELECT 1 FROM ${table} WHERE ${conflictColWrapped} = ${vals[0]})\n` +
-        `  UPDATE ${table} SET ${setCols} WHERE ${conflictColWrapped} = ${vals[0]}\n` +
+        `IF EXISTS (SELECT 1 FROM ${table} WHERE ${whereClauses})\n` +
+        `  UPDATE ${table} SET ${setCols} WHERE ${whereClauses}\n` +
         `ELSE\n` +
         `  INSERT INTO ${table} (${cols.join(', ')}) VALUES (${vals.join(', ')})`
       )

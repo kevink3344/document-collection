@@ -30,22 +30,29 @@ function translateSql(rawSql: string): string {
     },
   )
 
-  // 4. SQLite UPSERT: INSERT INTO t (...) VALUES (...) ON CONFLICT(col) DO UPDATE SET ...
-  //    → SQL Server IF EXISTS UPDATE ELSE INSERT
+  // 4. SQLite UPSERT: INSERT INTO t (...) VALUES (...) ON CONFLICT(cols) DO UPDATE SET ...
+  //    → SQL Server IF EXISTS UPDATE ELSE INSERT (handles composite keys)
+  //    Uses ([\s\S]+?) for valsPart so values containing GETUTCDATE() (with parens) are captured correctly.
   s = s.replace(
-    /INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)\s*ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+([\s\S]+?)(?=;|$)/gi,
-    (_match, table: string, colsPart: string, valsPart: string, _conflictCol: string, setClause: string) => {
+    /INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([\s\S]+?)\)\s*ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+([\s\S]+?)(?=;|$)/gi,
+    (_match, table: string, colsPart: string, valsPart: string, conflictColPart: string, setClause: string) => {
       const cols = colsPart.split(',').map((c) => c.trim())
       const vals = valsPart.split(',').map((v) => v.trim())
+      const conflictCols = conflictColPart.split(',').map((c) => c.trim()).filter(Boolean)
       const setCols = setClause.trim().split(',').map((assignment) => {
         const [lhs] = assignment.split('=').map((p) => p.trim())
         const colIdx = cols.indexOf(lhs)
         const paramVal = colIdx >= 0 ? vals[colIdx] : vals[0]
         return `${lhs} = ${paramVal}`
       }).join(', ')
+      const whereClauses = conflictCols.map(col => {
+        const idx = cols.indexOf(col)
+        const paramVal = idx >= 0 ? vals[idx] : vals[0]
+        return `${col} = ${paramVal}`
+      }).join(' AND ')
       return (
-        `IF EXISTS (SELECT 1 FROM ${table} WHERE ${cols[0]} = ${vals[0]})\n` +
-        `  UPDATE ${table} SET ${setCols} WHERE ${cols[0]} = ${vals[0]}\n` +
+        `IF EXISTS (SELECT 1 FROM ${table} WHERE ${whereClauses})\n` +
+        `  UPDATE ${table} SET ${setCols} WHERE ${whereClauses}\n` +
         `ELSE\n` +
         `  INSERT INTO ${table} (${cols.join(', ')}) VALUES (${vals.join(', ')})`
       )
