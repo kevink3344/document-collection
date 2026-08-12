@@ -56,6 +56,15 @@ function hashToken(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex')
 }
 
+function getAllowedOrgIdentifiers(): string[] {
+  const raw = process.env.ORG_LIST?.trim() ?? ''
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+}
+
 router.get('/organizations', async (_req: Request, res: Response) => {
   /**
    * @swagger
@@ -69,12 +78,22 @@ router.get('/organizations', async (_req: Request, res: Response) => {
    */
   const db = await getDbAsync()
   // Only return orgs that have at least one user (for the login picker)
-  const orgs = await db.queryAll<{ id: number; name: string; description: string | null }>(
-      `SELECT DISTINCT o.id, o.name, o.description
+  let orgs = await db.queryAll<{ id: number; name: string; description: string | null; slug: string | null }>(
+      `SELECT DISTINCT o.id, o.name, o.description, o.slug
        FROM organizations o
        INNER JOIN user_organizations uo ON uo.organization_id = o.id
        ORDER BY o.name COLLATE NOCASE ASC`
     )
+
+  const allowed = getAllowedOrgIdentifiers()
+  if (allowed.length > 0) {
+    const allowedSet = new Set(allowed)
+    orgs = orgs.filter(o =>
+      allowedSet.has(o.name.trim().toLowerCase()) ||
+      (o.slug != null && allowedSet.has(o.slug.trim().toLowerCase())) ||
+      (o.description != null && allowedSet.has(o.description.trim().toLowerCase()))
+    )
+  }
 
   res.json(orgs)
 })

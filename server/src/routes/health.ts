@@ -58,6 +58,7 @@ router.get('/info', (_req: Request, res: Response) => {
   const normalizedColor = rawColor.startsWith('#') ? rawColor : rawColor ? `#${rawColor}` : ''
   const loginScreenColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(normalizedColor) ? normalizedColor : null
   const defaultImageLogoUrl = process.env.IMAGE_LOGO_URL?.trim() || null
+  const orgList = process.env.ORG_LIST?.trim() || null
   res.json({
     version: pkg.version,
     dbMode: getConfiguredDatabaseMode(),
@@ -69,6 +70,7 @@ router.get('/info', (_req: Request, res: Response) => {
     approvalWorkflowEnabled: process.env.APPROVAL_WORKFLOW_ENABLED !== 'false',
     ticketSystemEnabled: process.env.TICKET_SYSTEM_ENABLED !== 'false',
     defaultImageLogoUrl,
+    orgList,
   })
 })
 

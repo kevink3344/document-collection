@@ -78,6 +78,10 @@ try {
   console.warn('[server] Database setup failed at startup (server will continue):', (err as Error).message)
 }
 
+if (process.env.ORG_LIST?.trim()) {
+  console.log(`[server] ORG_LIST filter active: ${process.env.ORG_LIST.trim()}`)
+}
+
 // ── Super Admin bootstrap ────────────────────────────────────
 async function syncSuperAdmin() {
   const email = process.env.SUPER_ADMIN_EMAIL?.trim()
