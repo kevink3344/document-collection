@@ -172,6 +172,10 @@ export const importLocationsSchema = z.object({
 
 // ── Settings ───────────────────────────────────────────────────────────────
 
+export const updateVisibilitySchema = z.object({
+  visiblePanelIds: z.array(z.string().trim().min(1)),
+})
+
 export const createSettingsTabSchema = z.object({
   name: nonEmptyString,
   slug: z.string().trim().regex(/^[a-z0-9-]+$/, 'slug must contain only lowercase letters, numbers, and hyphens'),

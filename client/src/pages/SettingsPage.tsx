@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, RotateCcw, Save, Tag, Trash2, Upload, Users, UserCheck, X, Archive } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, Eye, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, RotateCcw, Save, Tag, Trash2, Upload, Users, UserCheck, X, Archive } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -35,7 +35,7 @@ import {
 } from '../api/categories'
 import { listCollections, seedCollectionData, listArchivedCollections, unarchiveCollection, deleteCollection as deleteCollectionApi } from '../api/collections'
 import { deleteGalleryAsset, listGalleryAssets, uploadGalleryAsset } from '../api/galleryAssets'
-import { getPublicSetting, updateSetting, listSettingsTabs, createSettingsTab, updateSettingsTab, deleteSettingsTab, reorderSettingsTabs } from '../api/settings'
+import { getPublicSetting, updateSetting, listSettingsTabs, createSettingsTab, updateSettingsTab, deleteSettingsTab, reorderSettingsTabs, getAdminVisiblePanels, updateAdminVisiblePanels } from '../api/settings'
 import type { SettingsTab } from '../api/settings'
 import { getMenuLabels, updateMenuLabels } from '../api/menuLabels'
 import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type AppUser } from '../api/users'
@@ -79,12 +79,13 @@ type PanelId =
   | 'api'
   | 'seed'
   | 'manage-tabs'
+  | 'visibility-settings'
 
 type PanelLayout = Record<string, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections', 'visibility-settings'],
   other: ['qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -106,13 +107,17 @@ const PANEL_LABELS: Record<PanelId, string> = {
   api: 'API Documentation',
   seed: 'Seed Data',
   'manage-tabs': 'Manage Tabs',
+  'visibility-settings': 'Visibility Settings',
 }
 
 
 const ALL_PANEL_IDS: PanelId[] = [
   'organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections',
-  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs',
+  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs', 'visibility-settings',
 ]
+
+const VISIBILITY_EXCLUDED: PanelId[] = ['manage-tabs', 'visibility-settings']
+const VISIBILITY_CHECKLIST_IDS: PanelId[] = ALL_PANEL_IDS.filter(id => !VISIBILITY_EXCLUDED.includes(id))
 
 function mergeStoredLayout(stored: unknown, tabs: SettingsTab[]): PanelLayout {
   const defaultLayout: PanelLayout = {}
@@ -584,6 +589,15 @@ export default function SettingsPage() {
   const [panelLayout, setPanelLayout] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT)
   const [draggingId, setDraggingId] = useState<PanelId | null>(null)
 
+  // Visibility settings (Super Admin controls which panels Administrators see)
+  const [adminVisiblePanels, setAdminVisiblePanels] = useState<PanelId[] | null>(null)
+  const [visibilityDraft, setVisibilityDraft] = useState<PanelId[]>([])
+  const [visibilityLoading, setVisibilityLoading] = useState(false)
+  const [visibilitySaving, setVisibilitySaving] = useState(false)
+  const [visibilityError, setVisibilityError] = useState<string | null>(null)
+  const [visibilitySavedOk, setVisibilitySavedOk] = useState(false)
+  const [visibilitySettingsExpanded, setVisibilitySettingsExpanded] = useState(false)
+
   useEffect(() => {
     if (user?.id) {
       void getPreference('location_import_url')
@@ -739,6 +753,31 @@ export default function SettingsPage() {
       void loadLocations()
       void loadGallery()
     }
+  }, [user?.role])
+
+  // Load visibility settings for both roles (admin needs it to filter, super_admin to edit)
+  useEffect(() => {
+    if (user?.role !== 'administrator' && user?.role !== 'super_admin') return
+    let cancelled = false
+    setVisibilityLoading(true)
+    setVisibilityError(null)
+    getAdminVisiblePanels()
+      .then(ids => {
+        if (cancelled) return
+        const filtered = (ids as PanelId[]).filter(id => VISIBILITY_CHECKLIST_IDS.includes(id as PanelId)) as PanelId[]
+        setAdminVisiblePanels(filtered)
+        setVisibilityDraft(filtered)
+      })
+      .catch(err => {
+        if (!cancelled) {
+          // Default to all visible on error
+          setAdminVisiblePanels([...VISIBILITY_CHECKLIST_IDS])
+          setVisibilityDraft([...VISIBILITY_CHECKLIST_IDS])
+          setVisibilityError((err as Error).message)
+        }
+      })
+      .finally(() => { if (!cancelled) setVisibilityLoading(false) })
+    return () => { cancelled = true }
   }, [user?.role])
 
 
@@ -1609,6 +1648,25 @@ export default function SettingsPage() {
       setTabSaving(false)
     }
   }
+
+  // Panels visible for current role/tab — must be before early returns (Rules of Hooks)
+  const visibleSetForTab = useMemo(() => {
+    if (isGlobalAdmin) return null
+    if (adminVisiblePanels === null) return new Set<PanelId>(VISIBILITY_CHECKLIST_IDS)
+    return new Set<PanelId>(adminVisiblePanels)
+  }, [isGlobalAdmin, adminVisiblePanels])
+
+  const panelsForActiveTab = useMemo(() => {
+    const raw = panelLayout[activeTab] ?? []
+    if (isGlobalAdmin) return raw
+    const set = visibleSetForTab!
+    return raw.filter(id => {
+      if (id === 'manage-tabs' || id === 'visibility-settings') return false
+      return set.has(id)
+    })
+  }, [panelLayout, activeTab, isGlobalAdmin, visibleSetForTab])
+
+  const canDrag = isGlobalAdmin
 
   if (loading) {
     return <div className="flex items-center justify-center h-40 text-[#64748B]">Loading settings…</div>
@@ -4745,16 +4803,95 @@ export default function SettingsPage() {
         )}
       </section>
       )
+      case 'visibility-settings': return (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setVisibilitySettingsExpanded(expanded => !expanded)}
+          className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+              <Eye size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Visibility Settings</h2>
+              <p className="text-sm text-[#64748B] mt-1">Choose which Settings panels Administrators can see. Checked = visible.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {visibilitySettingsExpanded ? <ChevronDown size={18} className="text-[#64748B]" /> : <ChevronRight size={18} className="text-[#64748B]" />}
+          </div>
+        </button>
+        {visibilitySettingsExpanded && (
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] p-5 space-y-4">
+            {visibilityLoading ? (
+              <p className="text-sm text-[#64748B]">Loading visibility…</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setVisibilityDraft([...VISIBILITY_CHECKLIST_IDS]); setVisibilitySavedOk(false) }} className="text-xs font-medium text-[#2563EB] hover:text-blue-700">Select All</button>
+                  <span className="text-xs text-[#CBD5E1]">|</span>
+                  <button type="button" onClick={() => { setVisibilityDraft([]); setVisibilitySavedOk(false) }} className="text-xs font-medium text-[#2563EB] hover:text-blue-700">Deselect All</button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {VISIBILITY_CHECKLIST_IDS.map(id => (
+                    <label key={id} className="flex items-center gap-2 rounded border border-[#E2E8F0] dark:border-[#334155] px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] cursor-pointer hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]">
+                      <input
+                        type="checkbox"
+                        checked={visibilityDraft.includes(id)}
+                        onChange={e => {
+                          setVisibilitySavedOk(false)
+                          setVisibilityDraft(prev => e.target.checked ? [...prev, id] : prev.filter(v => v !== id))
+                        }}
+                        className="h-4 w-4 accent-[#2563EB]"
+                      />
+                      {PANEL_LABELS[id]}
+                    </label>
+                  ))}
+                </div>
+                {visibilityError && <p className="text-sm text-red-500">{visibilityError}</p>}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={visibilitySaving}
+                    onClick={async () => {
+                      setVisibilitySaving(true)
+                      setVisibilityError(null)
+                      setVisibilitySavedOk(false)
+                      try {
+                        await updateAdminVisiblePanels(visibilityDraft)
+                        setAdminVisiblePanels([...visibilityDraft])
+                        setVisibilitySavedOk(true)
+                      } catch (err) {
+                        setVisibilityError((err as Error).message)
+                      } finally {
+                        setVisibilitySaving(false)
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    <Save size={14} />
+                    {visibilitySaving ? 'Saving…' : 'Save Visibility'}
+                  </button>
+                  {visibilitySavedOk && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </section>
+      )
       default: return null
     }
   }
 
   return (
     <DndContext
-      sensors={sensors}
+      sensors={canDrag ? sensors : []}
       collisionDetection={tabAwareCollision}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
+      onDragStart={canDrag ? handleDragStart : undefined}
+      onDragEnd={canDrag ? handleDragEnd : undefined}
     >
       <div className="max-w-4xl">
         <div className="mb-6">
@@ -4782,19 +4919,35 @@ export default function SettingsPage() {
           {tabsLoading && <span className="px-3 text-xs text-[#94A3B8]">Loading tabs…</span>}
         </div>
 
-        <SortableContext items={panelLayout[activeTab] ?? []} strategy={verticalListSortingStrategy}>
+        {canDrag ? (
+          <SortableContext items={panelsForActiveTab} strategy={verticalListSortingStrategy}>
+            <div className="space-y-6">
+              {panelsForActiveTab.length === 0 ? (
+                <p className="text-sm text-[#64748B]">No settings available in this tab.</p>
+              ) : (
+                panelsForActiveTab.map(id => (
+                  <SettingsSortablePanel key={id} id={id}>
+                    <PanelErrorBoundary label={PANEL_LABELS[id]}>
+                      {renderPanel(id)}
+                    </PanelErrorBoundary>
+                  </SettingsSortablePanel>
+                ))
+              )}
+            </div>
+          </SortableContext>
+        ) : (
           <div className="space-y-6">
-            {(panelLayout[activeTab] ?? [])
-              .filter(id => id !== 'manage-tabs' || isGlobalAdmin)
-              .map(id => (
-              <SettingsSortablePanel key={id} id={id}>
-                <PanelErrorBoundary label={PANEL_LABELS[id]}>
+            {panelsForActiveTab.length === 0 ? (
+              <p className="text-sm text-[#64748B]">No settings available in this tab.</p>
+            ) : (
+              panelsForActiveTab.map(id => (
+                <PanelErrorBoundary key={id} label={PANEL_LABELS[id]}>
                   {renderPanel(id)}
                 </PanelErrorBoundary>
-              </SettingsSortablePanel>
-            ))}
+              ))
+            )}
           </div>
-        </SortableContext>
+        )}
 
         <DragOverlay>
           {draggingId && (

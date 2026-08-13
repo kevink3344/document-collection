@@ -118,3 +118,20 @@ export async function reorderSettingsTabs(orderedIds: number[]): Promise<void> {
     throw new Error(body.error ?? `Request failed: ${res.status}`)
   }
 }
+
+// ── Visibility Settings ──────────────────────────────────────────────────
+
+export async function getAdminVisiblePanels(): Promise<string[]> {
+  const res = await fetch(`${BASE}/visibility`, { headers: authHeaders() })
+  const data = await handleResponse<{ visiblePanelIds: string[] }>(res)
+  return data.visiblePanelIds
+}
+
+export async function updateAdminVisiblePanels(visiblePanelIds: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/visibility`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ visiblePanelIds }),
+  })
+  await handleResponse<{ visiblePanelIds: string[] }>(res)
+}

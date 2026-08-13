@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express'
 import { getDbAsync, setConfiguredDatabaseMode } from '../database/db'
 import { authenticateToken } from '../middleware/auth'
 import { validate } from '../middleware/validate'
-import { createSettingsTabSchema, reorderSettingsTabsSchema, updateSettingsTabSchema, settingsTabIdParamSchema, updateSettingSchema } from '../lib/schemas'
+import { createSettingsTabSchema, reorderSettingsTabsSchema, updateSettingsTabSchema, settingsTabIdParamSchema, updateSettingSchema, updateVisibilitySchema } from '../lib/schemas'
 import { getDocumentStorageMode, isStorageBackendAvailable, getFileCounts, type DocumentStorageMode } from '../services/documentStorage'
 
 const router = Router()
@@ -277,6 +277,69 @@ router.delete('/tabs/:id', authenticateToken, validate(settingsTabIdParamSchema,
   }
 
   res.json({ success: true, reassignedTo: firstTab.slug })
+})
+
+// ── Visibility Settings (Super Admin controls which panels Administrators see) ──
+
+const VISIBILITY_KEY = 'admin_visible_panels'
+const VISIBILITY_CHECKLIST_IDS = [
+  'organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels',
+  'users', 'groups', 'locations', 'gallery', 'archived-collections',
+  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed',
+] as const
+const VISIBILITY_ALLOWLIST = new Set<string>(VISIBILITY_CHECKLIST_IDS as readonly string[])
+
+function normalizeVisibleIds(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return []
+  return ids.filter((v): v is string => typeof v === 'string' && VISIBILITY_ALLOWLIST.has(v))
+}
+
+/**
+ * GET /api/settings/visibility
+ * Returns { visiblePanelIds: string[] } — panels visible to Administrators.
+ * Allowed: administrator + super_admin. Default when no row: all checklist ids.
+ */
+router.get('/visibility', authenticateToken, async (req: Request, res: Response) => {
+  if (req.user?.role !== 'super_admin' && req.user?.role !== 'administrator') {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+  const db = await getDbAsync()
+  const row = await db.queryOne<DbSetting>('SELECT key, value FROM app_settings WHERE key = ?', [VISIBILITY_KEY])
+  if (!row) {
+    res.json({ visiblePanelIds: [...VISIBILITY_CHECKLIST_IDS] })
+    return
+  }
+  try {
+    const parsed = JSON.parse(row.value) as unknown
+    const normalized = normalizeVisibleIds(parsed)
+    res.json({ visiblePanelIds: normalized })
+  } catch {
+    res.json({ visiblePanelIds: [...VISIBILITY_CHECKLIST_IDS] })
+  }
+})
+
+/**
+ * PUT /api/settings/visibility
+ * Body: { visiblePanelIds: string[] } — super_admin only.
+ */
+router.put('/visibility', authenticateToken, validate(updateVisibilitySchema), async (req: Request, res: Response) => {
+  if (req.user?.role !== 'super_admin') {
+    res.status(403).json({ error: 'Super admin access required' })
+    return
+  }
+  const { visiblePanelIds } = req.body as { visiblePanelIds: string[] }
+  const invalid = visiblePanelIds.filter(id => !VISIBILITY_ALLOWLIST.has(id))
+  if (invalid.length > 0) {
+    res.status(400).json({ error: `Invalid panel ids: ${invalid.join(', ')}` })
+    return
+  }
+  const db = await getDbAsync()
+  await db.execute(
+    'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    [VISIBILITY_KEY, JSON.stringify(visiblePanelIds)]
+  )
+  res.json({ visiblePanelIds })
 })
 
 // ── End Settings Tabs CRUD ──────────────────────────────────────────────────
