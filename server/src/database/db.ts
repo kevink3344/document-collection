@@ -1026,6 +1026,10 @@ async function applySqlServerMigrations(): Promise<void> {
 
   const migrations: Array<{ name: string; sql: string }> = [
     {
+      name: 'locations.is_shared',
+      sql: `ALTER TABLE [locations] ADD [is_shared] BIT NOT NULL CONSTRAINT [DF_locations_is_shared] DEFAULT 1`,
+    },
+    {
       name: 'users.password_hash',
       sql: `ALTER TABLE [users] ADD [password_hash] NVARCHAR(512) NULL`,
     },
@@ -1064,6 +1068,37 @@ async function applySqlServerMigrations(): Promise<void> {
         console.warn(`[db] SQL Server migration failed (${migration.name}):`, msg)
       }
     }
+  }
+
+  // Backfill: make all existing locations shared by default (one-time, idempotent).
+  try {
+    const cnt = await adapter.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM locations WHERE is_shared = 0')
+    if (cnt && cnt.c > 0) {
+      await adapter.execute('UPDATE locations SET is_shared = 1 WHERE is_shared = 0')
+      console.log(`[db] SQL Server migration: backfilled ${cnt.c} locations to is_shared=1`)
+    }
+    // Ensure future inserts default to shared when is_shared is omitted.
+    try {
+      const defRows = await adapter.queryAll<{ col_default: string | null }>(
+        `SELECT COLUMN_DEFAULT as col_default FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='locations' AND COLUMN_NAME='is_shared'`
+      )
+      const hasDefault1 = defRows[0]?.col_default && /\(\(1\)\)|\(1\)|\b1\b/.test(defRows[0].col_default)
+      if (!hasDefault1) {
+        // Drop old default constraint if present, then add DEFAULT 1
+        const consRows = await adapter.queryAll<{ name: string }>(
+          `SELECT dc.name FROM sys.default_constraints dc JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id JOIN sys.tables t ON t.object_id = dc.parent_object_id WHERE t.name='locations' AND c.name='is_shared'`
+        )
+        for (const r of consRows) {
+          try { await adapter.execute(`ALTER TABLE [locations] DROP CONSTRAINT [${r.name}]`) } catch { /* ignore */ }
+        }
+        await adapter.execute(`ALTER TABLE [locations] ADD CONSTRAINT [DF_locations_is_shared] DEFAULT 1 FOR [is_shared]`)
+        console.log('[db] SQL Server migration: updated locations.is_shared default to 1')
+      }
+    } catch (e) {
+      console.warn('[db] SQL Server migration: failed to update is_shared default:', (e as Error).message)
+    }
+  } catch (e) {
+    console.warn('[db] SQL Server migration: backfill is_shared failed:', (e as Error).message)
   }
 }
 
@@ -2192,11 +2227,29 @@ function runMigrations(db: AppDatabase): void {
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         name            TEXT    NOT NULL,
         organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        is_shared       INTEGER NOT NULL DEFAULT 1,
         created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(name, organization_id)
       )
     `)
     console.log('[db] Migration: created locations table')
+  } else {
+    const existingLocationCols = getTableColumns(db, 'locations')
+    const locationColNames = new Set(existingLocationCols.map(c => c.name))
+    if (!locationColNames.has('is_shared')) {
+      db.exec(`ALTER TABLE locations ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 1`)
+      console.log('[db] Migration: added locations.is_shared')
+    } else {
+      // Backfill: existing rows were created before sharing existed — make them shared by default.
+      const notShared = (db.prepare('SELECT COUNT(*) as c FROM locations WHERE is_shared = 0').get() as { c: number }).c
+      if (notShared > 0) {
+        db.exec('UPDATE locations SET is_shared = 1 WHERE is_shared = 0')
+        console.log(`[db] Migration: backfilled ${notShared} locations to is_shared=1`)
+      }
+      // Ensure future inserts default to shared even if is_shared is omitted.
+      // SQLite has no ALTER COLUMN; recreate via new table only if needed — for now just ensure default via trigger-like check is not needed
+      // since application always supplies is_shared. We update the schema default for new DBs above.
+    }
   }
 
   if (!tableExists(db, 'user_locations')) {

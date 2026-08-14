@@ -53,7 +53,18 @@ interface DbLocation {
   id: number
   name: string
   organization_id: number
+  is_shared: number | boolean | null
   created_at: string
+}
+
+function toApiLocation(row: DbLocation) {
+  return {
+    id: row.id,
+    name: row.name,
+    organizationId: row.organization_id,
+    isShared: Boolean(row.is_shared),
+    createdAt: row.created_at,
+  }
 }
 
 // ── GET /api/locations — list / typeahead search (public) ────
@@ -89,7 +100,7 @@ router.get('/', optionalAuthenticateToken, validate(locationQuerySchema, 'query'
   if (resolvedOrgId === 'all') {
     rows = q
       ? await db.queryAll<DbLocation>(
-            `SELECT id, name, organization_id, created_at
+            `SELECT id, name, organization_id, is_shared, created_at
              FROM locations
              WHERE lower(name) LIKE lower(?)
              ORDER BY lower(name)
@@ -97,37 +108,30 @@ router.get('/', optionalAuthenticateToken, validate(locationQuerySchema, 'query'
             [`%${q}%`]
           )
       : await db.queryAll<DbLocation>(
-            `SELECT id, name, organization_id, created_at
+            `SELECT id, name, organization_id, is_shared, created_at
              FROM locations
              ORDER BY lower(name)`
           )
   } else {
     rows = q
       ? await db.queryAll<DbLocation>(
-            `SELECT id, name, organization_id, created_at
+            `SELECT id, name, organization_id, is_shared, created_at
              FROM locations
-             WHERE organization_id = ? AND lower(name) LIKE lower(?)
+             WHERE (organization_id = ? OR is_shared = 1) AND lower(name) LIKE lower(?)
              ORDER BY lower(name)
              LIMIT 20`,
             [resolvedOrgId, `%${q}%`]
           )
       : await db.queryAll<DbLocation>(
-            `SELECT id, name, organization_id, created_at
+            `SELECT id, name, organization_id, is_shared, created_at
              FROM locations
-             WHERE organization_id = ?
+             WHERE organization_id = ? OR is_shared = 1
              ORDER BY lower(name)`,
             [resolvedOrgId]
           )
   }
 
-  res.json(
-    rows.map(l => ({
-      id: l.id,
-      name: l.name,
-      organizationId: l.organization_id,
-      createdAt: l.created_at,
-    }))
-  )
+  res.json(rows.map(toApiLocation))
 })
 
 // ── POST /api/locations — create (admin+) ────────────────────
@@ -143,30 +147,25 @@ router.post('/', authenticateToken, validate(createLocationSchema), async (req: 
     return
   }
 
-  const { name } = req.body as { name: string }
+  const { name, isShared } = req.body as { name: string; isShared?: boolean }
 
   const db = await getDbAsync()
 
   try {
     const r = await db.execute(
-        `INSERT INTO locations (name, organization_id)
-         VALUES (?, ?)`,
-        [name.trim(), context.organizationId]
+        `INSERT INTO locations (name, organization_id, is_shared)
+         VALUES (?, ?, ?)`,
+        [name.trim(), context.organizationId, isShared === false ? 0 : 1]
       )
 
-    const location = await db.queryOne<DbLocation>('SELECT id, name, organization_id, created_at FROM locations WHERE id = ?', [r.lastInsertRowid])
+    const location = await db.queryOne<DbLocation>('SELECT id, name, organization_id, is_shared, created_at FROM locations WHERE id = ?', [r.lastInsertRowid])
 
     if (!location) {
       res.status(500).json({ error: 'Failed to load created location' })
       return
     }
 
-    res.status(201).json({
-      id: location.id,
-      name: location.name,
-      organizationId: location.organization_id,
-      createdAt: location.created_at,
-    })
+    res.status(201).json(toApiLocation(location))
   } catch (err) {
     if ((err as NodeJS.ErrnoException).message?.includes('UNIQUE')) {
       res.status(409).json({ error: 'A location with this name already exists in the organization' })
@@ -243,7 +242,7 @@ router.post('/import', authenticateToken, async (req: Request, res: Response) =>
     }
 
     try {
-      await db.execute('INSERT INTO locations (name, organization_id) VALUES (?, ?)', [name, context.organizationId])
+      await db.execute('INSERT INTO locations (name, organization_id, is_shared) VALUES (?, ?, 1)', [name, context.organizationId])
       existingNames.add(name.toLowerCase())
       createdNames.push(name)
     } catch (err) {
@@ -258,6 +257,79 @@ router.post('/import', authenticateToken, async (req: Request, res: Response) =>
     total: dedupedNames.length,
     names: createdNames,
   })
+})
+
+// ── PATCH /api/locations/:id/share — toggle shared flag (admin+) ──
+// Defined before PATCH /:id so Express matches the more specific route first.
+router.patch('/:id/share', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
+  if (!context) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  if (context.role !== 'administrator' && context.role !== 'super_admin') {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid location ID' })
+    return
+  }
+  const { isShared } = req.body as { isShared?: unknown }
+  if (typeof isShared !== 'boolean') {
+    res.status(400).json({ error: 'isShared must be a boolean' })
+    return
+  }
+  const db = await getDbAsync()
+  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT id, organization_id FROM locations WHERE id = ?', [id])
+  if (!existing) {
+    res.status(404).json({ error: 'Location not found' })
+    return
+  }
+  if (context.role === 'administrator' && existing.organization_id !== context.organizationId) {
+    res.status(403).json({ error: 'You can only share locations within your own organization' })
+    return
+  }
+  await db.execute('UPDATE locations SET is_shared = ? WHERE id = ?', [isShared ? 1 : 0, id])
+  const updated = await db.queryOne<DbLocation>('SELECT id, name, organization_id, is_shared, created_at FROM locations WHERE id = ?', [id])
+  if (!updated) {
+    res.status(500).json({ error: 'Failed to load updated location' })
+    return
+  }
+  res.json(toApiLocation(updated))
+})
+
+// ── POST /api/locations/share-all — bulk share/unshare all org locations (admin+) ──
+router.post('/share-all', authenticateToken, async (req: Request, res: Response) => {
+  const context = await loadRequestUserContext(req)
+  if (!context) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  if (context.role !== 'administrator' && context.role !== 'super_admin') {
+    res.status(403).json({ error: 'Administrator access required' })
+    return
+  }
+  const { isShared } = req.body as { isShared?: unknown }
+  if (typeof isShared !== 'boolean') {
+    res.status(400).json({ error: 'isShared must be a boolean' })
+    return
+  }
+  const db = await getDbAsync()
+  if (context.organizationId === null) {
+    await db.execute('UPDATE locations SET is_shared = ?', [isShared ? 1 : 0])
+  } else {
+    await db.execute('UPDATE locations SET is_shared = ? WHERE organization_id = ?', [isShared ? 1 : 0, context.organizationId])
+  }
+  // Return the same visible set as GET / would, so the client can replace its list without losing shared rows from other orgs.
+  const rows = await db.queryAll<DbLocation>(
+    context.organizationId === null
+      ? 'SELECT id, name, organization_id, is_shared, created_at FROM locations ORDER BY lower(name)'
+      : 'SELECT id, name, organization_id, is_shared, created_at FROM locations WHERE organization_id = ? OR is_shared = 1 ORDER BY lower(name)',
+    context.organizationId === null ? [] : [context.organizationId]
+  )
+  res.json({ updated: rows.length, locations: rows.map(toApiLocation) })
 })
 
 // ── PATCH /api/locations/:id — rename (admin+) ───────────────
@@ -279,14 +351,14 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  const { name } = req.body as { name?: unknown }
+  const { name, isShared } = req.body as { name?: unknown; isShared?: unknown }
   if (typeof name !== 'string' || !name.trim()) {
     res.status(400).json({ error: 'name is required' })
     return
   }
 
   const db = await getDbAsync()
-  const existing = await db.queryOne<{ id: number; organization_id: number }>('SELECT id, organization_id FROM locations WHERE id = ?', [id])
+  const existing = await db.queryOne<{ id: number; organization_id: number; is_shared: number | boolean | null }>('SELECT id, organization_id, is_shared FROM locations WHERE id = ?', [id])
 
   if (!existing) {
     res.status(404).json({ error: 'Location not found' })
@@ -299,18 +371,20 @@ router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
   }
 
   try {
-    await db.execute('UPDATE locations SET name = ? WHERE id = ?', [name.trim(), id])
-    const updated = await db.queryOne<DbLocation>('SELECT id, name, organization_id, created_at FROM locations WHERE id = ?', [id])
+    const updates: string[] = ['name = ?']
+    const params: unknown[] = [name.trim()]
+    if (typeof isShared === 'boolean') {
+      updates.push('is_shared = ?')
+      params.push(isShared ? 1 : 0)
+    }
+    params.push(id)
+    await db.execute(`UPDATE locations SET ${updates.join(', ')} WHERE id = ?`, params)
+    const updated = await db.queryOne<DbLocation>('SELECT id, name, organization_id, is_shared, created_at FROM locations WHERE id = ?', [id])
     if (!updated) {
       res.status(500).json({ error: 'Failed to load updated location' })
       return
     }
-    res.json({
-      id: updated.id,
-      name: updated.name,
-      organizationId: updated.organization_id,
-      createdAt: updated.created_at,
-    })
+    res.json(toApiLocation(updated))
   } catch (err) {
     if ((err as NodeJS.ErrnoException).message?.includes('UNIQUE')) {
       res.status(409).json({ error: 'A location with this name already exists in the organization' })

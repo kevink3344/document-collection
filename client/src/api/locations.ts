@@ -74,11 +74,13 @@ export async function deleteLocation(id: number): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete location')
 }
 
-export async function updateLocation(id: number, name: string): Promise<Location> {
+export async function updateLocation(id: number, name: string, isShared?: boolean): Promise<Location> {
+  const body: Record<string, unknown> = { name }
+  if (typeof isShared === 'boolean') body.isShared = isShared
   const res = await fetch(`${API_BASE}/${id}`, {
     method: 'PATCH',
     headers: authHeaders(),
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(body),
   })
   handleUnauthorizedResponse(res)
   if (!res.ok) {
@@ -86,6 +88,34 @@ export async function updateLocation(id: number, name: string): Promise<Location
     throw new Error(data.error ?? 'Failed to update location')
   }
   return res.json() as Promise<Location>
+}
+
+export async function setLocationShared(id: number, isShared: boolean): Promise<Location> {
+  const res = await fetch(`${API_BASE}/${id}/share`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({ isShared }),
+  })
+  handleUnauthorizedResponse(res)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error ?? 'Failed to update location sharing')
+  }
+  return res.json() as Promise<Location>
+}
+
+export async function setAllLocationsShared(isShared: boolean): Promise<{ updated: number; locations: Location[] }> {
+  const res = await fetch(`${API_BASE}/share-all`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ isShared }),
+  })
+  handleUnauthorizedResponse(res)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error ?? 'Failed to update location sharing')
+  }
+  return res.json() as Promise<{ updated: number; locations: Location[] }>
 }
 
 export async function getUserLocations(userId: number): Promise<Location[]> {

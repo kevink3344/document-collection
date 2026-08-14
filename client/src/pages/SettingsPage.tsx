@@ -39,7 +39,7 @@ import { getPublicSetting, updateSetting, listSettingsTabs, createSettingsTab, u
 import type { SettingsTab } from '../api/settings'
 import { getMenuLabels, updateMenuLabels } from '../api/menuLabels'
 import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type AppUser } from '../api/users'
-import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson } from '../api/locations'
+import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson, setLocationShared, setAllLocationsShared } from '../api/locations'
 import { listGroups, createGroup, updateGroup, deleteGroup, listGroupMembers, addGroupMember, removeGroupMember } from '../api/groups'
 import { LocationTypeahead } from '../components/common/LocationTypeahead'
 import RichTextEditor from '../components/common/RichTextEditor'
@@ -429,6 +429,8 @@ export default function SettingsPage() {
   const [locationEditSaving, setLocationEditSaving] = useState(false)
   const [editingLocationId, setEditingLocationId] = useState<number | null>(null)
   const [editingLocationName, setEditingLocationName] = useState('')
+  const [locationShareSavingId, setLocationShareSavingId] = useState<number | null>(null)
+  const [locationBulkShareSaving, setLocationBulkShareSaving] = useState(false)
   // Groups state
   const [groupsList, setGroupsList] = useState<Group[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
@@ -1164,6 +1166,34 @@ export default function SettingsPage() {
       if (editingLocationId === id) cancelLocationEdit()
     } catch (err) {
       setLocationDeleteError((err as Error).message)
+    }
+  }
+
+  async function handleToggleLocationShared(loc: Location) {
+    const next = !loc.isShared
+    setLocationShareSavingId(loc.id)
+    setLocationDeleteError(null)
+    try {
+      const updated = await setLocationShared(loc.id, next)
+      setLocationsList(prev => prev.map(l => (l.id === loc.id ? updated : l)))
+    } catch (err) {
+      setLocationDeleteError((err as Error).message)
+    } finally {
+      setLocationShareSavingId(null)
+    }
+  }
+
+  async function handleBulkShareLocations(nextShared: boolean) {
+    if (!window.confirm(nextShared ? 'Share all locations with every organization? Reviewers in any org will be able to use them.' : 'Make all locations private to their owning organization?')) return
+    setLocationBulkShareSaving(true)
+    setLocationDeleteError(null)
+    try {
+      const result = await setAllLocationsShared(nextShared)
+      setLocationsList(result.locations.sort((a, b) => a.name.localeCompare(b.name)))
+    } catch (err) {
+      setLocationDeleteError((err as Error).message)
+    } finally {
+      setLocationBulkShareSaving(false)
     }
   }
 
@@ -3335,24 +3365,48 @@ export default function SettingsPage() {
               {locationDeleteError && <p className="text-sm text-red-500">{locationDeleteError}</p>}
 
               <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Search locations</label>
-                  <input
-                    type="text"
-                    value={locationSearch}
-                    onChange={e => setLocationSearch(e.target.value)}
-                    placeholder="Type a location name"
-                    className={INPUT}
-                  />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">Search locations</label>
+                    <input
+                      type="text"
+                      value={locationSearch}
+                      onChange={e => setLocationSearch(e.target.value)}
+                      placeholder="Type a location name"
+                      className={INPUT}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 self-end">
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkShareLocations(true)}
+                      disabled={locationBulkShareSaving || locationsList.length === 0 || locationsList.every(l => l.isShared)}
+                      className="inline-flex items-center gap-1 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 text-xs font-medium px-2.5 py-1.5 rounded hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition-colors"
+                      title="Share all locations with every organization"
+                    >
+                      {locationBulkShareSaving ? 'Saving…' : 'Share all'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkShareLocations(false)}
+                      disabled={locationBulkShareSaving || locationsList.length === 0 || locationsList.every(l => !l.isShared)}
+                      className="inline-flex items-center gap-1 border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-xs font-medium px-2.5 py-1.5 rounded hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] disabled:opacity-40 transition-colors"
+                      title="Make all locations private to their owning organization"
+                    >
+                      Unshare all
+                    </button>
+                  </div>
                 </div>
+                <p className="text-xs text-[#94A3B8]">Shared locations are visible to reviewers in every organization. Private locations are only visible within their owning organization.</p>
 
                 <div className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] overflow-hidden">
                 <table className="hidden md:table w-full text-sm">
                   <thead>
                     <tr className="bg-[#F8FAFC] dark:bg-[#0F172A] text-left">
                       <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Name</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Shared</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide">Created</th>
-                      <th className="px-4 py-2.5 w-[170px]"></th>
+                      <th className="px-4 py-2.5 w-[220px]"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#334155]">
@@ -3371,6 +3425,18 @@ export default function SettingsPage() {
                                 autoFocus
                               />
                             ) : loc.name}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={loc.isShared}
+                                disabled={locationShareSavingId === loc.id}
+                                onChange={() => void handleToggleLocationShared(loc)}
+                                className="h-3.5 w-3.5 accent-teal-600"
+                              />
+                              <span className={`text-xs font-medium ${loc.isShared ? 'text-teal-700 dark:text-teal-300' : 'text-[#94A3B8]'}`}>{loc.isShared ? 'Shared' : 'Private'}</span>
+                            </label>
                           </td>
                           <td className="px-4 py-2.5 text-[#64748B] text-xs">
                             {new Date(loc.createdAt).toLocaleDateString()}
@@ -3425,12 +3491,12 @@ export default function SettingsPage() {
                     })}
                     {filteredLocations.length === 0 && !locationsLoading && (
                       <tr>
-                        <td colSpan={3} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">No locations yet. Add one above.</td>
+                        <td colSpan={4} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">No locations yet. Add one above.</td>
                       </tr>
                     )}
                     {locationsLoading && (
                       <tr>
-                        <td colSpan={3} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">Loading…</td>
+                        <td colSpan={4} className="px-4 py-6 text-center text-sm text-[#94A3B8] italic">Loading…</td>
                       </tr>
                     )}
                   </tbody>
@@ -3451,12 +3517,19 @@ export default function SettingsPage() {
                             autoFocus
                           />
                         ) : (
-                          <div>
+                          <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{loc.name}</p>
-                            <p className="text-xs text-[#94A3B8] mt-1">Created {new Date(loc.createdAt).toLocaleDateString()}</p>
+                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${loc.isShared ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300' : 'bg-[#F1F5F9] text-[#94A3B8] dark:bg-[#334155] dark:text-[#94A3B8]'}`}>{loc.isShared ? 'Shared' : 'Private'}</span>
+                            <p className="text-xs text-[#94A3B8]">· {new Date(loc.createdAt).toLocaleDateString()}</p>
                           </div>
                         )}
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {!isEditing && (
+                            <label className="inline-flex items-center gap-1.5 cursor-pointer border border-[#E2E8F0] dark:border-[#334155] rounded px-2.5 py-1.5">
+                              <input type="checkbox" checked={loc.isShared} disabled={locationShareSavingId === loc.id} onChange={() => void handleToggleLocationShared(loc)} className="h-3.5 w-3.5 accent-teal-600" />
+                              <span className="text-xs font-medium text-[#475569] dark:text-[#94A3B8]">{loc.isShared ? 'Shared' : 'Private'}</span>
+                            </label>
+                          )}
                           {isEditing ? (
                             <>
                               <button

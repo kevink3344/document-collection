@@ -387,6 +387,7 @@ export interface Location {
   id: number
   name: string
   organizationId: number
+  isShared: boolean
   createdAt: string
 }
 

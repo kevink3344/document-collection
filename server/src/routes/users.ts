@@ -345,16 +345,16 @@ router.post('/', authenticateToken, validate(createUserSchema), async (req: Requ
       const membershipOrgIds = new Set(parsedPayload.memberships.map(m => m.organizationId))
       if (locationIds.length > 0) {
         const ph = locationIds.map(() => '?').join(',')
-        const locRows = await tx.queryAll<{ id: number; organization_id: number }>(
-          `SELECT id, organization_id FROM locations WHERE id IN (${ph})`,
+        const locRows = await tx.queryAll<{ id: number; organization_id: number; is_shared: number | boolean | null }>(
+          `SELECT id, organization_id, is_shared FROM locations WHERE id IN (${ph})`,
           locationIds
         )
         if (locRows.length !== locationIds.length) {
           throw new HttpError(400, 'One or more locations do not exist')
         }
         for (const loc of locRows) {
-          if (!membershipOrgIds.has(loc.organization_id)) {
-            throw new HttpError(400, 'Locations must belong to the user\'s organizations')
+          if (!membershipOrgIds.has(loc.organization_id) && !loc.is_shared) {
+            throw new HttpError(400, 'Locations must belong to the user\'s organizations or be shared')
           }
         }
       }
@@ -574,6 +574,27 @@ router.put('/:id/locations', authenticateToken, validate(updateUserLocationsSche
   if (currentUser.role === 'administrator' && !user.organizations.some(org => org.organizationId === currentUser.organizationId)) {
     res.status(403).json({ error: 'You can only manage users within your own organization' })
     return
+  }
+
+  // Validate that each location is either in one of the user's orgs or is shared
+  if ((locationIds as number[]).length > 0) {
+    const ids = [...new Set(locationIds as number[])]
+    const ph = ids.map(() => '?').join(',')
+    const locRows = await db.queryAll<{ id: number; organization_id: number; is_shared: number | boolean | null }>(
+      `SELECT id, organization_id, is_shared FROM locations WHERE id IN (${ph})`,
+      ids
+    )
+    if (locRows.length !== ids.length) {
+      res.status(400).json({ error: 'One or more locations do not exist' })
+      return
+    }
+    const membershipOrgIds = new Set(user.organizations.map(o => o.organizationId))
+    for (const loc of locRows) {
+      if (!membershipOrgIds.has(loc.organization_id) && !loc.is_shared) {
+        res.status(400).json({ error: 'Locations must belong to the user\'s organizations or be shared' })
+        return
+      }
+    }
   }
 
   try {

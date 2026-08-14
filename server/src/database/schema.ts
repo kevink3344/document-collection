@@ -52,6 +52,7 @@ export function createSchema(db: AppDatabase): void {
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       name            TEXT    NOT NULL,
       organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      is_shared       INTEGER NOT NULL DEFAULT 1,
       created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
       UNIQUE(name, organization_id)
     );
