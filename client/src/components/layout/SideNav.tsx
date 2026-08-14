@@ -39,7 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { icon: FileText,        label: 'Records',         to: '/records',         labelKey: 'records'     },
   { icon: BarChart3,       label: 'Reports',         to: '/reports',         labelKey: 'reports'     },
   { icon: Sparkles,        label: 'AI Summary',      to: '/ai-summary',      roles: ['administrator'] },
-  { icon: Settings,        label: 'Settings',        to: '/settings',        labelKey: 'settings'    },
+  { icon: Settings,        label: 'Settings',        to: '/settings',        labelKey: 'settings',   roles: ['super_admin', 'administrator'] },
   { icon: ClipboardList,   label: 'Tickets',         to: '/ticket-designer', labelKey: 'tickets'     },
 ]
 

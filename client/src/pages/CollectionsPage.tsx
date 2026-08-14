@@ -150,7 +150,7 @@ function SortableCollectionCard({
       className={`bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden flex flex-col ${isDragging ? 'opacity-70 shadow-xl z-10' : ''}`}
     >
       {getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) !== 'none' && (
-        <div className="h-28 bg-[#F1F5F9] dark:bg-[#0F172A] overflow-hidden">
+        <div className="h-28 bg-[#F1F5F9] dark:bg-[#0F172A] overflow-hidden relative">
           <img
             src={getCoverPhotoKind(collection.coverPhotoUrl, collection.coverPhotoAssetId) === 'placeholder' ? PLACEHOLDER_COVER_URL : collection.coverPhotoUrl!}
             alt=""
@@ -159,6 +159,16 @@ function SortableCollectionCard({
               ;(e.currentTarget as HTMLImageElement).style.display = 'none'
             }}
           />
+          {collection.logoUrl && (
+            <div className="absolute left-3 top-3 bg-white rounded shadow p-1 max-w-[96px] leading-none">
+              <img
+                src={collection.logoUrl}
+                alt=""
+                className="block h-6 max-w-[84px] object-contain"
+                onError={e => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none' }}
+              />
+            </div>
+          )}
         </div>
       )}
 

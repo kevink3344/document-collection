@@ -88,11 +88,11 @@ export default function App() {
             <Route path="/collections/:id/new-version" element={<CollectionNewVersionPage />} />
             <Route path="/collections/:id/signup-builder" element={<SignupSheetBuilderPage />} />
             <Route path="/collections/:id/branching" element={<CollectionBranchingPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
             <Route path="ticket-designer" element={<TicketDesignerPage />} />
           </Route>
 
           <Route element={<RequireRole allowed={['super_admin', 'administrator']} fallback="/dashboard" />}>
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/ai-summary" element={<AISummaryPage />} />
           </Route>
         </Route>
