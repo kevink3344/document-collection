@@ -1110,9 +1110,11 @@ export function setupDatabase(): void {
   const mode = getConfiguredDatabaseMode()
   if (mode === 'sqlserver') {
     console.log('[db] sqlserver mode � applying SQL Server migrations')
-    applySqlServerMigrations().catch(err => {
-      console.warn('[db] SQL Server migrations failed (non-fatal):', (err as Error).message)
-    })
+    // Retry with backoff: Azure SQL Serverless auto-suspends when idle and can
+    // take several minutes to wake, refusing TDS logins with ECONNRESET. A
+    // single-shot attempt would give up too early, so retry until the instance
+    // wakes (or we exhaust attempts) and mark the DB ready only on success.
+    void applySqlServerMigrationsWithRetry()
     return
   }
 
@@ -1121,8 +1123,30 @@ export function setupDatabase(): void {
     const database = getDb()
     applyIncrementalSchema(database)
     console.log('[db] Turso incremental schema applied')
+    markDbReady()
   } catch (err) {
     console.warn('[db] Turso incremental schema failed at startup (non-fatal, server will continue):', (err as Error).message)
+  }
+}
+
+/**
+ * Applies SQL Server migrations, retrying with a growing backoff so the server
+ * survives a cold-start wake of a serverless Azure SQL database (which can take
+ * minutes). Marks the DB ready once migrations succeed.
+ */
+async function applySqlServerMigrationsWithRetry(maxAttempts = 30): Promise<void> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await applySqlServerMigrations()
+      markDbReady()
+      return
+    } catch (err) {
+      console.warn(
+        `[db] SQL Server migrations attempt ${attempt}/${maxAttempts} failed: ${(err as Error).message}. ` +
+          `${attempt < maxAttempts ? 'Retrying in 10s...' : 'Exhausted retries.'}`,
+      )
+      if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, 10000))
+    }
   }
 }
 
@@ -1142,6 +1166,22 @@ export function isDatabaseAvailable(): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Live DB readiness — true only after startup migrations/schema actually
+ * succeeded (vs. isDatabaseAvailable, which reports whether a backend is
+ * *configured*). Used by /api/health so the frontend can show a "warming up"
+ * banner while a serverless DB is still waking.
+ */
+let dbReady = false
+
+export function isDbReady(): boolean {
+  return dbReady
+}
+
+export function markDbReady(): void {
+  dbReady = true
 }
 
 function runMigrations(db: AppDatabase): void {

@@ -55,6 +55,7 @@ export default function LoginPage() {
   const [organizations, setOrganizations] = useState<LoginOrg[]>([])
   const [loadingOrgs, setLoadingOrgs] = useState(true)
   const [serverStarting, setServerStarting] = useState(false)
+  const [backendDbReady, setBackendDbReady] = useState<boolean | null>(null)
   const [selectedOrgId, setSelectedOrgId] = useState<string>('')
 
   const [existingUsers, setExistingUsers] = useState<User[]>([])
@@ -169,8 +170,29 @@ export default function LoginPage() {
 
     fetchOrgs()
 
+    // Poll /api/health to detect when the backend DB is actually ready. While
+    // the DB is waking (serverless Azure SQL cold start), show the "warming up"
+    // banner; clear it automatically once dbReady flips to true.
+    const checkBackend = () => {
+      fetch('/api/health')
+        .then(r => r.json() as Promise<{ status?: string; dbReady?: boolean }>)
+        .then(payload => {
+          const ready = payload?.dbReady === true
+          setBackendDbReady(ready)
+          // Only the health signal clears the banner; org polling still sets it
+          // while there are no orgs to load.
+          if (ready) setServerStarting(false)
+        })
+        .catch(() => {
+          setBackendDbReady(false)
+        })
+    }
+    checkBackend()
+    const warmupInterval = window.setInterval(checkBackend, 3000)
+
     return () => {
       if (retryTimer !== null) clearTimeout(retryTimer)
+      clearInterval(warmupInterval)
     }
   }, [])
 
@@ -290,7 +312,7 @@ export default function LoginPage() {
         <div className="w-full max-w-md mx-auto">
 
           {/* Server starting banner */}
-          {serverStarting && (
+          {(serverStarting || backendDbReady === false) && (
             <div className="mb-6 flex items-center gap-3 px-4 py-3 border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 text-sm rounded-[2px]">
               <svg className="shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12a9 9 0 1 1-6.219-8.56"/>

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { getConfiguredDatabaseMode, isDatabaseAvailable } from '../database/db'
+import { getConfiguredDatabaseMode, isDatabaseAvailable, isDbReady } from '../database/db'
 import { isGoogleDriveConfigured } from '../services/googleDrive'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pkg = require('../../package.json') as { version: string }
@@ -47,7 +47,7 @@ router.get('/health', (_req: Request, res: Response) => {
     })
     return
   }
-  res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() })
+  res.json({ status: 'ok', database: 'connected', dbReady: isDbReady(), timestamp: new Date().toISOString() })
 })
 
 router.get('/info', (_req: Request, res: Response) => {
