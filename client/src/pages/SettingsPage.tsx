@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Bell, Building2, ChevronDown, ChevronRight, Code2, Database, ExternalLink, Eye, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, RotateCcw, Save, Tag, Trash2, Upload, Users, UserCheck, X, Archive } from 'lucide-react'
+import { Bell, Building2, ChevronDown, ChevronRight, ClipboardList, Code2, Database, ExternalLink, Eye, GripVertical, Image as ImageIcon, KeyRound, LayoutList, MapPin, MessageSquare, Pencil, Plus, RotateCcw, Save, Tag, Trash2, Upload, Users, UserCheck, X, Archive } from 'lucide-react'
 import {
   DndContext,
   type DragEndEvent,
@@ -80,12 +80,13 @@ type PanelId =
   | 'seed'
   | 'manage-tabs'
   | 'visibility-settings'
+  | 'ticket-activity'
 
 type PanelLayout = Record<string, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections', 'visibility-settings'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections', 'ticket-activity', 'visibility-settings'],
   other: ['qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -108,12 +109,13 @@ const PANEL_LABELS: Record<PanelId, string> = {
   seed: 'Seed Data',
   'manage-tabs': 'Manage Tabs',
   'visibility-settings': 'Visibility Settings',
+  'ticket-activity': 'Ticket Activity',
 }
 
 
 const ALL_PANEL_IDS: PanelId[] = [
   'organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections',
-  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs', 'visibility-settings',
+  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs', 'visibility-settings', 'ticket-activity',
 ]
 
 const VISIBILITY_EXCLUDED: PanelId[] = ['manage-tabs', 'visibility-settings']
@@ -557,6 +559,10 @@ export default function SettingsPage() {
   const [aiSummarySaving, setAiSummarySaving] = useState(false)
   const [aiSummaryError, setAiSummaryError] = useState<string | null>(null)
   const [aiSummarySaved, setAiSummarySaved] = useState(false)
+  const [ticketActivityEnabled, setTicketActivityEnabled] = useState(true)
+  const [ticketActivitySaving, setTicketActivitySaving] = useState(false)
+  const [ticketActivityError, setTicketActivityError] = useState<string | null>(null)
+  const [ticketActivitySaved, setTicketActivitySaved] = useState(false)
   const [confirmationEmailsEnabled, setConfirmationEmailsEnabled] = useState(false)
   const [confirmationEmailsSaving, setConfirmationEmailsSaving] = useState(false)
   const [confirmationEmailsError, setConfirmationEmailsError] = useState<string | null>(null)
@@ -648,6 +654,9 @@ export default function SettingsPage() {
     getPublicSetting('ai_summary_enabled')
       .then(val => setAiSummaryEnabled(val !== 'false'))
       .catch(() => setAiSummaryEnabled(true))
+    getPublicSetting('ticket_activity_enabled')
+      .then(val => setTicketActivityEnabled(val !== 'false'))
+      .catch(() => setTicketActivityEnabled(true))
     getPublicSetting('submission_confirmation_emails')
       .then(val => setConfirmationEmailsEnabled(val === 'true'))
       .catch(() => setConfirmationEmailsEnabled(false))
@@ -1286,6 +1295,22 @@ export default function SettingsPage() {
       setAiSummaryError((err as Error).message)
     } finally {
       setAiSummarySaving(false)
+    }
+  }
+
+  async function handleTicketActivityToggle(nextValue: boolean) {
+    setTicketActivityEnabled(nextValue)
+    setTicketActivitySaving(true)
+    setTicketActivityError(null)
+    setTicketActivitySaved(false)
+    try {
+      await updateSetting('ticket_activity_enabled', nextValue ? 'true' : 'false')
+      setTicketActivitySaved(true)
+    } catch (err) {
+      setTicketActivityEnabled(!nextValue)
+      setTicketActivityError((err as Error).message)
+    } finally {
+      setTicketActivitySaving(false)
     }
   }
 
@@ -4953,6 +4978,43 @@ export default function SettingsPage() {
             )}
           </div>
         )}
+      </section>
+      )
+      case 'ticket-activity': return user?.role !== 'super_admin' ? null : (
+      <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155]">
+          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] dark:bg-blue-900/30 dark:text-blue-300">
+            <ClipboardList size={18} />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Ticket Activity</h2>
+            <p className="text-sm text-[#64748B] mt-1">Show or hide the Tickets icon and ticket surfaces across the app.</p>
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          <label className="flex items-center justify-between gap-4 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Show Tickets</p>
+              <p className="text-xs text-[#64748B] mt-1">When enabled, the Tickets sidebar icon, the "Add Ticket" tab, and ticket columns in exports are visible. When disabled, they are hidden.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={ticketActivityEnabled}
+              onChange={e => { void handleTicketActivityToggle(e.target.checked) }}
+              disabled={ticketActivitySaving}
+              className="h-4 w-4 accent-[#2563EB]"
+            />
+          </label>
+          {ticketActivityError && (
+            <p className="text-sm text-red-500">{ticketActivityError}</p>
+          )}
+          {(ticketActivitySaving || ticketActivitySaved) && (
+            <div className="flex items-center gap-3">
+              {ticketActivitySaving && <span className="text-sm text-[#64748B]">Saving…</span>}
+              {ticketActivitySaved && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
+            </div>
+          )}
+        </div>
       </section>
       )
       default: return null

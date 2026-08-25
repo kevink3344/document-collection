@@ -265,6 +265,7 @@ export default function CollectionBuilderPage() {
   const [workflowUsers, setWorkflowUsers] = useState<AppUser[]>([])
   const [approvalWorkflowFeatureEnabled, setApprovalWorkflowFeatureEnabled] = useState(true)
   const [ticketSystemFeatureEnabled, setTicketSystemFeatureEnabled] = useState(true)
+  const [ticketActivityEnabled, setTicketActivityEnabled] = useState(true)
 
   // Share state
   const [shareUsers, setShareUsers] = useState<CollectionShare['users']>([])
@@ -499,6 +500,9 @@ export default function CollectionBuilderPage() {
         }
       })
       .catch(() => { /* keep defaults enabled */ })
+    getPublicSetting('ticket_activity_enabled')
+      .then(val => setTicketActivityEnabled(val !== 'false'))
+      .catch(() => setTicketActivityEnabled(true))
   }, [isEdit])
 
   // Load existing collection when editing
@@ -1630,7 +1634,7 @@ export default function CollectionBuilderPage() {
                 Versions
               </button>
             )}
-            {isEdit && ticketSystemFeatureEnabled && (
+            {isEdit && ticketSystemFeatureEnabled && ticketActivityEnabled && (
               <button
                 type="button"
                 onClick={() => setDetailsTab('ticket')}
@@ -1644,7 +1648,7 @@ export default function CollectionBuilderPage() {
                 Add Ticket
               </button>
             )}
-            {isEdit && ticketSystemFeatureEnabled && (
+            {isEdit && ticketSystemFeatureEnabled && ticketActivityEnabled && (
               <div className="relative sm:hidden ml-auto">
                 <button
                   type="button"

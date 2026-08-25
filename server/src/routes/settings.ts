@@ -20,6 +20,7 @@ const ALLOWED_KEYS = new Set([
   'image_logo_padding_left',
   'copy_answers_disclaimer',
   'ai_summary_enabled',
+  'ticket_activity_enabled',
   'about_message',
   'database_mode',
   'login_mode',
@@ -394,7 +395,7 @@ router.get('/:key', async (req: Request, res: Response) => {
 
   if (!row) {
     // Return sensible defaults for keys that haven't been persisted yet
-    const defaults: Record<string, string> = { login_mode: 'select' }
+    const defaults: Record<string, string> = { login_mode: 'select', ticket_activity_enabled: 'true' }
     const defaultValue = defaults[key]
     if (defaultValue !== undefined) {
       res.json({ key, value: defaultValue })

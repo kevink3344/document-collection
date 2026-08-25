@@ -19,6 +19,7 @@ import {
   deleteExportCsvPreset,
 } from '../api/exportCsv'
 import { useToast } from '../contexts/ToastContext'
+import { getPublicSetting } from '../api/settings'
 import type { Collection, ExportCsvColumn, ExportCsvPreset, ExportCsvSchema } from '../types'
 
 interface PanelState {
@@ -48,6 +49,8 @@ export default function ExportCsvPage() {
   const [presets, setPresets] = useState<ExportCsvPreset[]>([])
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
+  const [ticketSystemFeatureEnabled, setTicketSystemFeatureEnabled] = useState(true)
+  const [ticketActivityEnabled, setTicketActivityEnabled] = useState(true)
 
   const [submissionPanel, setSubmissionPanel] = useState<PanelState>({ allChecked: true, selected: new Set() })
   const [ticketTemplateId, setTicketTemplateId] = useState<number | null>(null)
@@ -63,6 +66,16 @@ export default function ExportCsvPage() {
     const parsed = parseInt(id, 10)
     return isNaN(parsed) ? null : parsed
   }, [id])
+
+  useEffect(() => {
+    fetch('/api/info')
+      .then(r => r.json() as Promise<{ ticketSystemEnabled?: boolean }>)
+      .then(info => setTicketSystemFeatureEnabled(info.ticketSystemEnabled !== false))
+      .catch(() => { /* keep default enabled */ })
+    getPublicSetting('ticket_activity_enabled')
+      .then(val => setTicketActivityEnabled(val !== 'false'))
+      .catch(() => setTicketActivityEnabled(true))
+  }, [])
 
   useEffect(() => {
     if (!collectionId) return
@@ -164,9 +177,10 @@ export default function ExportCsvPage() {
   }, [submissionPanel, submissionColumns])
 
   const selectedTicketKeys = useMemo(() => {
+    if (!ticketSystemFeatureEnabled || !ticketActivityEnabled) return []
     if (ticketPanel.allChecked) return ticketColumns.map(c => c.key)
     return ticketColumns.map(c => c.key).filter(k => ticketPanel.selected.has(k))
-  }, [ticketPanel, ticketColumns])
+  }, [ticketPanel, ticketColumns, ticketSystemFeatureEnabled, ticketActivityEnabled])
 
   const canExport = selectedSubmissionKeys.length > 0
 
@@ -210,9 +224,10 @@ export default function ExportCsvPage() {
     if (!collectionId || !canExport) return
     setExporting(true)
     try {
+      const ticketsEnabled = ticketSystemFeatureEnabled && ticketActivityEnabled
       const blob = await exportCollectionCsv(collectionId, {
         submissionColumnKeys: selectedSubmissionKeys,
-        ticketTemplateId,
+        ticketTemplateId: ticketsEnabled ? ticketTemplateId : null,
         ticketColumnKeys: selectedTicketKeys,
       })
       const url = URL.createObjectURL(blob)
@@ -235,7 +250,8 @@ export default function ExportCsvPage() {
     if (!collectionId || !canExport) return
     const params = new URLSearchParams()
     params.set('submission', selectedSubmissionKeys.join(','))
-    if (ticketTemplateId !== null) {
+    const ticketsEnabled = ticketSystemFeatureEnabled && ticketActivityEnabled
+    if (ticketsEnabled && ticketTemplateId !== null) {
       params.set('ticketTemplateId', String(ticketTemplateId))
       if (selectedTicketKeys.length > 0) {
         params.set('ticket', selectedTicketKeys.join(','))
@@ -248,12 +264,13 @@ export default function ExportCsvPage() {
     if (!collectionId) return
     setSavingPreset(true)
     try {
+      const ticketsEnabled = ticketSystemFeatureEnabled && ticketActivityEnabled
       const saved = await saveExportCsvPreset({
         collectionId,
         name: presetName.trim() || undefined,
         allSubmissionColumns: submissionPanel.allChecked,
         submissionColumns: selectedSubmissionKeys,
-        ticketTemplateId,
+        ticketTemplateId: ticketsEnabled ? ticketTemplateId : null,
         allTicketColumns: ticketPanel.allChecked,
         ticketColumns: selectedTicketKeys,
       })
@@ -470,6 +487,7 @@ export default function ExportCsvPage() {
         </div>
 
         {/* Ticket columns */}
+        {ticketSystemFeatureEnabled && ticketActivityEnabled && (
         <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
           <button
             onClick={() => setTicketExpanded(v => !v)}
@@ -524,6 +542,7 @@ export default function ExportCsvPage() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Preview */}
