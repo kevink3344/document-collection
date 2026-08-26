@@ -786,6 +786,27 @@ export default function CollectionBuilderPage() {
     })
   }
 
+  function copyField(key: string) {
+    setFields(prev => {
+      const sourceIndex = prev.findIndex(f => f._key === key)
+      if (sourceIndex === -1) return prev
+
+      const source = prev[sourceIndex]
+      const copy: BuilderField = {
+        ...source,
+        _key: uid(),
+        fieldKey: uid(),
+        options: [...source.options],
+        branchRules: source.branchRules.map(r => ({ ...r })),
+        tableColumns: source.tableColumns.map(c => ({ ...c })),
+      }
+
+      const next = [...prev]
+      next.splice(sourceIndex + 1, 0, copy)
+      return next
+    })
+  }
+
   function addOption(key: string) {
     setFields(prev =>
       prev.map(f =>
@@ -2724,6 +2745,7 @@ export default function CollectionBuilderPage() {
                   total={visibleFields.length}
                   onUpdate={patch => updateField(field._key, patch)}
                   onRemove={() => handleRemoveFieldClick(field)}
+                  onCopy={() => copyField(field._key)}
                   onMoveUp={() => moveField(field._key, -1)}
                   onMoveDown={() => moveField(field._key, 1)}
                   onAddOption={() => addOption(field._key)}
@@ -2764,6 +2786,7 @@ interface FieldCardProps {
   total: number
   onUpdate: (patch: Partial<BuilderField>) => void
   onRemove: () => void
+  onCopy: () => void
   onMoveUp: () => void
   onMoveDown: () => void
   onAddOption: () => void
@@ -2791,6 +2814,7 @@ function FieldCard({
   total,
   onUpdate,
   onRemove,
+  onCopy,
   onMoveUp,
   onMoveDown,
   onAddOption,
@@ -2907,6 +2931,14 @@ function FieldCard({
             className="text-[#94A3B8] hover:text-[#64748B] disabled:opacity-30 transition-colors"
           >
             <ChevronDown size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={onCopy}
+            title="Duplicate question"
+            className="text-[#94A3B8] hover:text-[#2563EB] transition-colors"
+          >
+            <Copy size={14} />
           </button>
           <button
             onClick={onRemove}

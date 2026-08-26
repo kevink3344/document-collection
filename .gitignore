@@ -9,4 +9,5 @@ dist/
 *.db-wal
 *.db-shm
 *.db-info
+server/.db-mode
 .DS_Store
