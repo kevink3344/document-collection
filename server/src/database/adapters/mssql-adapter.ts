@@ -133,8 +133,14 @@ function normalizeRow<T>(row: T): T {
       // BIGINT columns come back as digit strings from mssql.
       // Only convert columns whose names indicate they hold integer values —
       // generic text columns (e.g. app_settings.value) must NOT be coerced.
+      //
+      // NOTE: the live SQL Server schema declares boolean flags as `bigint`
+      // (is_active, is_default, is_read, finalized, all_*_columns, ...), which
+      // mssql returns as digit STRINGS. Without coercion, comparisons like
+      // `row.is_active === 1` evaluate to `'1' === 1` → false, silently hiding
+      // every active org/default/member. Match the common flag suffixes too.
       const isIntegerColumn =
-        /^id$|_id$|^count$|Count$|_count$|_only$|_enabled$|_edits$|^anonymous$|^required$|^size_bytes$|^sort_order$|^page_number$|^version_number$/.test(k)
+        /^id$|_id$|^count$|Count$|_count$|_only$|_enabled$|_edits$|_active$|_default$|_read$|_flag$|_checked$|_verified$|_published$|_columns$|finalized$|^anonymous$|^required$|^size_bytes$|^sort_order$|^page_number$|^version_number$/.test(k)
       if (isIntegerColumn) {
         const n = Number(v)
         out[k] = Number.isSafeInteger(n) ? n : v
