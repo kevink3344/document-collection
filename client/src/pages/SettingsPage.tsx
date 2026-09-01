@@ -567,6 +567,12 @@ export default function SettingsPage() {
   const [confirmationEmailsSaving, setConfirmationEmailsSaving] = useState(false)
   const [confirmationEmailsError, setConfirmationEmailsError] = useState<string | null>(null)
   const [confirmationEmailsSaved, setConfirmationEmailsSaved] = useState(false)
+  const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(true)
+  const [welcomeEmailSubjectDraft, setWelcomeEmailSubjectDraft] = useState('Welcome to Data Collection Pro')
+  const [welcomeEmailBodyDraft, setWelcomeEmailBodyDraft] = useState('Hi {name},\n\nYour account has been created for Data Collection Pro.\n\nYour username is {email}.\n\nPlease log in at {app_url} and change your password.\n\nThanks,\nThe Admin Team')
+  const [welcomeEmailSaving, setWelcomeEmailSaving] = useState(false)
+  const [welcomeEmailError, setWelcomeEmailError] = useState<string | null>(null)
+  const [welcomeEmailSaved, setWelcomeEmailSaved] = useState(false)
   const [copyAnswersDisclaimer, setCopyAnswersDisclaimer] = useState('')
   const [copyAnswersDisclaimerDraft, setCopyAnswersDisclaimerDraft] = useState('')
   const [copyAnswersDisclaimerSaving, setCopyAnswersDisclaimerSaving] = useState(false)
@@ -660,6 +666,15 @@ export default function SettingsPage() {
     getPublicSetting('submission_confirmation_emails')
       .then(val => setConfirmationEmailsEnabled(val === 'true'))
       .catch(() => setConfirmationEmailsEnabled(false))
+    getPublicSetting('welcome_email_enabled')
+      .then(val => setWelcomeEmailEnabled(val !== 'false'))
+      .catch(() => setWelcomeEmailEnabled(true))
+    getPublicSetting('welcome_email_subject')
+      .then(val => setWelcomeEmailSubjectDraft(val))
+      .catch(() => {})
+    getPublicSetting('welcome_email_body')
+      .then(val => setWelcomeEmailBodyDraft(val))
+      .catch(() => {})
     getPublicSetting('copy_answers_disclaimer')
       .then(val => { setCopyAnswersDisclaimer(val); setCopyAnswersDisclaimerDraft(val) })
       .catch(() => {})
@@ -1327,6 +1342,37 @@ export default function SettingsPage() {
       setConfirmationEmailsError((err as Error).message)
     } finally {
       setConfirmationEmailsSaving(false)
+    }
+  }
+
+  async function handleWelcomeEmailToggle(nextValue: boolean) {
+    setWelcomeEmailEnabled(nextValue)
+    setWelcomeEmailSaving(true)
+    setWelcomeEmailError(null)
+    setWelcomeEmailSaved(false)
+    try {
+      await updateSetting('welcome_email_enabled', nextValue ? 'true' : 'false')
+      setWelcomeEmailSaved(true)
+    } catch (err) {
+      setWelcomeEmailEnabled(!nextValue)
+      setWelcomeEmailError((err as Error).message)
+    } finally {
+      setWelcomeEmailSaving(false)
+    }
+  }
+
+  async function handleWelcomeEmailSave() {
+    setWelcomeEmailSaving(true)
+    setWelcomeEmailError(null)
+    setWelcomeEmailSaved(false)
+    try {
+      await updateSetting('welcome_email_subject', welcomeEmailSubjectDraft.trim())
+      await updateSetting('welcome_email_body', welcomeEmailBodyDraft)
+      setWelcomeEmailSaved(true)
+    } catch (err) {
+      setWelcomeEmailError((err as Error).message)
+    } finally {
+      setWelcomeEmailSaving(false)
     }
   }
 
@@ -2284,6 +2330,79 @@ export default function SettingsPage() {
                 <p className="text-sm text-green-600 dark:text-green-400 mt-2">Saved!</p>
               )}
             </div>
+
+            {/* Welcome email (new user) toggle + subject/body — super admin only */}
+            {isGlobalAdmin && (
+            <div>
+              <p className="text-xs font-semibold text-[#475569] dark:text-[#94A3B8] uppercase tracking-wide mb-2">
+                Welcome Email (New Users)
+              </p>
+              <label className="flex items-center justify-between gap-4 rounded-lg border border-[#E2E8F0] dark:border-[#334155] px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Send a welcome email when a user is added</p>
+                  <p className="text-xs text-[#64748B] mt-1">
+                    When enabled, an email is sent to a newly created user. Even if SMTP2GO is configured, no email is sent while this is off.
+                    Requires the SMTP2GO API key to be configured.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={welcomeEmailEnabled}
+                  onChange={e => { void handleWelcomeEmailToggle(e.target.checked) }}
+                  disabled={welcomeEmailSaving}
+                  className="h-4 w-4 accent-[#2563EB] shrink-0"
+                />
+              </label>
+              {welcomeEmailError && (
+                <p className="text-sm text-red-500 mt-2">{welcomeEmailError}</p>
+              )}
+              {welcomeEmailSaved && (
+                <p className="text-sm text-green-600 dark:text-green-400 mt-2">Saved!</p>
+              )}
+
+              <div className={`space-y-3 mt-4 ${welcomeEmailEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
+                <div>
+                  <label className="block text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9] mb-1">
+                    Email Subject
+                  </label>
+                  <input
+                    type="text"
+                    value={welcomeEmailSubjectDraft}
+                    onChange={e => { setWelcomeEmailSubjectDraft(e.target.value); setWelcomeEmailSaved(false) }}
+                    className="w-full rounded-md border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9]"
+                    placeholder="Welcome to Data Collection Pro"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9] mb-1">
+                    Email Body
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={welcomeEmailBodyDraft}
+                    onChange={e => { setWelcomeEmailBodyDraft(e.target.value); setWelcomeEmailSaved(false) }}
+                    className="w-full rounded-md border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#0F172A] px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] font-mono"
+                  />
+                  <p className="text-xs text-[#64748B] mt-1">
+                    Placeholders: {'{name}'}, {'{email}'}, {'{organization}'}, {'{app_url}'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleWelcomeEmailSave()}
+                    disabled={welcomeEmailSaving || !welcomeEmailEnabled}
+                    className="rounded-md bg-[#2563EB] text-white px-4 py-2 text-sm font-medium hover:bg-[#1D4ED8] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {welcomeEmailSaving ? 'Saving...' : 'Save Email Settings'}
+                  </button>
+                  {welcomeEmailSaved && (
+                    <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            )}
 
             {/* Copy-of-answers disclaimer */}
             <div>

@@ -12,6 +12,7 @@ import {
 import { loadRequestUserContext, type RequestUserContext } from '../middleware/organizationAccess'
 import { loadUserAccessProfile, toApiUser, type MembershipRole, type UserAccessProfile, type UserRole, type UserOrganizationMembership } from '../lib/userAccess'
 import { hashPassword } from './invitations'
+import { isEmailDeliveryConfigured, sendNotificationEmail } from '../services/notificationEmail'
 
 const router = Router()
 
@@ -31,6 +32,56 @@ class HttpError extends Error {
 
 function isMembershipRole(value: unknown): value is MembershipRole {
   return value === 'administrator' || value === 'team_manager' || value === 'reviewer' || value === 'user'
+}
+
+/**
+ * Send a best-effort welcome email to a newly created user.
+ *
+ * Fire-and-forget: callers must NOT await this so a slow SMTP connection never
+ * delays the HTTP response. Gated on BOTH:
+ *   - the master toggle `welcome_email_enabled` (default 'true'), and
+ *   - `isEmailDeliveryConfigured()` (SMTP2GO_API_KEY + SMTP2GO_SENDER set).
+ *
+ * Reads subject/body from app_settings, substitutes {name}/{email}/{organization}/{app_url}.
+ */
+async function sendWelcomeEmail(profile: UserAccessProfile): Promise<void> {
+  try {
+    if (!isEmailDeliveryConfigured()) {
+      return
+    }
+
+    const db = await getDbAsync()
+    const enabled = (await db.queryOne<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'welcome_email_enabled'"
+    ))?.value ?? 'true'
+
+    if (enabled !== 'true') {
+      return
+    }
+
+    const subject = (await db.queryOne<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'welcome_email_subject'"
+    ))?.value ?? 'Welcome to Data Collection Pro'
+
+    const bodyTemplate = (await db.queryOne<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'welcome_email_body'"
+    ))?.value ?? 'Hi {name},\n\nYour account has been created.'
+
+    const orgName = profile.activeOrganizationName ?? profile.organizationName ?? ''
+    const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '')
+
+    await sendNotificationEmail({
+      to: profile.email,
+      subject,
+      text: bodyTemplate
+        .replace(/\{name\}/g, profile.name)
+        .replace(/\{email\}/g, profile.email)
+        .replace(/\{organization\}/g, orgName)
+        .replace(/\{app_url\}/g, appUrl),
+    })
+  } catch (err) {
+    console.error('[users] welcome email failed:', (err as Error).message)
+  }
 }
 
 function normalizeMemberships(inputs: MembershipInput[]): MembershipInput[] {
@@ -385,6 +436,11 @@ router.post('/', authenticateToken, validate(createUserSchema), async (req: Requ
       res.status(500).json({ error: 'Failed to load created user' })
       return
     }
+
+    // Send a welcome email (best-effort). Gated on BOTH the master toggle
+    // (welcome_email_enabled) AND SMTP delivery being configured. This runs
+    // fire-and-forget so a slow SMTP connect never delays the 201 response.
+    void sendWelcomeEmail(created)
 
     res.status(201).json(toApiUser(created))
   } catch (err) {

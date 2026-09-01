@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer'
+const SMTP2GO_API_URL = 'https://api.smtp2go.com/v3/email/send'
 
 interface NotificationEmailPayload {
   to: string
@@ -6,52 +6,33 @@ interface NotificationEmailPayload {
   text: string
 }
 
-let cachedTransporter: nodemailer.Transporter | null = null
-
-function parseBooleanEnv(value: string | undefined): boolean {
-  return value === '1' || value?.toLowerCase() === 'true'
-}
-
-function getTransporter(): nodemailer.Transporter {
-  if (cachedTransporter) {
-    return cachedTransporter
-  }
-
-  const host = process.env.SMTP_HOST?.trim()
-  const port = parseInt(process.env.SMTP_PORT?.trim() ?? '587', 10)
-  const secure = parseBooleanEnv(process.env.SMTP_SECURE)
-  const user = process.env.SMTP_USER?.trim()
-  const pass = process.env.SMTP_PASS?.trim()
-
-  if (!host || !Number.isFinite(port)) {
-    throw new Error('SMTP is not configured')
-  }
-
-  cachedTransporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: user && pass ? { user, pass } : undefined,
-  })
-
-  return cachedTransporter
-}
-
 export function isEmailDeliveryConfigured(): boolean {
-  return Boolean(process.env.SMTP_HOST?.trim() && process.env.SMTP_FROM?.trim())
+  return Boolean(process.env.SMTP2GO_API_KEY?.trim() && process.env.SMTP2GO_SENDER?.trim())
 }
 
 export async function sendNotificationEmail(payload: NotificationEmailPayload): Promise<void> {
-  const from = process.env.SMTP_FROM?.trim()
-  if (!from) {
-    throw new Error('SMTP_FROM is not configured')
+  const apiKey = process.env.SMTP2GO_API_KEY?.trim()
+  const sender = process.env.SMTP2GO_SENDER?.trim()
+  if (!apiKey || !sender) {
+    throw new Error('SMTP2GO is not configured')
   }
 
-  const transporter = getTransporter()
-  await transporter.sendMail({
-    from,
-    to: payload.to,
-    subject: payload.subject,
-    text: payload.text,
+  const res = await fetch(SMTP2GO_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Smtp2go-Api-Key': apiKey,
+    },
+    body: JSON.stringify({
+      sender,
+      to: [payload.to],
+      subject: payload.subject,
+      text_body: payload.text,
+    }),
   })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`SMTP2Go API error ${res.status}: ${body}`)
+  }
 }

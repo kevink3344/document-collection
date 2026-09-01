@@ -26,6 +26,9 @@ const ALLOWED_KEYS = new Set([
   'login_mode',
   'maintenance_message',
   'document_storage_mode',
+  'welcome_email_enabled',
+  'welcome_email_subject',
+  'welcome_email_body',
 ])
 
 interface DbSetting {
@@ -358,7 +361,7 @@ router.put('/visibility', authenticateToken, validate(updateVisibilitySchema), a
  *         required: true
  *         schema:
  *           type: string
- *           enum: [login_message, login_subtitle, notification_reminder_days, notification_late_days, qr_code_enabled, image_logo_padding_top, image_logo_padding_right, image_logo_padding_bottom, image_logo_padding_left, about_message]
+ *           enum: [login_message, login_subtitle, notification_reminder_days, notification_late_days, qr_code_enabled, image_logo_padding_top, image_logo_padding_right, image_logo_padding_bottom, image_logo_padding_left, about_message, welcome_email_enabled, welcome_email_subject, welcome_email_body]
  *         description: The setting key to retrieve
  *     responses:
  *       200:
@@ -395,7 +398,13 @@ router.get('/:key', async (req: Request, res: Response) => {
 
   if (!row) {
     // Return sensible defaults for keys that haven't been persisted yet
-    const defaults: Record<string, string> = { login_mode: 'select', ticket_activity_enabled: 'true' }
+    const defaults: Record<string, string> = {
+      login_mode: 'select',
+      ticket_activity_enabled: 'true',
+      welcome_email_enabled: 'true',
+      welcome_email_subject: 'Welcome to Data Collection Pro',
+      welcome_email_body: 'Hi {name},\n\nYour account has been created for Data Collection Pro.\n\nYour username is {email}.\n\nPlease log in at {app_url} and change your password.\n\nThanks,\nThe Admin Team',
+    }
     const defaultValue = defaults[key]
     if (defaultValue !== undefined) {
       res.json({ key, value: defaultValue })
@@ -422,7 +431,7 @@ router.get('/:key', async (req: Request, res: Response) => {
  *         required: true
  *         schema:
  *           type: string
- *           enum: [login_message, login_subtitle, notification_reminder_days, notification_late_days, qr_code_enabled, image_logo_padding_top, image_logo_padding_right, image_logo_padding_bottom, image_logo_padding_left, about_message]
+ *           enum: [login_message, login_subtitle, notification_reminder_days, notification_late_days, qr_code_enabled, image_logo_padding_top, image_logo_padding_right, image_logo_padding_bottom, image_logo_padding_left, about_message, welcome_email_enabled, welcome_email_subject, welcome_email_body]
  *     requestBody:
  *       required: true
  *       content:
