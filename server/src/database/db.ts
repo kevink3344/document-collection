@@ -960,56 +960,79 @@ function applyIncrementalSchema(database: AppDatabase): void {
 
 
 /**
- * Repair user_preferences PK on SQL Server.
- * The original Turso→SQL Server migration created `key` as NVARCHAR(MAX)
- * which cannot be part of a PRIMARY KEY, so the table was created with
- * PK only on user_id. This breaks ON CONFLICT(user_id, key) upserts
- * (e.g. settings_panel_layout). Fix: narrow [key] to NVARCHAR(255) and
- * recreate the composite PK (user_id, [key]).
+ * Verify SQL Server connectivity WITHOUT running any destructive migration or
+ * schema DDL that could overwrite data.
+ *
+ * The schema and all existing data already live in Azure SQL. We must never
+ * ALTER columns, drop/add constraints, or backfill rows at startup. The only
+ * schema change performed here is an ADDITIVE, idempotent add of the
+ * `users.is_active` column (needed for soft-delete) — guarded by an existence
+ * check so it only runs once when the column is missing, and it never modifies
+ * existing rows.
  */
-async function fixUserPreferencesPk(adapter: DbAdapter): Promise<void> {
+async function verifySqlServerConnectivity(): Promise<void> {
+  const adapter = await getDbAsync()
+  if (adapter.dialect !== 'sqlserver') return
+
+  // Additive, idempotent add of users.is_active (soft-delete support). Only
+  // runs if the column is missing; does not touch or overwrite row data.
   try {
-    const pkRows = await adapter.queryAll<{ COLUMN_NAME: string }>(
-      `SELECT KU.COLUMN_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE KU ON TC.CONSTRAINT_NAME=KU.CONSTRAINT_NAME WHERE TC.TABLE_NAME='user_preferences' AND TC.CONSTRAINT_TYPE='PRIMARY KEY' ORDER BY KU.ORDINAL_POSITION`,
+    const col = await adapter.queryAll<{ COLUMN_NAME: string }>(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='users' AND COLUMN_NAME='is_active'`,
     )
-    const pkCols = pkRows.map((r) => r.COLUMN_NAME)
-    const isCorrect = pkCols.length === 2 && pkCols[0] === 'user_id' && pkCols[1] === 'key'
-    if (isCorrect) return
-
-    // Table may not exist yet (fresh DB) — nothing to fix
-    const tableExists = await adapter.queryAll<{ cnt: number }>(
-      `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='user_preferences'`,
-    )
-    if (!tableExists[0]?.cnt) return
-
-    console.log(`[db] SQL Server migration: fixing user_preferences PK (current: ${pkCols.join(',') || 'none'})`)
-
-    // Need to narrow [key] from NVARCHAR(MAX) to NVARCHAR(255) before it can be in PK
-    const colInfo = await adapter.queryAll<{ DATA_TYPE: string; CHARACTER_MAXIMUM_LENGTH: number }>(
-      `SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='user_preferences' AND COLUMN_NAME='key'`,
-    )
-    const maxLen = colInfo[0]?.CHARACTER_MAXIMUM_LENGTH
-    if (maxLen === -1) {
-      await adapter.execute(`ALTER TABLE [user_preferences] ALTER COLUMN [key] NVARCHAR(255) NOT NULL`)
-      console.log('[db] SQL Server migration: narrowed user_preferences.[key] to NVARCHAR(255)')
-    }
-
-    // Drop existing PK if any
-    if (pkCols.length > 0) {
-      const constraintRows = await adapter.queryAll<{ CONSTRAINT_NAME: string }>(
-        `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME='user_preferences' AND CONSTRAINT_TYPE='PRIMARY KEY'`,
+    if (!col[0]) {
+      await adapter.execute(
+        `ALTER TABLE [users] ADD [is_active] BIT NOT NULL CONSTRAINT [DF_users_is_active] DEFAULT 1`,
       )
-      const constraintName = constraintRows[0]?.CONSTRAINT_NAME
-      if (constraintName) {
-        await adapter.execute(`ALTER TABLE [user_preferences] DROP CONSTRAINT [${constraintName}]`)
-      }
+      console.log('[db] SQL Server: added users.is_active (default 1)')
     }
-
-    await adapter.execute(`ALTER TABLE [user_preferences] ADD CONSTRAINT [PK_user_preferences] PRIMARY KEY ([user_id], [key])`)
-    console.log('[db] SQL Server migration: recreated PK_user_preferences as (user_id, [key])')
   } catch (err) {
-    console.warn('[db] SQL Server migration failed (user_preferences PK fix):', (err as Error).message)
+    console.warn('[db] SQL Server: could not ensure users.is_active column:', (err as Error).message)
   }
+
+  // Lightweight read-only round-trip to confirm the pool is usable.
+  await adapter.queryOne<{ c: number }>('SELECT 1 AS c')
+
+  // Seed default system settings that are missing from app_settings. Guarded
+  // on the key alone (IF NOT EXISTS) so admin-customized values are never
+  // overwritten. These defaults keep the welcome email template consistent
+  // between the Settings panel and the email actually sent.
+  try {
+    await seedMissingAppSettings(adapter)
+  } catch (err) {
+    console.warn('[db] SQL Server: could not seed default app_settings:', (err as Error).message)
+  }
+}
+
+const DEFAULT_APP_SETTINGS: Array<{ key: string; value: string }> = [
+  { key: 'welcome_email_enabled', value: 'true' },
+  { key: 'welcome_email_subject', value: 'Welcome to Data Collection Pro' },
+  {
+    key: 'welcome_email_body',
+    value:
+      'Hi {name},\n\nYour account has been created for Data Collection Pro.\n\n' +
+      'Your username is {email}.\n\nPlease log in at {app_url} and change your password.\n\n' +
+      'Thanks,\nThe Admin Team',
+  },
+]
+
+async function seedMissingAppSettings(adapter: DbAdapter): Promise<void> {
+  for (const setting of DEFAULT_APP_SETTINGS) {
+    // Guard on the key alone so admin-customized values are never overwritten.
+    // The bare `key` identifier is translated to [key] by the mssql adapter.
+    await adapter.execute(
+      'IF NOT EXISTS (SELECT 1 FROM app_settings WHERE key = ?) ' +
+        'INSERT INTO app_settings (key, value) VALUES (?, ?)',
+      [setting.key, setting.key, setting.value],
+    )
+  }
+}
+
+/** @deprecated Legacy schema-migration function for SQL Server. Left as a stub
+ *  but no longer invoked — empty to avoid any ALTER/DROP/UPDATE on live data. */
+async function fixUserPreferencesPk(_adapter: DbAdapter): Promise<void> {
+  // Intentionally empty: no schema changes are applied to existing data.
+  void _adapter
 }
 
 /**
@@ -1019,87 +1042,10 @@ async function fixUserPreferencesPk(adapter: DbAdapter): Promise<void> {
  * block the rest � columns that already exist will throw and we ignore that.
  */
 async function applySqlServerMigrations(): Promise<void> {
-  const adapter = await getDbAsync()
-  if (adapter.dialect !== 'sqlserver') return
-
-  await fixUserPreferencesPk(adapter)
-
-  const migrations: Array<{ name: string; sql: string }> = [
-    {
-      name: 'locations.is_shared',
-      sql: `ALTER TABLE [locations] ADD [is_shared] BIT NOT NULL CONSTRAINT [DF_locations_is_shared] DEFAULT 1`,
-    },
-    {
-      name: 'users.password_hash',
-      sql: `ALTER TABLE [users] ADD [password_hash] NVARCHAR(512) NULL`,
-    },
-    {
-      name: 'users.must_change_password',
-      sql: `ALTER TABLE [users] ADD [must_change_password] BIT NOT NULL CONSTRAINT [DF_users_must_change_password] DEFAULT 0`,
-    },
-    {
-      name: 'users.invite_token',
-      sql: `ALTER TABLE [users] ADD [invite_token] NVARCHAR(255) NULL`,
-    },
-    {
-      name: 'users.invite_token_expires_at',
-      sql: `ALTER TABLE [users] ADD [invite_token_expires_at] DATETIME2 NULL`,
-    },
-    {
-      name: 'users.reset_token',
-      sql: `ALTER TABLE [users] ADD [reset_token] NVARCHAR(255) NULL`,
-    },
-    {
-      name: 'users.reset_token_expires_at',
-      sql: `ALTER TABLE [users] ADD [reset_token_expires_at] DATETIME2 NULL`,
-    },
-  ]
-
-  for (const migration of migrations) {
-    try {
-      await adapter.execute(migration.sql)
-      console.log(`[db] SQL Server migration applied: ${migration.name}`)
-    } catch (err) {
-      const msg = (err as Error).message ?? ''
-      // Ignore "column already exists" errors (idempotent)
-      if (/already exists|duplicate column/i.test(msg)) {
-        // column already present � nothing to do
-      } else {
-        console.warn(`[db] SQL Server migration failed (${migration.name}):`, msg)
-      }
-    }
-  }
-
-  // Backfill: make all existing locations shared by default (one-time, idempotent).
-  try {
-    const cnt = await adapter.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM locations WHERE is_shared = 0')
-    if (cnt && cnt.c > 0) {
-      await adapter.execute('UPDATE locations SET is_shared = 1 WHERE is_shared = 0')
-      console.log(`[db] SQL Server migration: backfilled ${cnt.c} locations to is_shared=1`)
-    }
-    // Ensure future inserts default to shared when is_shared is omitted.
-    try {
-      const defRows = await adapter.queryAll<{ col_default: string | null }>(
-        `SELECT COLUMN_DEFAULT as col_default FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='locations' AND COLUMN_NAME='is_shared'`
-      )
-      const hasDefault1 = defRows[0]?.col_default && /\(\(1\)\)|\(1\)|\b1\b/.test(defRows[0].col_default)
-      if (!hasDefault1) {
-        // Drop old default constraint if present, then add DEFAULT 1
-        const consRows = await adapter.queryAll<{ name: string }>(
-          `SELECT dc.name FROM sys.default_constraints dc JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id JOIN sys.tables t ON t.object_id = dc.parent_object_id WHERE t.name='locations' AND c.name='is_shared'`
-        )
-        for (const r of consRows) {
-          try { await adapter.execute(`ALTER TABLE [locations] DROP CONSTRAINT [${r.name}]`) } catch { /* ignore */ }
-        }
-        await adapter.execute(`ALTER TABLE [locations] ADD CONSTRAINT [DF_locations_is_shared] DEFAULT 1 FOR [is_shared]`)
-        console.log('[db] SQL Server migration: updated locations.is_shared default to 1')
-      }
-    } catch (e) {
-      console.warn('[db] SQL Server migration: failed to update is_shared default:', (e as Error).message)
-    }
-  } catch (e) {
-    console.warn('[db] SQL Server migration: backfill is_shared failed:', (e as Error).message)
-  }
+  // Migration/schema DDL removed by request. The schema already exists in
+  // Azure SQL and must never be altered or backfilled from here. Only verify
+  // connectivity (read-only) so the DB can be marked ready on startup.
+  await verifySqlServerConnectivity()
 }
 
 export function setupDatabase(): void {

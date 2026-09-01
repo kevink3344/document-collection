@@ -495,6 +495,7 @@ export default function SettingsPage() {
   const [userCreateError, setUserCreateError] = useState<string | null>(null)
   const [userCreateSuccess, setUserCreateSuccess] = useState<number | null>(null)
   const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
+  const [userDeleteMessage, setUserDeleteMessage] = useState<string | null>(null)
   const [editingUserId, setEditingUserId] = useState<number | null>(null)
   const [editingUserName, setEditingUserName] = useState('')
   const [editingUserEmail, setEditingUserEmail] = useState('')
@@ -896,9 +897,17 @@ export default function SettingsPage() {
 
   async function handleDeleteUser(id: number) {
     setUserDeleteError(null)
+    setUserDeleteMessage(null)
     try {
-      await deleteUser(id)
-      setAllUsers(prev => prev.filter(u => u.id !== id))
+      const result = await deleteUser(id)
+      if (result.deactivated) {
+        // User had child records → deactivated (soft-delete). Keep an entry
+        // marked inactive so links remain, but flag it for the user.
+        setUserDeleteMessage(result.message ?? 'User deactivated because they have associated records.')
+        setAllUsers(prev => prev.map(u => (u.id === id ? { ...u, isActive: false } : u)))
+      } else {
+        setAllUsers(prev => prev.filter(u => u.id !== id))
+      }
       if (userCreateSuccess === id) setUserCreateSuccess(null)
       if (editingUserId === id) {
         setEditingUserId(null)
@@ -1475,6 +1484,7 @@ export default function SettingsPage() {
     )
     setUserEditError(null)
     setUserDeleteError(null)
+    setUserDeleteMessage(null)
     setEditingUserLocations([])
     if (u.role === 'reviewer') {
       setEditingUserLocationsLoading(true)
@@ -4121,6 +4131,9 @@ export default function SettingsPage() {
 
                 {userDeleteError && (
                   <p className="text-sm text-red-500">{userDeleteError}</p>
+                )}
+                {userDeleteMessage && (
+                  <p className="text-sm text-amber-600">{userDeleteMessage}</p>
                 )}
 
                 {resetPasswordError && (

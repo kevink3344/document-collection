@@ -29,6 +29,7 @@ export interface User {
   organizations: UserOrganizationMembership[]
   mustChangePassword?: boolean
   hasPassword?: boolean
+  isActive?: boolean
 }
 
 export interface Organization {

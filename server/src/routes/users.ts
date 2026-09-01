@@ -65,10 +65,10 @@ async function sendWelcomeEmail(profile: UserAccessProfile): Promise<void> {
 
     const bodyTemplate = (await db.queryOne<{ value: string }>(
       "SELECT value FROM app_settings WHERE key = 'welcome_email_body'"
-    ))?.value ?? 'Hi {name},\n\nYour account has been created.'
+    ))?.value ?? 'Hi {name},\n\nYour account has been created for Data Collection Pro.\n\nYour username is {email}.\n\nPlease log in at {app_url} and change your password.\n\nThanks,\nThe Admin Team'
 
     const orgName = profile.activeOrganizationName ?? profile.organizationName ?? ''
-    const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '')
+    const appUrl = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '')
 
     await sendNotificationEmail({
       to: profile.email,
@@ -287,13 +287,15 @@ router.get('/', authenticateToken, async (_req: Request, res: Response) => {
   }
 
   const db = await getDbAsync()
+  // Exclude deactivated (soft-deleted) users from admin listings.
   const userIds = currentUser.role === 'super_admin'
-    ? await db.queryAll<{ id: number }>('SELECT id FROM users ORDER BY id')
+    ? await db.queryAll<{ id: number }>('SELECT id FROM users WHERE is_active = 1 ORDER BY id')
     : await db.queryAll<{ id: number }>(
-        `SELECT DISTINCT user_id AS id
-           FROM user_organizations
-           WHERE organization_id = ?
-           ORDER BY user_id`,
+        `SELECT DISTINCT uo.user_id AS id
+           FROM user_organizations uo
+           JOIN users u ON u.id = uo.user_id AND u.is_active = 1
+           WHERE uo.organization_id = ?
+           ORDER BY uo.user_id`,
         [currentUser.organizationId]
       )
 
@@ -583,8 +585,24 @@ router.delete('/:id', authenticateToken, validate(userIdParamSchema, 'params'), 
     return
   }
 
-  await db.execute('DELETE FROM users WHERE id = ?', [id])
-  res.status(204).end()
+  // Try a hard delete first. If the user is referenced by other tables
+  // (e.g. notification_deliveries, user_preferences, etc.), SQL Server will
+  // reject it with a FK conflict. In that case we soft-delete (deactivate)
+  // by setting is_active = 0 so the FK links remain intact and no data is lost.
+  try {
+    await db.execute('DELETE FROM users WHERE id = ?', [id])
+    res.status(204).end()
+    return
+  } catch (err) {
+    const msg = (err as Error).message ?? ''
+    if (!/REFERENCE constraint|FOREIGN KEY|conflicted/i.test(msg)) {
+      throw err
+    }
+    // FK conflict → soft-delete instead of losing dependent rows.
+    await db.execute('UPDATE users SET is_active = 0 WHERE id = ?', [id])
+    res.status(200).json({ message: 'User has child records and was deactivated instead of deleted.', deactivated: true })
+    return
+  }
 })
 
 // ── User location assignment ────────────────────────────────────────────

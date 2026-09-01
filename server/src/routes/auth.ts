@@ -151,6 +151,10 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
     res.status(404).json({ error: 'User not found' })
     return
   }
+  if (!user.isActive) {
+    res.status(403).json({ error: 'This account has been deactivated. Please contact your administrator.' })
+    return
+  }
 
   const token = signUserToken(user)
   setAuthCookie(res, token)
@@ -346,6 +350,10 @@ router.post('/login-with-password', validate(loginWithPasswordSchema), async (re
   const user = await loadUserAccessProfile(userRow.id)
   if (!user) {
     res.status(401).json({ error: INVALID })
+    return
+  }
+  if (!user.isActive) {
+    res.status(403).json({ error: 'This account has been deactivated. Please contact your administrator.' })
     return
   }
 

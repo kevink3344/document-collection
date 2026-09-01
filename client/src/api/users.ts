@@ -57,7 +57,12 @@ export async function updateUser(
   return handleResponse<AppUser>(res)
 }
 
-export async function deleteUser(id: number): Promise<void> {
+export interface DeleteUserResult {
+  deactivated?: boolean
+  message?: string
+}
+
+export async function deleteUser(id: number): Promise<DeleteUserResult> {
   const res = await fetch(`/api/users/${id}`, {
     method: 'DELETE',
     headers: authHeaders(),
@@ -67,6 +72,11 @@ export async function deleteUser(id: number): Promise<void> {
     const body = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(body.error ?? `Request failed: ${res.status}`)
   }
+  // 204 (hard deleted) → no body. 200 (soft-deleted/deactivated) → JSON message.
+  if (res.status === 204) {
+    return {}
+  }
+  return res.json().catch(() => ({})) as Promise<DeleteUserResult>
 }
 
 export async function resetUserPassword(id: number): Promise<void> {

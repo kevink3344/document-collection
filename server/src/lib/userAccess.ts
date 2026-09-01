@@ -23,6 +23,7 @@ interface DbUserRow {
   password_hash?: string | null
   must_change_password?: number
   invite_token?: string | null
+  is_active?: number | null
 }
 
 interface DbMembershipRow {
@@ -54,11 +55,12 @@ export interface UserAccessProfile {
   passwordHash: string | null
   mustChangePassword: boolean
   inviteToken: string | null
+  isActive: boolean
 }
 
 async function loadUserRow(db: DbAdapter, userId: number): Promise<DbUserRow | undefined> {
   return db.queryOne<DbUserRow>(
-    `SELECT id, name, email, role, organization, created_at, password_hash, must_change_password, invite_token
+    `SELECT id, name, email, role, organization, created_at, password_hash, must_change_password, invite_token, is_active
      FROM users
      WHERE id = ?`,
     [userId],
@@ -147,6 +149,7 @@ export async function loadUserAccessProfile(
     // select-mode users (no password_hash) never need to change a password.
     mustChangePassword: Boolean(user.must_change_password) && !!user.password_hash,
     inviteToken: user.invite_token ?? null,
+    isActive: user.is_active == null ? true : user.is_active !== 0,
   }
 }
 
@@ -170,5 +173,6 @@ export function toApiUser(profile: UserAccessProfile) {
     organizations: profile.organizations,
     mustChangePassword: profile.mustChangePassword,
     hasPassword: Boolean(profile.passwordHash),
+    isActive: profile.isActive,
   }
 }
