@@ -494,6 +494,7 @@ export default function SettingsPage() {
   const [userCreateSaving, setUserCreateSaving] = useState(false)
   const [userCreateError, setUserCreateError] = useState<string | null>(null)
   const [userCreateSuccess, setUserCreateSuccess] = useState<number | null>(null)
+  const [userCreateReactivated, setUserCreateReactivated] = useState(false)
   const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
   const [userDeleteMessage, setUserDeleteMessage] = useState<string | null>(null)
   const [editingUserId, setEditingUserId] = useState<number | null>(null)
@@ -879,8 +880,23 @@ export default function SettingsPage() {
         memberships: isSuperAdmin ? [] : memberships,
         locationIds: isSuperAdmin ? undefined : newUserLocations.map(l => l.id),
       })
-      setAllUsers(prev => [...prev, created])
-      setUserCreateSuccess(created.id)
+      if (created.reactivated) {
+        // The email belonged to a deactivated (soft-deleted) user. The backend
+        // restored that account at its existing id — replace it in the list
+        // (rather than appending a duplicate) so the reactivated row is shown.
+        setAllUsers(prev => {
+          const withoutExisting = prev.filter(u => u.id !== created.id)
+          const nextUser = { ...created, isActive: true }
+          return [...withoutExisting, nextUser]
+        })
+        setUserCreateSuccess(created.id)
+        setUserCreateError(null)
+        setUserCreateReactivated(true)
+      } else {
+        setAllUsers(prev => [...prev, created])
+        setUserCreateSuccess(created.id)
+        setUserCreateReactivated(false)
+      }
       setNewUserName('')
       setNewUserEmail('')
       setNewUserRole('user')
@@ -4019,7 +4035,7 @@ export default function SettingsPage() {
                     <input
                       type="text"
                       value={newUserName}
-                      onChange={e => { setNewUserName(e.target.value); setUserCreateSuccess(null) }}
+                      onChange={e => { setNewUserName(e.target.value); setUserCreateSuccess(null); setUserCreateReactivated(false) }}
                       placeholder="Jane Smith"
                       className={INPUT}
                     />
@@ -4029,7 +4045,7 @@ export default function SettingsPage() {
                     <input
                       type="email"
                       value={newUserEmail}
-                      onChange={e => { setNewUserEmail(e.target.value); setUserCreateSuccess(null) }}
+                      onChange={e => { setNewUserEmail(e.target.value); setUserCreateSuccess(null); setUserCreateReactivated(false) }}
                       placeholder="jane@example.com"
                       className={INPUT}
                     />
@@ -4109,7 +4125,9 @@ export default function SettingsPage() {
                   {userCreateError && <span className="text-sm text-red-500">{userCreateError}</span>}
                   {userCreateSuccess && (
                     <span className="text-sm text-green-600 dark:text-green-400">
-                      Created! Log in with User ID <strong>{userCreateSuccess}</strong>
+                      {userCreateReactivated
+                        ? <>Reactivated! <strong>{userCreateSuccess}</strong></>
+                        : <>Created! Log in with User ID <strong>{userCreateSuccess}</strong></>}
                     </span>
                   )}
                 </div>

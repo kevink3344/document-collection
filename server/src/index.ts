@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
-import { setupDatabase, resetDbIfStreamError, getDbAsync, runSqlServerSeedFile, getConfiguredDatabaseMode, DatabaseUnavailableError } from './database/db'
+import { setupDatabase, resetDbIfStreamError, getDbAsync, DatabaseUnavailableError } from './database/db'
 import { requireDatabase } from './middleware/dbCheck'
 import { setupSwagger } from './swagger/swagger'
 import authRouter from './routes/auth'
@@ -108,56 +108,6 @@ async function syncSuperAdmin() {
   }
 }
 void syncSuperAdmin()
-
-// ── SQL Server data seed ─────────────────────────────────────
-async function runStartupSeed() {
-  if (process.env.SEED_SQL_ON_START !== 'true') return
-  if (getConfiguredDatabaseMode() !== 'sqlserver') return
-
-  // Check if this seed file has already been applied successfully.
-  // Default to SKIPPING — only seed if we can positively confirm the flag is absent.
-  try {
-    const db = await getDbAsync()
-    const flag = await db.queryOne<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'seed_completed_version'`)
-    const seedFile = 'data-export-v1.sql'
-    if (flag?.value === seedFile) {
-      console.log(`[server] Seed already applied (${seedFile}) — skipping.`)
-      return
-    }
-    // Flag absent — fall through to seed
-  } catch (err) {
-    const msg = (err as Error).message ?? ''
-    const tableNotFound = /no such table|Invalid object name/i.test(msg)
-    if (!tableNotFound) {
-      console.warn('[server] Could not check seed flag, skipping seed to be safe:', msg)
-      return
-    }
-  }
-
-  const seedPath = path.join(__dirname, '../../scripts/data-export-v1.sql')
-  if (!fs.existsSync(seedPath)) {
-    console.log('[server] Seed file not found — skipping seed.')
-    return
-  }
-  try {
-    await runSqlServerSeedFile(seedPath)
-    try {
-      const db = await getDbAsync()
-      await db.execute(
-        `INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        ['seed_completed_version', 'data-export-v1.sql']
-      )
-      console.log('[server] Seed completion flag saved.')
-    } catch {
-      console.warn('[server] Could not save seed completion flag.')
-    }
-    // Sync super admin AFTER seed so the users table is in its final state
-    await syncSuperAdmin()
-  } catch (err) {
-    console.error('[server] Startup seed failed:', (err as Error).message)
-  }
-}
-void runStartupSeed()
 
 async function runNotificationSweep() {
   try {

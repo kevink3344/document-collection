@@ -30,13 +30,13 @@ export async function createUser(payload: {
   organizationId?: number
   memberships?: UserMembershipPayload[]
   locationIds?: number[]
-}): Promise<AppUser> {
+}): Promise<AppUser & { reactivated?: boolean }> {
   const res = await fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload),
   })
-  return handleResponse<AppUser>(res)
+  return handleResponse<AppUser & { reactivated?: boolean }>(res)
 }
 
 export async function updateUser(

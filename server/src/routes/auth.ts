@@ -212,11 +212,16 @@ router.post('/register', authenticateToken, validate(registerSchema), async (req
   }
 
   const db = await getDbAsync()
-  const existing = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ?', [email.trim()])
+  const existing = await db.queryOne<{ id: number; is_active: number | null }>('SELECT id, is_active FROM users WHERE email = ?', [email.trim()])
 
+  // An ACTIVE user with this email is a genuine conflict. A DEACTIVATED
+  // (is_active = 0) user is treated as "removed" and is reactivated below.
   if (existing) {
-    res.status(409).json({ error: 'Email already registered' })
-    return
+    const isActive = existing.is_active == null ? true : existing.is_active !== 0
+    if (isActive) {
+      res.status(409).json({ error: 'Email already registered' })
+      return
+    }
   }
 
   let organization: { id: number; name: string } | undefined
@@ -229,12 +234,22 @@ router.post('/register', authenticateToken, validate(registerSchema), async (req
   }
 
   const insertedId = await db.transaction(async (tx) => {
-    const inserted = await tx.execute(
-      'INSERT INTO users (name, email, role, organization, organization_id) VALUES (?, ?, ?, ?, ?)',
-      [name.trim(), email.trim(), userRole, organization?.name ?? null, organization?.id ?? null]
-    )
-
-    const id = Number(inserted.lastInsertRowid)
+    let id: number
+    if (existing) {
+      // Deactivated user with this email → reactivate at its existing id.
+      await tx.execute(
+        `UPDATE users SET name = ?, email = ?, role = ?, organization = ?, organization_id = ?, is_active = 1
+         WHERE id = ?`,
+        [name.trim(), email.trim(), userRole, organization?.name ?? null, organization?.id ?? null, existing.id]
+      )
+      id = Number(existing.id)
+    } else {
+      const inserted = await tx.execute(
+        'INSERT INTO users (name, email, role, organization, organization_id) VALUES (?, ?, ?, ?, ?)',
+        [name.trim(), email.trim(), userRole, organization?.name ?? null, organization?.id ?? null]
+      )
+      id = Number(inserted.lastInsertRowid)
+    }
     if (organization && isMembershipRole(userRole)) {
       await tx.execute(
         `INSERT INTO user_organizations (user_id, organization_id, role, is_default) VALUES (?, ?, ?, 1)`,

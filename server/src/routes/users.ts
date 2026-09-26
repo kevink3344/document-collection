@@ -378,10 +378,18 @@ router.post('/', authenticateToken, validate(createUserSchema), async (req: Requ
 
   const db = await getDbAsync()
   try {
-    const createdUserId = await db.transaction(async (tx) => {
-      const existingEmail = await tx.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ?', [email.trim()])
+    const { userId, reactivated } = await db.transaction(async (tx) => {
+      const existingEmail = await tx.queryOne<{ id: number; is_active: number | null }>(
+        'SELECT id, is_active FROM users WHERE email = ?',
+        [email.trim()]
+      )
+      // An ACTIVE user with this email is a genuine conflict. A DEACTIVATED
+      // (is_active = 0) user is treated as "removed" and is reactivated below.
       if (existingEmail) {
-        throw new HttpError(409, 'Email already registered')
+        const isActive = existingEmail.is_active == null ? true : existingEmail.is_active !== 0
+        if (isActive) {
+          throw new HttpError(409, 'Email already registered')
+        }
       }
 
       for (const membership of parsedPayload.memberships) {
@@ -417,23 +425,41 @@ router.post('/', authenticateToken, validate(createUserSchema), async (req: Requ
         throw new HttpError(500, 'DEFAULT_USER_PASSWORD is not set in environment variables')
       }
       const passwordHash = hashPassword(defaultPw)
+      const role = parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user'
 
-      const inserted = await tx.execute(
-        `INSERT INTO users (name, email, role, password_hash, must_change_password, invite_token)
-         VALUES (?, ?, ?, ?, 1, NULL)`,
-        [name.trim(), email.trim(), parsedPayload.systemRole === 'super_admin' ? 'super_admin' : 'user', passwordHash]
-      )
-      const userId = Number(inserted.lastInsertRowid)
+      let userId: number
+      let reactivated = false
+      if (existingEmail) {
+        // Email belongs to a deactivated user → restore (reactivate) that user
+        // at its existing ID instead of creating a duplicate row. Reset it to a
+        // fresh state (default password, must-change flag) so the restored
+        // account behaves exactly like a newly created one.
+        await tx.execute(
+          `UPDATE users
+             SET name = ?, email = ?, role = ?, password_hash = ?, must_change_password = 1, invite_token = NULL, is_active = 1
+           WHERE id = ?`,
+          [name.trim(), email.trim(), role, passwordHash, existingEmail.id]
+        )
+        userId = Number(existingEmail.id)
+        reactivated = true
+      } else {
+        const inserted = await tx.execute(
+          `INSERT INTO users (name, email, role, password_hash, must_change_password, invite_token)
+           VALUES (?, ?, ?, ?, 1, NULL)`,
+          [name.trim(), email.trim(), role, passwordHash]
+        )
+        userId = Number(inserted.lastInsertRowid)
+      }
       await persistMemberships(userId, parsedPayload.systemRole, parsedPayload.memberships, tx)
 
       for (const locId of locationIds) {
         await tx.execute('INSERT OR IGNORE INTO user_locations (user_id, location_id) VALUES (?, ?)', [userId, locId])
       }
 
-      return userId
+      return { userId, reactivated }
     })
 
-    const created = await loadAccessibleUserProfile(createdUserId, currentUser)
+    const created = await loadAccessibleUserProfile(userId, currentUser)
     if (!created) {
       res.status(500).json({ error: 'Failed to load created user' })
       return
@@ -444,7 +470,7 @@ router.post('/', authenticateToken, validate(createUserSchema), async (req: Requ
     // fire-and-forget so a slow SMTP connect never delays the 201 response.
     void sendWelcomeEmail(created)
 
-    res.status(201).json(toApiUser(created))
+    res.status(201).json({ ...toApiUser(created), reactivated })
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message })
@@ -488,11 +514,18 @@ router.patch('/:id', authenticateToken, validate(updateUserSchema), validate(use
     return
   }
 
-  const existingEmail = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE email = ? AND id != ?', [email.trim(), id])
+  const existingEmail = await db.queryOne<{ id: number; is_active: number | null }>(
+    'SELECT id, is_active FROM users WHERE email = ? AND id != ?',
+    [email.trim(), id]
+  )
 
   if (existingEmail) {
-    res.status(409).json({ error: 'Email already registered' })
-    return
+    // Ignore deactivated (soft-deleted) users — they no longer own the email.
+    const isActive = existingEmail.is_active == null ? true : existingEmail.is_active !== 0
+    if (isActive) {
+      res.status(409).json({ error: 'Email already registered' })
+      return
+    }
   }
 
   for (const membership of parsedPayload.memberships) {
