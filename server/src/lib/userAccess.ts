@@ -21,9 +21,9 @@ interface DbUserRow {
   organization: string | null
   created_at: string
   password_hash?: string | null
-  must_change_password?: number
+  must_change_password?: number | string | boolean | null
   invite_token?: string | null
-  is_active?: number | null
+  is_active?: number | string | boolean | null
 }
 
 interface DbMembershipRow {
@@ -56,6 +56,25 @@ export interface UserAccessProfile {
   mustChangePassword: boolean
   inviteToken: string | null
   isActive: boolean
+}
+
+/**
+ * Coerce a SQL Server flag to a boolean.
+ *
+ * The live schema declares several boolean flags as `bigint` (e.g.
+ * `must_change_password`), which mssql returns as digit STRINGS ("0"/"1").
+ * `Boolean("0")` is `true` (non-empty string!), so a naive Boolean() call
+ * reports the flag as set even when it is 0. Handle string / number / boolean
+ * / null uniformly.
+ */
+function coerceFlag(value: number | string | boolean | null | undefined, defaultValue = true): boolean {
+  if (value == null) return defaultValue
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  const normalized = value.trim().toLowerCase()
+  if (normalized === '' ) return defaultValue
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') return false
+  return true
 }
 
 async function loadUserRow(db: DbAdapter, userId: number): Promise<DbUserRow | undefined> {
@@ -147,9 +166,9 @@ export async function loadUserAccessProfile(
     passwordHash: user.password_hash ?? null,
     // Only flag mustChangePassword if the user actually has a password set —
     // select-mode users (no password_hash) never need to change a password.
-    mustChangePassword: Boolean(user.must_change_password) && !!user.password_hash,
+    mustChangePassword: coerceFlag(user.must_change_password, false) && !!user.password_hash,
     inviteToken: user.invite_token ?? null,
-    isActive: user.is_active == null ? true : user.is_active !== 0,
+    isActive: coerceFlag(user.is_active, true),
   }
 }
 
