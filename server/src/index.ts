@@ -30,6 +30,7 @@ import groupsRouter from './routes/groups'
 import signupSlotsRouter from './routes/signup-slots'
 import { dispatchPendingEmailNotifications, generateDueDateNotifications } from './services/notifications'
 import { processWorkflowEscalations } from './services/approvalWorkflows'
+import { dueDateNotificationsEnabled, workflowTimedChecksEnabled } from './env'
 
 const app = express()
 const PORT = process.env.PORT ?? 4000
@@ -124,6 +125,21 @@ async function runNotificationSweep() {
     await dispatchPendingEmailNotifications()
   } catch (err) {
     console.error('[notifications] dispatchPendingEmailNotifications failed:', (err as Error).message)
+  }
+}
+
+// Date-driven checks are retired unless explicitly switched back on. Announce it
+// once at boot so a quiet sweep is visibly intentional rather than a broken one.
+{
+  const retired: string[] = []
+  if (!dueDateNotificationsEnabled()) retired.push('due-date notifications')
+  if (!workflowTimedChecksEnabled()) retired.push('workflow reminders/escalations')
+  if (retired.length > 0) {
+    console.log(
+      `[server] Date-driven checks disabled: ${retired.join(', ')}. ` +
+      'collections.date_due is display-only. Set DUE_DATE_NOTIFICATIONS_ENABLED=true / ' +
+      'WORKFLOW_TIMED_CHECKS_ENABLED=true in server/.env to re-enable.',
+    )
   }
 }
 

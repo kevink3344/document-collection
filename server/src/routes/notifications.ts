@@ -7,7 +7,6 @@ import {
   createNotificationEventWithDeliveries,
   deleteNotificationEmailCc,
   dismissInAppNotification,
-  generateDueDateNotifications,
   getNotificationPreferences,
   getUnreadInAppNotificationCount,
   listInAppNotificationsForUser,
@@ -78,7 +77,11 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
     return
   }
 
-  await generateDueDateNotifications()
+  // The due-date generator used to be awaited here. It is a write-side sweep, so
+  // this GET is the wrong home for it twice over: it made a polled endpoint
+  // responsible for generating data, and any failure inside the sweep surfaced
+  // as a 500 on the notification bell. Reading the list is now read-only —
+  // generation belongs to `runNotificationSweep` in index.ts.
   res.json(await listInAppNotificationsForUser(context.id, context.organizationId, isAdministrator(context)))
 })
 
@@ -111,7 +114,8 @@ router.get('/unread-count', authenticateToken, async (req: Request, res: Respons
     return
   }
 
-  await generateDueDateNotifications()
+  // No generation here — see the note on GET '/'. This endpoint is polled every
+  // 60 s by the top nav bar, so it is the wrong place to run a write-side sweep.
   res.json({ count: await getUnreadInAppNotificationCount(context.id, context.organizationId, isAdministrator(context)) })
 })
 

@@ -140,6 +140,44 @@ function hasMeaningfulValue(value: string | null | undefined): boolean {
   return Boolean(value && value.trim() !== '')
 }
 
+/**
+ * A field's identity is its `fieldKey`; `fieldId` is only stable *within the
+ * collection version a submission was made against*. Creating a new version
+ * re-inserts every field under a fresh id while keeping the same key, so
+ * matching a stored value back to a field by id alone silently drops every
+ * answer collected under an earlier version — which is exactly how the Records
+ * table came to render "—" in every non-staff column while the card view, which
+ * reads the values array directly, still looked correct.
+ *
+ * Match on the key first, then fall back to the id for payloads predating
+ * field_key (the API backfilled `field-<id>` keys, but be defensive).
+ */
+interface FieldIdentifiable {
+  fieldKey?: string | null
+}
+
+interface AnswerLike extends FieldIdentifiable {
+  fieldId: number
+}
+
+function findAnswerForField<T extends AnswerLike>(
+  values: readonly T[],
+  field: CollectionField
+): T | undefined {
+  if (field.fieldKey) {
+    const byKey = values.find(answer => answer.fieldKey === field.fieldKey)
+    if (byKey) return byKey
+  }
+  return values.find(answer => answer.fieldId === field.id)
+}
+
+/** The map key under which a field's or answer's values are indexed. */
+function fieldIndexKey(source: FieldIdentifiable & { id?: number; fieldId?: number }): string {
+  if (source.fieldKey) return `key:${source.fieldKey}`
+  const id = source.id ?? source.fieldId
+  return id !== undefined ? `id:${id}` : ''
+}
+
 function buildConicGradient(data: SummaryDatum[]): string {
   const total = data.reduce((sum, item) => sum + item.count, 0)
   if (total === 0) {
@@ -1572,23 +1610,56 @@ export default function RecordsPage() {
     return map
   }, [selectedCollection])
 
+  // Same fields, indexed by the version-stable key. Used to resolve a stored
+  // value back to the field it belongs to when that value was collected under
+  // an older version (see findAnswerForField).
+  const fieldKeyMap = useMemo(() => {
+    const map = new Map<string, CollectionField>()
+    selectedCollection?.fields.forEach(field => {
+      if (field.fieldKey) {
+        map.set(field.fieldKey, field)
+      }
+    })
+    return map
+  }, [selectedCollection])
+
+  const resolveFieldForAnswer = (answer: AnswerLike): CollectionField | undefined => {
+    if (answer.fieldKey) {
+      const byKey = fieldKeyMap.get(answer.fieldKey)
+      if (byKey) return byKey
+    }
+    return fieldMap.get(answer.fieldId)
+  }
+
   const summaryCards = useMemo((): SummaryCard[] => {
     if (!selectedCollection || responses.length === 0) return [] as SummaryCard[]
 
-    const valuesByField = new Map<number, Map<number, string | null>>()
+    const valuesByField = new Map<string, Map<number, string | null>>()
+    const putValue = (key: string, responseId: number, value: string | null) => {
+      const fieldValues = valuesByField.get(key) ?? new Map<number, string | null>()
+      fieldValues.set(responseId, value)
+      valuesByField.set(key, fieldValues)
+    }
     responses.forEach(response => {
       response.values.forEach(answer => {
-        const fieldValues = valuesByField.get(answer.fieldId) ?? new Map<number, string | null>()
-        fieldValues.set(response.id, answer.value)
-        valuesByField.set(answer.fieldId, fieldValues)
+        // Seed the id key as well so answers from payloads without a fieldKey
+        // still resolve; the key entry is what survives a new version.
+        putValue(`id:${answer.fieldId}`, response.id, answer.value)
+        if (answer.fieldKey) putValue(fieldIndexKey(answer), response.id, answer.value)
       })
     })
+
+    // Key first (survives version changes), id as the fallback.
+    const valuesForField = (field: CollectionField) =>
+      valuesByField.get(fieldIndexKey(field))
+      ?? (field.id !== undefined ? valuesByField.get(`id:${field.id}`) : undefined)
+      ?? new Map<number, string | null>()
 
     return selectedCollection.fields
       .filter(field => field.id !== undefined)
       .map(field => {
         const fieldId = field.id as number
-        const fieldValues = valuesByField.get(fieldId) ?? new Map<number, string | null>()
+        const fieldValues = valuesForField(field)
 
         switch (field.type) {
           case 'single_choice': {
@@ -1752,7 +1823,7 @@ export default function RecordsPage() {
         const rows: Array<Record<string, string>> = []
 
         responses.forEach(response => {
-          const answer = response.values.find(v => v.fieldId === fieldId)
+          const answer = findAnswerForField(response.values, field)
           if (!answer?.value) return
           try {
             const parsed = JSON.parse(answer.value) as Array<Record<string, unknown>>
@@ -2168,12 +2239,12 @@ export default function RecordsPage() {
                     </td>
                     {regularFields.map(f => (
                       <td key={f.id} className={`${tdClass} text-[#1E293B] dark:text-[#F1F5F9] border-[#E2E8F0] dark:border-[#334155]`}>
-                        {cellDisplay(f, response.values.find(v => v.fieldId === f.id)?.value)}
+                        {cellDisplay(f, findAnswerForField(response.values, f)?.value)}
                       </td>
                     ))}
                     {staffOnlyFields.map(f => (
                       <td key={f.id} className={`${tdClass} text-amber-700 dark:text-amber-400 border-[#E2E8F0] dark:border-[#334155] bg-amber-50/40 dark:bg-amber-900/10`}>
-                        {cellDisplay(f, response.values.find(v => v.fieldId === f.id)?.value)}
+                        {cellDisplay(f, findAnswerForField(response.values, f)?.value)}
                       </td>
                     ))}
                   </tr>
@@ -2343,11 +2414,11 @@ export default function RecordsPage() {
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {response.values
                     .filter(answer => {
-                      const f = fieldMap.get(answer.fieldId)
+                      const f = resolveFieldForAnswer(answer)
                       return !f?.staffOnly
                     })
                     .map(answer => {
-                    const field = fieldMap.get(answer.fieldId)
+                    const field = resolveFieldForAnswer(answer)
                     return (
                       <div
                         key={`${response.id}-${answer.fieldId}`}
@@ -2377,7 +2448,7 @@ export default function RecordsPage() {
                           const init: Record<number, string> = {}
                           staffFields.forEach(field => {
                             if (field.id !== undefined) {
-                              const existing = response.values.find(v => v.fieldId === field.id)
+                              const existing = findAnswerForField(response.values, field)
                               init[field.id] = existing?.value ?? ''
                             }
                           })
@@ -2405,7 +2476,7 @@ export default function RecordsPage() {
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                       {staffFields.map(field => {
                         if (field.id === undefined) return null
-                        const answer = response.values.find(v => v.fieldId === field.id)
+                        const answer = findAnswerForField(response.values, field)
                         return (
                           <div
                             key={`staff-ro-${response.id}-${field.id}`}
@@ -2753,7 +2824,14 @@ export default function RecordsPage() {
                     </div>
                   )}
 
-                  {(activeTicketHistory ?? []).length === 0 && (
+                  {/*
+                    Gated on the absence of an error: a failed fetch leaves the
+                    list empty, so without this the panel announced a failure and
+                    "No ticket history yet." at the same time — an empty state
+                    claiming there is nothing to show when the truth is that
+                    nothing could be read.
+                  */}
+                  {!activeTicketHistoryError && (activeTicketHistory ?? []).length === 0 && (
                     <div className="rounded border border-dashed border-[#CBD5E1] dark:border-[#334155] px-4 py-6 text-sm text-[#94A3B8] text-center">
                       No ticket history yet.
                     </div>

@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { getConfiguredDatabaseMode, isDatabaseAvailable, isDbReady } from '../database/db'
+import { dueDateNotificationsEnabled, workflowTimedChecksEnabled } from '../env'
 import { isGoogleDriveConfigured } from '../services/googleDrive'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pkg = require('../../package.json') as { version: string }
@@ -69,6 +70,11 @@ router.get('/info', (_req: Request, res: Response) => {
     loginScreenColor,
     approvalWorkflowEnabled: process.env.APPROVAL_WORKFLOW_ENABLED !== 'false',
     ticketSystemEnabled: process.env.TICKET_SYSTEM_ENABLED !== 'false',
+    // Date-driven checks are retired by default — `collections.date_due` is shown
+    // for information only. Exposed so the UI can avoid offering settings that
+    // would have no effect. Both default to false when unset.
+    dueDateNotificationsEnabled: dueDateNotificationsEnabled(),
+    workflowTimedChecksEnabled: workflowTimedChecksEnabled(),
     defaultImageLogoUrl,
     orgList,
   })

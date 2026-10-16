@@ -1,5 +1,6 @@
 import { getDbAsync } from '../database/db'
 import type { DbAdapter } from '../database/types'
+import { dueDateNotificationsEnabled } from '../env'
 import { isEmailDeliveryConfigured, sendNotificationEmail } from './notificationEmail'
 
 export type NotificationType = 'due_soon' | 'overdue' | 'system'
@@ -763,6 +764,18 @@ export async function dispatchPendingEmailNotifications(dbArg?: DbAdapter): Prom
 }
 
 export async function generateDueDateNotifications(dbArg?: DbAdapter): Promise<void> {
+  // `collections.date_due` is informational — nothing acts on it on a schedule.
+  //
+  // The guard lives inside the function rather than at each call site so one
+  // decision covers every present and future caller (the hourly sweep and the
+  // two GET endpoints that used to await this). It is read at call time, by
+  // which point dotenv has run — the entry point imports './env' first.
+  //
+  // Returning early rather than throwing keeps this a no-op for callers that
+  // await it: an endpoint must not start failing because a housekeeping job
+  // was switched off.
+  if (!dueDateNotificationsEnabled()) return
+
   const db = dbArg ?? await getDbAsync()
   const now = new Date()
   const reminderOffsetDays = await readSettingInt(db, 'notification_reminder_days', -3)

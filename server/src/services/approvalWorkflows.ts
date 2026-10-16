@@ -1,5 +1,6 @@
 import { getDbAsync } from '../database/db'
 import type { DbAdapter } from '../database/types'
+import { workflowTimedChecksEnabled } from '../env'
 import { createNotificationEventWithDeliveries } from './notifications'
 
 export type ApprovalAssignmentType = 'user' | 'role'
@@ -871,6 +872,12 @@ export async function actOnWorkflowStage(input: {
 }
 
 export async function processWorkflowEscalations(dbArg?: DbAdapter): Promise<void> {
+  // This sweep does nothing but compare wall-clock time since a stage started
+  // against `reminder_after_hours` / `escalation_after_hours` — so retiring the
+  // time-based checks retires the whole function. The workflow itself is
+  // untouched: stages still advance on approve/reject.
+  if (!workflowTimedChecksEnabled()) return
+
   const db = dbArg ?? await getDbAsync()
   const nowIso = new Date().toISOString()
   const activeStages = await db.queryAll<DbStageInstance & { collection_id: number; response_id: number; collection_title: string; organization_id: number | null }>(

@@ -259,7 +259,19 @@ export interface CollectionResponse {
   respondentEmail: string | null
   submittedAt: string
   workflow?: ApprovalWorkflowSummary | null
-  values: { fieldId: number; value: string | null; fieldLabel?: string | null; staffUpdatedByName?: string | null; staffUpdatedAt?: string | null }[]
+  values: {
+    fieldId: number
+    /**
+     * The field's identity across collection versions. `fieldId` only holds
+     * within the version the submission was made against, so always prefer
+     * `fieldKey` when matching a stored value back to a field.
+     */
+    fieldKey?: string | null
+    value: string | null
+    fieldLabel?: string | null
+    staffUpdatedByName?: string | null
+    staffUpdatedAt?: string | null
+  }[]
 }
 
 export interface SubmissionComment {

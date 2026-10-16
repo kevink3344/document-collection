@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken'
 import multer from 'multer'
 import { getDbAsync } from '../database/db'
 import type { DbAdapter } from '../database/types'
+import { timestampSortExpr } from '../database/sql'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import { createCollectionSchema, collectionIdParamSchema } from '../lib/schemas'
@@ -151,6 +152,7 @@ interface DbResponseValue {
   field_id: number
   value: string | null
   field_label?: string | null
+  field_key?: string | null
   staff_updated_by_name: string | null
   staff_updated_at: string | null
 }
@@ -2930,8 +2932,11 @@ router.get('/:id/responses', authenticateToken, async (req: Request, res: Respon
 
   const responseIds = responses.map(r => r.id)
   const ph = responseIds.map(() => '?').join(',')
+  // `field_key` is the field's identity across collection versions; `field_id`
+  // is only stable within the version the submission was made against, so a
+  // client matching on the id alone loses every value from an older version.
   const values = await db.queryAll<DbResponseValue>(
-      `SELECT rv.*, cf.label AS field_label
+      `SELECT rv.*, cf.label AS field_label, cf.field_key AS field_key
        FROM collection_response_values rv
        LEFT JOIN collection_fields cf ON cf.id = rv.field_id
        WHERE rv.response_id IN (${ph})`,
@@ -2958,6 +2963,7 @@ router.get('/:id/responses', authenticateToken, async (req: Request, res: Respon
       workflow: await getWorkflowSummaryForResponse(r.id, db),
       values: (valsByResponse.get(r.id) ?? []).map(v => ({
         fieldId: v.field_id,
+        fieldKey: v.field_key ?? null,
         value: v.value,
         fieldLabel: v.field_label ?? null,
         staffUpdatedByName: v.staff_updated_by_name ?? null,
@@ -3013,15 +3019,21 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, async (
       return
     }
 
-    // Validate all provided fieldIds are staff-only fields for this collection
+    // Validate all provided fieldIds are staff-only fields for this collection.
+    // Keep each field's stable key alongside its id: the upsert below matches an
+    // existing value by field_key, because a new collection version re-inserts
+    // every field under a fresh id — an id-only match would insert a duplicate
+    // row for a staff field that already holds a value.
+    const staffFieldKeys = new Map<number, string | null>()
     if (body.values.length > 0) {
       const fieldIds = body.values.map(v => v.fieldId)
       const ph = fieldIds.map(() => '?').join(',')
-      const staffFields = await db.queryAll<{ id: number }>(
-          `SELECT id FROM collection_fields WHERE id IN (${ph}) AND staff_only = 1 AND collection_id = ?`,
+      const staffFields = await db.queryAll<{ id: number; field_key: string | null }>(
+          `SELECT id, field_key FROM collection_fields WHERE id IN (${ph}) AND staff_only = 1 AND collection_id = ?`,
           [...fieldIds, id]
         )
       const staffFieldIds = new Set(staffFields.map(f => f.id))
+      staffFields.forEach(f => staffFieldKeys.set(f.id, f.field_key ?? null))
       const badId = fieldIds.find(fid => !staffFieldIds.has(fid))
       if (badId !== undefined) {
         res.status(400).json({ error: `Field ${badId} is not a staff-only field for this collection` })
@@ -3037,11 +3049,26 @@ router.put('/:id/responses/:responseId/staff-fields', authenticateToken, async (
     // Upsert values inside a transaction
     await db.transaction(async (tx) => {
       for (const val of bodyValues) {
-        const existing = await tx.queryOne<{ id: number }>('SELECT id FROM collection_response_values WHERE response_id = ? AND field_id = ?', [responseId, val.fieldId])
+        const fieldKey = staffFieldKeys.get(val.fieldId) ?? null
+        // Match on the version-stable field_key, falling back to the id for
+        // fields that predate field_key. The UPDATE then targets the row we
+        // found (already scoped to this response) rather than re-matching.
+        const existing = fieldKey
+          ? await tx.queryOne<{ id: number }>(
+                `SELECT rv.id
+                 FROM collection_response_values rv
+                 JOIN collection_fields cf ON cf.id = rv.field_id
+                 WHERE rv.response_id = ? AND (cf.field_key = ? OR rv.field_id = ?)`,
+                [responseId, fieldKey, val.fieldId]
+              )
+          : await tx.queryOne<{ id: number }>(
+                'SELECT id FROM collection_response_values WHERE response_id = ? AND field_id = ?',
+                [responseId, val.fieldId]
+              )
         if (existing) {
           await tx.execute(
-            'UPDATE collection_response_values SET value = ?, staff_updated_by_name = ?, staff_updated_at = ? WHERE response_id = ? AND field_id = ?',
-            [val.value ?? null, editorName, editedAt, responseId, val.fieldId]
+            'UPDATE collection_response_values SET value = ?, staff_updated_by_name = ?, staff_updated_at = ? WHERE id = ?',
+            [val.value ?? null, editorName, editedAt, existing.id]
           )
         } else {
           await tx.execute(
@@ -3875,7 +3902,7 @@ router.get('/:id/responses/:responseId/tickets/:templateId/history', authenticat
         changed_at
       FROM ticket_history
       WHERE ticket_response_id = ?
-      ORDER BY datetime(changed_at) DESC, id DESC
+      ORDER BY ${timestampSortExpr('changed_at')} DESC, id DESC
     `, [ticket.id])
 
     res.json(rows.map(row => ({
@@ -4329,7 +4356,7 @@ router.get('/:id/responses/:responseId/ticket/history', authenticateToken, async
         changed_at
       FROM ticket_history
       WHERE ticket_response_id = ?
-      ORDER BY datetime(changed_at) DESC, id DESC
+      ORDER BY ${timestampSortExpr('changed_at')} DESC, id DESC
     `, [ticket.id])
 
     res.json(rows.map(row => ({

@@ -528,6 +528,12 @@ export default function SettingsPage() {
   const [notificationWindowSaving, setNotificationWindowSaving] = useState(false)
   const [notificationWindowError, setNotificationWindowError] = useState<string | null>(null)
   const [notificationWindowSaved, setNotificationWindowSaved] = useState(false)
+  // Whether the server still runs its date-driven checks. They are retired by
+  // default (`collections.date_due` is display-only), so the reminder/late offset
+  // controls are hidden rather than left editable-but-inert — a saved offset that
+  // changes nothing is a worse outcome than not offering it. Assumed enabled until
+  // /api/info says otherwise, so an older server never hides a live control.
+  const [dueDateNotificationsEnabled, setDueDateNotificationsEnabled] = useState(true)
   const [qrCodeEnabled, setQrCodeEnabled] = useState(false)
   const [loginMode, setLoginMode] = useState<'select' | 'password' | 'maintenance'>('select')
   const [loginModeSaving, setLoginModeSaving] = useState(false)
@@ -653,8 +659,11 @@ export default function SettingsPage() {
       .then(val => setLoginMode(val === 'password' ? 'password' : val === 'maintenance' ? 'maintenance' : 'select'))
       .catch(() => setLoginMode('select'))
     fetch('/api/info')
-      .then(r => r.json() as Promise<{ loginModeOverride: string | null }>)
-      .then(info => setLoginModeOverride(info.loginModeOverride))
+      .then(r => r.json() as Promise<{ loginModeOverride: string | null; dueDateNotificationsEnabled?: boolean }>)
+      .then(info => {
+        setLoginModeOverride(info.loginModeOverride)
+        setDueDateNotificationsEnabled(info.dueDateNotificationsEnabled !== false)
+      })
       .catch(() => {})
     getPublicSetting('maintenance_message')
       .then(val => { setMaintenanceMessage(val); setMaintenanceMessageDraft(val) })
@@ -2313,7 +2322,25 @@ export default function SettingsPage() {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Notifications</h2>
-              <p className="text-sm text-[#64748B] mt-1">Configure reminder and late offsets for in-app due date notifications.</p>
+              {/*
+                Derived from the same two conditions that render the blocks below,
+                rather than written out by hand: the offset controls exist only
+                while the date-driven checks are on, and the welcome-email block
+                only for a global administrator. A hand-written sentence would
+                name a block this viewer cannot see, or leave out one they can.
+              */}
+              <p className="text-sm text-[#64748B] mt-1">
+                Configure {[
+                  dueDateNotificationsEnabled && 'reminder and late offsets for in-app due date notifications',
+                  'confirmation emails',
+                  isGlobalAdmin && 'welcome emails',
+                  'the copy-of-answers disclaimer',
+                ].filter((part): part is string => Boolean(part)).reduce(
+                  (text, part, index, all) =>
+                    text + (index === 0 ? '' : index === all.length - 1 ? ' and ' : ', ') + part,
+                  '',
+                )}.
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -2464,6 +2491,8 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {dueDateNotificationsEnabled && (
+            <>
             <hr className="border-[#E2E8F0] dark:border-[#334155]" />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2538,6 +2567,8 @@ export default function SettingsPage() {
                 <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>
               )}
             </div>
+            </>
+            )}
           </div>
         )}
       </section>

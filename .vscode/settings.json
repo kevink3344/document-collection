@@ -11,7 +11,14 @@
         "/^cd \"c:\\\\Users\\\\kkey2\\\\Desktop\\\\Github Projects\\\\document-collection\\\\server\"; npx tsc --noEmit 2>&1 \\| Select-Object -First 50$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "git remote": true,
+        "npx tsc": true,
+        "git push": true,
+        "git ls-remote": true,
+        "git pull": true,
+        "git stash": true,
+        "git add": true
     },
     "chat.disableAIFeatures": false
 }
