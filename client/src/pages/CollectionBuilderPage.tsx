@@ -36,6 +36,7 @@ import {
 import { listGalleryAssets } from '../api/galleryAssets'
 import { listGroups } from '../api/groups'
 import { getPublicSetting } from '../api/settings'
+import { useTicketActivityEnabled } from '../hooks/useTicketActivityEnabled'
 import { getCollectionTicketTemplatesAll, saveCollectionTicketTemplates, setCollectionTicketTemplateActive } from '../api/tickets'
 import { listTicketTemplates } from '../api/ticketTemplates'
 import { listCategories } from '../api/categories'
@@ -264,8 +265,9 @@ export default function CollectionBuilderPage() {
   const [workflowStages, setWorkflowStages] = useState<ApprovalWorkflowStageDefinition[]>([blankWorkflowStage(0)])
   const [workflowUsers, setWorkflowUsers] = useState<AppUser[]>([])
   const [approvalWorkflowFeatureEnabled, setApprovalWorkflowFeatureEnabled] = useState(true)
-  const [ticketSystemFeatureEnabled, setTicketSystemFeatureEnabled] = useState(true)
-  const [ticketActivityEnabled, setTicketActivityEnabled] = useState(true)
+  // env ∧ master switch ∧ enabled in the active organization. Replaces the two
+  // separate ticket flags this page used to fetch for itself.
+  const { ticketActivityGateEnabled } = useTicketActivityEnabled()
 
   // Share state
   const [shareUsers, setShareUsers] = useState<CollectionShare['users']>([])
@@ -494,15 +496,11 @@ export default function CollectionBuilderPage() {
       .then(r => r.json() as Promise<{ approvalWorkflowEnabled?: boolean; ticketSystemEnabled?: boolean; defaultImageLogoUrl?: string | null }>)
       .then(info => {
         setApprovalWorkflowFeatureEnabled(info.approvalWorkflowEnabled !== false)
-        setTicketSystemFeatureEnabled(info.ticketSystemEnabled !== false)
         if (!isEdit && info.defaultImageLogoUrl) {
           setLogoUrl(current => current || info.defaultImageLogoUrl!)
         }
       })
       .catch(() => { /* keep defaults enabled */ })
-    getPublicSetting('ticket_activity_enabled')
-      .then(val => setTicketActivityEnabled(val !== 'false'))
-      .catch(() => setTicketActivityEnabled(true))
   }, [isEdit])
 
   // Load existing collection when editing
@@ -1655,7 +1653,7 @@ export default function CollectionBuilderPage() {
                 Versions
               </button>
             )}
-            {isEdit && ticketSystemFeatureEnabled && ticketActivityEnabled && (
+            {isEdit && ticketActivityGateEnabled && (
               <button
                 type="button"
                 onClick={() => setDetailsTab('ticket')}
@@ -1669,7 +1667,7 @@ export default function CollectionBuilderPage() {
                 Add Ticket
               </button>
             )}
-            {isEdit && ticketSystemFeatureEnabled && ticketActivityEnabled && (
+            {isEdit && ticketActivityGateEnabled && (
               <div className="relative sm:hidden ml-auto">
                 <button
                   type="button"
@@ -2486,7 +2484,7 @@ export default function CollectionBuilderPage() {
         </div>
 
         {/* Ticket Assignment */}
-        {detailsTab === 'ticket' && isEdit && ticketSystemFeatureEnabled && (
+        {detailsTab === 'ticket' && isEdit && ticketActivityGateEnabled && (
           <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">

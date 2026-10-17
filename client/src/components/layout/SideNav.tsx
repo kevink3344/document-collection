@@ -19,6 +19,7 @@ import { getMenuLabels, MENU_LABELS_UPDATED_EVENT } from '../../api/menuLabels'
 import type { LucideIcon } from 'lucide-react'
 import type { UserRole } from '../../types'
 import { DEFAULT_MENU_LABELS, type MenuLabelKey } from '../../utils/menuLabels'
+import { useTicketActivityEnabled } from '../../hooks/useTicketActivityEnabled'
 
 interface SideNavProps {
   mobileDrawerOpen?: boolean
@@ -62,18 +63,16 @@ export default function SideNav({
   const { user } = useAuth()
   const [hasPendingApprovals, setHasPendingApprovals] = useState(false)
   const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true)
-  const [ticketActivityEnabled, setTicketActivityEnabled] = useState(true)
   const [menuLabels, setMenuLabels] = useState<Record<MenuLabelKey, string>>(DEFAULT_MENU_LABELS)
 
   const activeOrgId = user?.activeOrganizationId ?? user?.organizationId ?? null
+  // env ∧ master switch ∧ enabled in the active organization
+  const { ticketActivityGateEnabled } = useTicketActivityEnabled()
 
   useEffect(() => {
     getPublicSetting('ai_summary_enabled')
       .then(val => setAiSummaryEnabled(val !== 'false'))
       .catch(() => setAiSummaryEnabled(true))
-    getPublicSetting('ticket_activity_enabled')
-      .then(val => setTicketActivityEnabled(val !== 'false'))
-      .catch(() => setTicketActivityEnabled(true))
   }, [])
 
   useEffect(() => {
@@ -124,7 +123,7 @@ export default function SideNav({
         : NAV_ITEMS
             .filter(item => !item.roles || (user ? item.roles.includes(user.role) : false))
             .filter(item => item.to !== '/ai-summary' || aiSummaryEnabled)
-            .filter(item => item.to !== '/ticket-designer' || ticketActivityEnabled)
+            .filter(item => item.to !== '/ticket-designer' || ticketActivityGateEnabled)
 
   const visibleNavItems: NavItem[] = hasPendingApprovals
     ? [...baseNavItems, { icon: CheckSquare, label: 'Approvals', to: '/approvals' }]

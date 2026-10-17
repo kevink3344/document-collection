@@ -11,3 +11,8 @@ dist/
 *.db-info
 server/.db-mode
 .DS_Store
+
+# Dev-server runtime logs / scratch output (not source)
+_dev-*.log
+_api.log
+_start-dev.out.txt

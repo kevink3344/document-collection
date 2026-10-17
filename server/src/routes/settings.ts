@@ -21,6 +21,7 @@ const ALLOWED_KEYS = new Set([
   'copy_answers_disclaimer',
   'ai_summary_enabled',
   'ticket_activity_enabled',
+  'ticket_activity_orgs',
   'about_message',
   'database_mode',
   'login_mode',
@@ -401,6 +402,9 @@ router.get('/:key', async (req: Request, res: Response) => {
     const defaults: Record<string, string> = {
       login_mode: 'select',
       ticket_activity_enabled: 'true',
+      // '*' = tickets are available in every organization, including ones created
+      // later. An unset row must never hide tickets, so this default is deliberate.
+      ticket_activity_orgs: '*',
       welcome_email_enabled: 'true',
       welcome_email_subject: 'Welcome to Data Collection Pro',
       welcome_email_body: 'Hi {name},\n\nYour account has been created for Data Collection Pro.\n\nYour username is {email}.\n\nPlease log in at {app_url} and change your password.\n\nThanks,\nThe Admin Team',

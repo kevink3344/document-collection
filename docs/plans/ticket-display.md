@@ -3,6 +3,10 @@
 > **Status:** Implemented (pending local verification)
 > **Date:** 2026-08-24
 > **Goal:** Add a Settings option **"Ticket Activity"** that, when enabled, shows the **Tickets** sidebar icon and the ticket surfaces inside Collections; when disabled, hides them everywhere.
+>
+> **Extended by:** [`ticket-activity-orgs.md`](./ticket-activity-orgs.md) — the setting described here is
+> now the **second** of three ANDed gates (`env ∧ master switch ∧ organization enabled`), and all four
+> surfaces are gated in one hook rather than each reading the setting for itself.
 
 ---
 

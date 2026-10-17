@@ -52,6 +52,12 @@ import {
   MENU_LABEL_MAX_LENGTH,
   type MenuLabelKey,
 } from '../utils/menuLabels'
+import {
+  TICKET_ACTIVITY_ORGS_KEY,
+  describeTicketActivityOrgScope,
+  parseTicketActivityOrgIds,
+  serializeTicketActivityOrgIds,
+} from '../utils/ticketActivity'
 
 
 const INPUT =
@@ -571,6 +577,13 @@ export default function SettingsPage() {
   const [ticketActivitySaving, setTicketActivitySaving] = useState(false)
   const [ticketActivityError, setTicketActivityError] = useState<string | null>(null)
   const [ticketActivitySaved, setTicketActivitySaved] = useState(false)
+  // Per-organization allowlist. `null` = every organization (including future ones),
+  // `[]` = none. The saved value and the draft are kept apart so Save is meaningful.
+  const [ticketActivityOrgIds, setTicketActivityOrgIds] = useState<number[] | null>(null)
+  const [ticketActivityOrgDraft, setTicketActivityOrgDraft] = useState<number[] | null>(null)
+  const [ticketActivityOrgSaving, setTicketActivityOrgSaving] = useState(false)
+  const [ticketActivityOrgError, setTicketActivityOrgError] = useState<string | null>(null)
+  const [ticketActivityOrgSaved, setTicketActivityOrgSaved] = useState(false)
   const [confirmationEmailsEnabled, setConfirmationEmailsEnabled] = useState(false)
   const [confirmationEmailsSaving, setConfirmationEmailsSaving] = useState(false)
   const [confirmationEmailsError, setConfirmationEmailsError] = useState<string | null>(null)
@@ -674,6 +687,16 @@ export default function SettingsPage() {
     getPublicSetting('ticket_activity_enabled')
       .then(val => setTicketActivityEnabled(val !== 'false'))
       .catch(() => setTicketActivityEnabled(true))
+    getPublicSetting(TICKET_ACTIVITY_ORGS_KEY)
+      .then(val => {
+        const parsed = parseTicketActivityOrgIds(val)
+        setTicketActivityOrgIds(parsed)
+        setTicketActivityOrgDraft(parsed)
+      })
+      .catch(() => {
+        setTicketActivityOrgIds(null)
+        setTicketActivityOrgDraft(null)
+      })
     getPublicSetting('submission_confirmation_emails')
       .then(val => setConfirmationEmailsEnabled(val === 'true'))
       .catch(() => setConfirmationEmailsEnabled(false))
@@ -1360,6 +1383,39 @@ export default function SettingsPage() {
       setTicketActivityError((err as Error).message)
     } finally {
       setTicketActivitySaving(false)
+    }
+  }
+
+  /**
+   * Toggle one organization. When the allowlist is `null` every organization is enabled,
+   * so the first uncheck has to materialise the full list before removing one — otherwise
+   * the box would appear to toggle nothing.
+   */
+  function toggleTicketActivityOrg(orgId: number, checked: boolean) {
+    setTicketActivityOrgSaved(false)
+    setTicketActivityOrgDraft(prev => {
+      const base = prev ?? organizations.map(org => org.id)
+      const next = checked ? [...base, orgId] : base.filter(id => id !== orgId)
+      const total = organizations.length
+      // Selecting every organization is stored as `null` so that organizations
+      // created later are enabled automatically instead of silently excluded.
+      if (total > 0 && next.length >= total) return null
+      return Array.from(new Set(next)).sort((a, b) => a - b)
+    })
+  }
+
+  async function handleTicketActivityOrgsSave() {
+    setTicketActivityOrgSaving(true)
+    setTicketActivityOrgError(null)
+    setTicketActivityOrgSaved(false)
+    try {
+      await updateSetting(TICKET_ACTIVITY_ORGS_KEY, serializeTicketActivityOrgIds(ticketActivityOrgDraft))
+      setTicketActivityOrgIds(ticketActivityOrgDraft)
+      setTicketActivityOrgSaved(true)
+    } catch (err) {
+      setTicketActivityOrgError((err as Error).message)
+    } finally {
+      setTicketActivityOrgSaving(false)
     }
   }
 
@@ -5178,12 +5234,18 @@ export default function SettingsPage() {
               <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Show Tickets</p>
               <p className="text-xs text-[#64748B] mt-1">When enabled, the Tickets sidebar icon, the "Add Ticket" tab, and ticket columns in exports are visible. When disabled, they are hidden.</p>
             </div>
+            {/* A real checkbox carrying role="switch": the switch look is purely
+                appearance-none on the input itself, so keyboard focus, the label
+                click target and the checked state all stay native. */}
             <input
               type="checkbox"
+              role="switch"
+              aria-label="Show Tickets"
+              aria-checked={ticketActivityEnabled}
               checked={ticketActivityEnabled}
               onChange={e => { void handleTicketActivityToggle(e.target.checked) }}
               disabled={ticketActivitySaving}
-              className="h-4 w-4 accent-[#2563EB]"
+              className="relative h-6 w-11 shrink-0 cursor-pointer appearance-none rounded-full bg-[#CBD5E1] outline-none transition-colors duration-200 before:absolute before:left-0.5 before:top-0.5 before:h-5 before:w-5 before:rounded-full before:bg-white before:shadow before:transition-transform before:duration-200 before:content-[''] checked:bg-[#2563EB] checked:before:translate-x-5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-2 dark:bg-[#475569]"
             />
           </label>
           {ticketActivityError && (
@@ -5195,6 +5257,85 @@ export default function SettingsPage() {
               {ticketActivitySaved && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
             </div>
           )}
+
+          <div className="border-t border-[#E2E8F0] dark:border-[#334155] pt-4 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">Enabled Organizations</p>
+              <p className="text-xs text-[#64748B] mt-1">
+                Checked = tickets are available in that organization. Everything unchecked still works normally — it just
+                loses the Tickets icon, the Add Ticket tab and the ticket columns in CSV export. This list only applies
+                while <span className="font-medium">Show Tickets</span> above is on.
+              </p>
+            </div>
+            {organizations.length === 0 ? (
+              <p className="text-sm text-[#64748B]">No organizations found.</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setTicketActivityOrgSaved(false); setTicketActivityOrgDraft(null) }}
+                    className="text-xs font-medium text-[#2563EB] hover:text-blue-700"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-xs text-[#CBD5E1]">|</span>
+                  <button
+                    type="button"
+                    onClick={() => { setTicketActivityOrgSaved(false); setTicketActivityOrgDraft([]) }}
+                    className="text-xs font-medium text-[#2563EB] hover:text-blue-700"
+                  >
+                    Deselect All
+                  </button>
+                  <span className="text-xs text-[#64748B] ml-auto">
+                    {describeTicketActivityOrgScope(ticketActivityOrgDraft, organizations.length)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {organizations.map(org => {
+                    const checked = ticketActivityOrgDraft === null || ticketActivityOrgDraft.includes(org.id)
+                    return (
+                      <label
+                        key={org.id}
+                        className="flex items-center gap-2 rounded border border-[#E2E8F0] dark:border-[#334155] px-3 py-2 text-sm text-[#1E293B] dark:text-[#F1F5F9] cursor-pointer hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!ticketActivityEnabled || ticketActivityOrgSaving}
+                          onChange={e => toggleTicketActivityOrg(org.id, e.target.checked)}
+                          className="h-4 w-4 accent-[#2563EB]"
+                        />
+                        <span className="truncate">{org.name}</span>
+                        <span className="ml-auto text-xs text-[#94A3B8]">{org.slug}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+                {!ticketActivityEnabled && (
+                  <p className="text-xs text-[#64748B]">Turn on <span className="font-medium">Show Tickets</span> to edit this list.</p>
+                )}
+                {ticketActivityOrgDraft !== null && ticketActivityOrgDraft.length === 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    No organization is checked — tickets will be hidden everywhere even though Show Tickets is on.
+                  </p>
+                )}
+                {ticketActivityOrgError && <p className="text-sm text-red-500">{ticketActivityOrgError}</p>}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { void handleTicketActivityOrgsSave() }}
+                    disabled={ticketActivityOrgSaving || serializeTicketActivityOrgIds(ticketActivityOrgDraft) === serializeTicketActivityOrgIds(ticketActivityOrgIds)}
+                    className="inline-flex items-center gap-1.5 bg-[#2563EB] hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    <Save size={14} />
+                    {ticketActivityOrgSaving ? 'Saving…' : 'Save Organizations'}
+                  </button>
+                  {ticketActivityOrgSaved && <span className="text-sm text-green-600 dark:text-green-400">Saved!</span>}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </section>
       )

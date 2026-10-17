@@ -12,7 +12,7 @@ import {
   finalizeTemplateTicket,
 } from '../api/tickets'
 import { getTicketTemplateFields } from '../api/ticketTemplates'
-import { getPublicSetting } from '../api/settings'
+import { useTicketActivityEnabled } from '../hooks/useTicketActivityEnabled'
 import { getCategoryColorClasses } from '../utils/categoryColors'
 import type {
   ApprovalWorkflowStageSummary,
@@ -1234,18 +1234,9 @@ export default function RecordsPage() {
   const [ticketsLoading, setTicketsLoading] = useState(false)
   const [ticketTemplateFilter, setTicketTemplateFilter] = useState<number | 'all'>('all')
   const [ticketStatusFilter, setTicketStatusFilter] = useState<'all' | 'open' | 'closed'>('all')
-  const [ticketSystemFeatureEnabled, setTicketSystemFeatureEnabled] = useState(true)
-  const [ticketActivityEnabled, setTicketActivityEnabled] = useState(true)
   const commentPollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({})
-  useEffect(() => {
-    fetch('/api/info')
-      .then(r => r.json() as Promise<{ ticketSystemEnabled?: boolean }>)
-      .then(info => setTicketSystemFeatureEnabled(info.ticketSystemEnabled !== false))
-      .catch(() => { /* keep default enabled */ })
-    getPublicSetting('ticket_activity_enabled')
-      .then(val => setTicketActivityEnabled(val !== 'false'))
-      .catch(() => setTicketActivityEnabled(true))
-  }, [])
+  // env ∧ master switch ∧ enabled in the active organization
+  const { ticketActivityGateEnabled } = useTicketActivityEnabled()
 
   useEffect(() => {
     listCollections()
@@ -1968,7 +1959,7 @@ export default function RecordsPage() {
                 >
                   Individual
                 </button>
-                {ticketSystemFeatureEnabled && ticketActivityEnabled && collectionTicketTemplates.length > 0 && (
+                {ticketActivityGateEnabled && collectionTicketTemplates.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setView('tickets')}
