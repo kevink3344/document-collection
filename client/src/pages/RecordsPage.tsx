@@ -10,7 +10,6 @@ import {
   getTemplateTicket,
   saveTemplateTicket,
   finalizeTemplateTicket,
-  getTemplateTicketHistory,
 } from '../api/tickets'
 import { getTicketTemplateFields } from '../api/ticketTemplates'
 import { getPublicSetting } from '../api/settings'
@@ -25,7 +24,6 @@ import type {
   TicketField,
   TicketResponse,
   CollectionTicketRow,
-  TicketHistoryEntry,
   CollectionTicketTemplate,
   ResponseTicketSummary,
 } from '../types'
@@ -33,7 +31,6 @@ import { useAuth } from '../contexts/AuthContext'
 
 type RecordsView = 'summary' | 'individual' | 'tickets' | 'ticket-export'
 type SubmissionTab = 'general' | 'comments'
-type TicketDrawerTab = 'details' | 'history'
 
 interface SummaryDatum {
   label: string
@@ -1218,6 +1215,10 @@ export default function RecordsPage() {
   const [commentsByResponse, setCommentsByResponse] = useState<Record<number, SubmissionComment[]>>({})
   const [newCommentText, setNewCommentText] = useState<Record<number, string>>({})
   const [commentSubmitting, setCommentSubmitting] = useState<Record<number, boolean>>({})
+  // A failed comment fetch used to leave the list merely absent, which renders
+  // identically to "there are no comments" — two very different claims. Track
+  // it per response; the next successful load (including the 60s poll) clears it.
+  const [commentsError, setCommentsError] = useState<Record<number, string | null>>({})
   // Ticket state
   const [collectionTicketTemplates, setCollectionTicketTemplates] = useState<CollectionTicketTemplate[]>([])
   const [ticketFieldsByTemplate, setTicketFieldsByTemplate] = useState<Record<number, TicketField[] | 'loading'>>({})
@@ -1227,9 +1228,7 @@ export default function RecordsPage() {
   const [ticketSaveState, setTicketSaveState] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
   const [ticketFinalizing, setTicketFinalizing] = useState<Record<string, boolean>>({})
   const [showFinalizeConfirm, setShowFinalizeConfirm] = useState<string | null>(null)
-  const [ticketDrawer, setTicketDrawer] = useState<{ responseId: number; templateId: number; tab: TicketDrawerTab } | null>(null)
-  const [ticketHistoryByKey, setTicketHistoryByKey] = useState<Record<string, TicketHistoryEntry[] | 'loading'>>({})
-  const [ticketHistoryError, setTicketHistoryError] = useState<Record<string, string | null>>({})
+  const [ticketDrawer, setTicketDrawer] = useState<{ responseId: number; templateId: number } | null>(null)
   // All-tickets view
   const [allTickets, setAllTickets] = useState<CollectionTicketRow[]>([])
   const [ticketsLoading, setTicketsLoading] = useState(false)
@@ -1331,8 +1330,6 @@ export default function RecordsPage() {
     setTicketEdits({})
     setTicketSaveState({})
     setTicketFinalizing({})
-    setTicketHistoryByKey({})
-    setTicketHistoryError({})
 
     return () => {
       cancelled = true
@@ -1394,26 +1391,11 @@ export default function RecordsPage() {
       .catch(() => setTicketsByKey(prev => ({ ...prev, [key]: null })))
   }
 
-  function loadTicketHistoryForResponse(responseId: number, templateId: number, force = false) {
-    if (!selectedCollectionId) return
-    const key = ticketKey(responseId, templateId)
-    if (!force && ticketHistoryByKey[key] !== undefined) return
-    setTicketHistoryByKey(prev => ({ ...prev, [key]: 'loading' }))
-    setTicketHistoryError(prev => ({ ...prev, [key]: null }))
-    getTemplateTicketHistory(selectedCollectionId, responseId, templateId)
-      .then(entries => setTicketHistoryByKey(prev => ({ ...prev, [key]: entries })))
-      .catch(err => {
-        setTicketHistoryByKey(prev => ({ ...prev, [key]: [] }))
-        setTicketHistoryError(prev => ({ ...prev, [key]: (err as Error).message }))
-      })
-  }
-
-  function openTicketDrawer(responseId: number, templateId: number, tab: TicketDrawerTab = 'details') {
-    setTicketDrawer({ responseId, templateId, tab })
+  function openTicketDrawer(responseId: number, templateId: number) {
+    setTicketDrawer({ responseId, templateId })
     loadResponseTickets(responseId)
     loadTicketFields(templateId)
     loadTicketRecord(responseId, templateId)
-    loadTicketHistoryForResponse(responseId, templateId)
   }
 
   async function handleSaveTicketDraft(responseId: number, templateId: number) {
@@ -1430,7 +1412,6 @@ export default function RecordsPage() {
       const ticket = await saveTemplateTicket(selectedCollectionId, responseId, templateId, values)
       setTicketsByKey(prev => ({ ...prev, [key]: ticket }))
       loadResponseTickets(responseId, true)
-      loadTicketHistoryForResponse(responseId, templateId, true)
       setTicketSaveState(prev => ({ ...prev, [key]: 'saved' }))
       setTimeout(() => setTicketSaveState(prev => ({ ...prev, [key]: 'idle' })), 2500)
     } catch {
@@ -1454,7 +1435,6 @@ export default function RecordsPage() {
       const ticket = await finalizeTemplateTicket(selectedCollectionId, responseId, templateId)
       setTicketsByKey(prev => ({ ...prev, [key]: ticket }))
       loadResponseTickets(responseId, true)
-      loadTicketHistoryForResponse(responseId, templateId, true)
       setAllTickets(prev => prev.map(row =>
         row.collectionResponseId === responseId && row.ticketTemplateId === templateId
           ? { ...row, finalized: ticket.finalized, finalizedAt: ticket.finalizedAt, finalizedByName: ticket.finalizedByName }
@@ -1473,8 +1453,13 @@ export default function RecordsPage() {
   function loadComments(responseId: number) {
     if (!selectedCollection?.id) return
     getComments(selectedCollection.id, responseId)
-      .then(items => setCommentsByResponse(prev => ({ ...prev, [responseId]: items })))
-      .catch(() => {/* silently ignore poll errors */})
+      .then(items => {
+        setCommentsByResponse(prev => ({ ...prev, [responseId]: items }))
+        setCommentsError(prev => ({ ...prev, [responseId]: null }))
+      })
+      .catch(err => {
+        setCommentsError(prev => ({ ...prev, [responseId]: (err as Error).message }))
+      })
   }
 
   function openCommentsTab(responseId: number) {
@@ -1594,8 +1579,6 @@ export default function RecordsPage() {
   const activeTicketFinalizing = activeTicketKey ? (ticketFinalizing[activeTicketKey] ?? false) : false
   const activeTicketFinalized = activeTicketData && activeTicketData !== 'loading' && activeTicketData.finalized ? activeTicketData : null
   const activeTicketDraft = activeTicketData && activeTicketData !== 'loading' && !activeTicketData.finalized ? activeTicketData : null
-  const activeTicketHistory = activeTicketKey ? ticketHistoryByKey[activeTicketKey] : undefined
-  const activeTicketHistoryError = activeTicketKey ? ticketHistoryError[activeTicketKey] : null
   const activeTicketFields = activeTicketTemplateId !== null && ticketFieldsByTemplate[activeTicketTemplateId] !== 'loading'
     ? (ticketFieldsByTemplate[activeTicketTemplateId] ?? [])
     : []
@@ -2559,7 +2542,12 @@ export default function RecordsPage() {
               {/* Comments tab */}
               {activeTab === 'comments' && (
                 <div className="space-y-4">
-                  {comments.length === 0 ? (
+                  {commentsError[response.id] && (
+                    <div className="rounded border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                      Could not load comments: {commentsError[response.id]}
+                    </div>
+                  )}
+                  {!commentsError[response.id] && (comments.length === 0 ? (
                     <p className="text-sm text-[#94A3B8] italic">No comments yet. Be the first to add one.</p>
                   ) : (
                     <div className="space-y-3">
@@ -2595,7 +2583,7 @@ export default function RecordsPage() {
                         )
                       })}
                     </div>
-                  )}
+                  ))}
                   <div className="flex gap-2 pt-1 border-t border-[#E2E8F0] dark:border-[#334155]">
                     <textarea
                       rows={2}
@@ -2657,7 +2645,7 @@ export default function RecordsPage() {
                 <button
                   key={template.id}
                   type="button"
-                  onClick={() => openTicketDrawer(activeTicketResponse.id, template.id, ticketDrawer.tab)}
+                  onClick={() => openTicketDrawer(activeTicketResponse.id, template.id)}
                   className={[
                     'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[2px] text-xs font-medium border transition-colors',
                     activeTicketTemplateId === template.id
@@ -2671,34 +2659,12 @@ export default function RecordsPage() {
               ))}
             </div>
 
-            <div className="px-5 border-b border-[#E2E8F0] dark:border-[#334155] flex gap-1">
-              <button
-                type="button"
-                onClick={() => setTicketDrawer(prev => prev ? { ...prev, tab: 'details' } : prev)}
-                className={`px-3 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${ticketDrawer.tab === 'details' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9]'}`}
-              >
-                Details
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTicketDrawer(prev => prev ? { ...prev, tab: 'history' } : prev)
-                  if (activeTicketTemplateId !== null) {
-                    loadTicketHistoryForResponse(activeTicketResponse.id, activeTicketTemplateId)
-                  }
-                }}
-                className={`px-3 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${ticketDrawer.tab === 'history' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9]'}`}
-              >
-                History
-              </button>
-            </div>
-
             <div className="flex-1 overflow-y-auto px-5 py-5">
-              {ticketDrawer.tab === 'details' && activeTicketData === 'loading' && (
+              {activeTicketData === 'loading' && (
                 <p className="text-sm text-[#94A3B8]">Loading ticket…</p>
               )}
 
-              {ticketDrawer.tab === 'details' && activeTicketFinalized && (
+              {activeTicketFinalized && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400 font-medium">
                     <Lock size={14} />
@@ -2739,7 +2705,7 @@ export default function RecordsPage() {
                 </div>
               )}
 
-              {ticketDrawer.tab === 'details' && !activeTicketFinalized && activeTicketData !== 'loading' && (
+              {!activeTicketFinalized && activeTicketData !== 'loading' && (
                 <div className="space-y-4">
                   {activeTicketFields.map(field => {
                     if (field.id === undefined) return null
@@ -2812,77 +2778,6 @@ export default function RecordsPage() {
                 </div>
               )}
 
-              {ticketDrawer.tab === 'history' && activeTicketHistory === 'loading' && (
-                <p className="text-sm text-[#94A3B8]">Loading history…</p>
-              )}
-
-              {ticketDrawer.tab === 'history' && activeTicketHistory !== 'loading' && (
-                <div className="space-y-3">
-                  {activeTicketHistoryError && (
-                    <div className="rounded border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                      {activeTicketHistoryError}
-                    </div>
-                  )}
-
-                  {/*
-                    Gated on the absence of an error: a failed fetch leaves the
-                    list empty, so without this the panel announced a failure and
-                    "No ticket history yet." at the same time — an empty state
-                    claiming there is nothing to show when the truth is that
-                    nothing could be read.
-                  */}
-                  {!activeTicketHistoryError && (activeTicketHistory ?? []).length === 0 && (
-                    <div className="rounded border border-dashed border-[#CBD5E1] dark:border-[#334155] px-4 py-6 text-sm text-[#94A3B8] text-center">
-                      No ticket history yet.
-                    </div>
-                  )}
-
-                  {(activeTicketHistory ?? []).map(entry => {
-                    const isFieldChange = entry.eventType === 'field_changed'
-                    const eventLabel = entry.eventType === 'ticket_closed'
-                      ? 'Closed ticket'
-                      : entry.eventType === 'ticket_reopened'
-                        ? 'Re-opened ticket'
-                        : `Updated ${entry.fieldLabel ?? 'field'}`
-
-                    return (
-                      <div key={entry.id} className="rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] p-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="flex items-center gap-2 text-sm font-medium text-[#1E293B] dark:text-[#F1F5F9]">
-                              <ClipboardList size={14} className="text-[#2563EB]" />
-                              {eventLabel}
-                            </div>
-                            <p className="mt-1 text-xs text-[#64748B]">
-                              {entry.changedByName ?? 'Unknown user'} · {formatTicketHistoryTimestamp(entry.changedAt)}
-                            </p>
-                          </div>
-                          <span className="inline-flex items-center rounded-[2px] bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] px-2 py-0.5 text-[11px] font-medium text-[#64748B]">
-                            {entry.eventType === 'field_changed' ? 'Field change' : 'Status'}
-                          </span>
-                        </div>
-
-                        {isFieldChange ? (
-                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <div className="rounded border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] p-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8] mb-2">Previous</p>
-                              {renderTicketHistoryValue(entry.fieldType, entry.oldValue)}
-                            </div>
-                            <div className="rounded border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] p-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8] mb-2">New</p>
-                              {renderTicketHistoryValue(entry.fieldType, entry.newValue)}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="rounded border border-[#E2E8F0] dark:border-[#334155] bg-white dark:bg-[#1E293B] p-3 text-sm text-[#1E293B] dark:text-[#F1F5F9]">
-                            {renderTicketHistoryValue(entry.fieldType, entry.newValue)}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
             </div>
           </aside>
         </div>
