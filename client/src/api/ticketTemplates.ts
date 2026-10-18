@@ -63,6 +63,14 @@ export async function getTicketTemplateFields(templateId: number): Promise<Ticke
   return handleResponse<TicketField[]>(res)
 }
 
+export async function deleteTicketTemplate(templateId: number): Promise<void> {
+  const res = await fetch(`/api/ticket-templates/${templateId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  return handleResponse<void>(res)
+}
+
 export async function saveTicketTemplateFields(
   templateId: number,
   fields: Omit<TicketField, 'id'>[],

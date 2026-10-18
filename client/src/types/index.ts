@@ -308,6 +308,8 @@ export interface TicketTemplate {
   updatedAt: string
   fieldCount: number
   assignmentCount: number
+  /** Decided by the server: no assignment (archived included) and no responses. */
+  canDelete: boolean
 }
 
 export interface CollectionTicketTemplate {

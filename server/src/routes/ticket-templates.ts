@@ -45,6 +45,8 @@ interface DbTicketTemplate {
   updated_at: string
   field_count?: number
   assignment_count?: number
+  assignment_total_count?: number
+  response_count?: number
 }
 
 function canManageTicketTemplates(context: RequestUserContext): boolean {
@@ -103,7 +105,9 @@ async function fetchAccessibleTemplate(
       tt.*, 
       o.name AS organization_name,
       (SELECT COUNT(*) FROM ticket_fields tf WHERE tf.ticket_template_id = tt.id) AS field_count,
-      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = tt.id AND ctt.is_active = 1) AS assignment_count
+      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = tt.id AND ctt.is_active = 1) AS assignment_count,
+      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = tt.id) AS assignment_total_count,
+      (SELECT COUNT(*) FROM ticket_responses tr WHERE tr.ticket_template_id = tt.id) AS response_count
     FROM ticket_templates tt
     LEFT JOIN organizations o ON o.id = tt.organization_id
     ${whereClause}
@@ -124,6 +128,10 @@ function toApiTemplate(row: DbTicketTemplate) {
     updatedAt: row.updated_at,
     fieldCount: row.field_count ?? 0,
     assignmentCount: row.assignment_count ?? 0,
+    // The delete guard below counts *all* assignment rows, archived ones included,
+    // because an archived row still holds a foreign key. `canDelete` is derived from
+    // the same two counts so the trash icon and the 409 can never disagree.
+    canDelete: (row.assignment_total_count ?? 0) === 0 && (row.response_count ?? 0) === 0,
   }
 }
 
@@ -143,7 +151,9 @@ router.get('/', authenticateToken, async (req: Request, res: Response): Promise<
       tt.*, 
       o.name AS organization_name,
       (SELECT COUNT(*) FROM ticket_fields tf WHERE tf.ticket_template_id = tt.id) AS field_count,
-      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = tt.id AND ctt.is_active = 1) AS assignment_count
+      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = tt.id AND ctt.is_active = 1) AS assignment_count,
+      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = tt.id) AS assignment_total_count,
+      (SELECT COUNT(*) FROM ticket_responses tr WHERE tr.ticket_template_id = tt.id) AS response_count
     FROM ticket_templates tt
     LEFT JOIN organizations o ON o.id = tt.organization_id
     ${scope.clause}
@@ -409,6 +419,67 @@ router.put('/:id/fields', authenticateToken, async (req: Request, res: Response)
 
   try { await db.execute('PRAGMA foreign_keys = ON') } catch { /* SQL Server */ }
   res.json({ ok: true })
+})
+
+// DELETE /:id — remove a template that has never been assigned or answered.
+//
+// A template stops being disposable the moment it is attached to a collection or
+// answered: those rows are the record of what somebody actually filled in, so this
+// refuses rather than cascading them away. Its own field definitions are not usage —
+// they exist only to describe the template — so they are deleted with it.
+//
+// The SQL Server foreign keys here are all NO_ACTION (verified against sys.foreign_keys),
+// so there is no cascade to lean on: the child deletes below are what make the final
+// delete possible, and the order they run in is the whole mechanism.
+router.delete('/:id', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  const context = await loadRequestUserContext(req)
+  const id = Number(req.params.id)
+  if (!context || !canManageTicketTemplates(context) || !Number.isInteger(id)) {
+    res.status(400).json({ error: 'Invalid request' })
+    return
+  }
+
+  const existing = await fetchAccessibleTemplate(id, context)
+  if (!existing) {
+    res.status(404).json({ error: 'Ticket template not found' })
+    return
+  }
+
+  const db = await getDbAsync()
+  // Counted WITHOUT the `is_active = 1` filter the list uses for display: an archived
+  // assignment still holds a foreign key, so counting only active ones would report
+  // "unused" here and then fail at the database with an error that names no remedy.
+  const usage = await db.queryOne<{ assignment_count: number; response_count: number }>(`
+    SELECT
+      (SELECT COUNT(*) FROM collection_ticket_templates ctt WHERE ctt.ticket_template_id = ?) AS assignment_count,
+      (SELECT COUNT(*) FROM ticket_responses tr WHERE tr.ticket_template_id = ?) AS response_count
+  `, [id, id])
+
+  const assignmentCount = Number(usage?.assignment_count ?? 0)
+  const responseCount = Number(usage?.response_count ?? 0)
+  if (assignmentCount > 0 || responseCount > 0) {
+    res.status(409).json({
+      error: responseCount > 0
+        ? `This ticket already has ${responseCount} response${responseCount === 1 ? '' : 's'}, so it cannot be deleted.`
+        : 'This ticket is assigned to a collection, so it cannot be deleted.',
+    })
+    return
+  }
+
+  await db.transaction(async tx => {
+    await tx.execute(
+      'DELETE FROM ticket_table_columns WHERE ticket_field_id IN (SELECT id FROM ticket_fields WHERE ticket_template_id = ?)',
+      [id],
+    )
+    await tx.execute(
+      'DELETE FROM ticket_response_values WHERE ticket_field_id IN (SELECT id FROM ticket_fields WHERE ticket_template_id = ?)',
+      [id],
+    )
+    await tx.execute('DELETE FROM ticket_fields WHERE ticket_template_id = ?', [id])
+    await tx.execute('DELETE FROM ticket_templates WHERE id = ?', [id])
+  })
+
+  res.status(204).end()
 })
 
 export default router

@@ -6,6 +6,7 @@ import TicketPreviewModal from '../components/collections/TicketPreviewModal'
 import RichTextEditor from '../components/common/RichTextEditor'
 import {
   createTicketTemplate,
+  deleteTicketTemplate,
   getTicketTemplateFields,
   listTicketTemplates,
   saveTicketTemplateFields,
@@ -415,6 +416,7 @@ export default function TicketDesignerPage() {
   const [activePage, setActivePage] = useState(1)
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [savingFields, setSavingFields] = useState(false)
+  const [deletingTemplateId, setDeletingTemplateId] = useState<number | null>(null)
   const [templateError, setTemplateError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [ticketWizardField, setTicketWizardField] = useState<string | null>(null)
@@ -563,6 +565,36 @@ export default function TicketDesignerPage() {
     }
   }
 
+  // Offered only for a template the server reports as unused (`canDelete`), which means
+  // no assignment — archived ones included — and no responses. The server re-checks and
+  // answers 409, so a stale list cannot quietly destroy a ticket somebody answered.
+  async function handleDeleteTemplate(template: TicketTemplate) {
+    if (!template.canDelete) {
+      showToast('This ticket has been used, so it cannot be deleted.', 'error')
+      return
+    }
+
+    if (!window.confirm(`Delete ticket template "${template.title}"?`)) {
+      return
+    }
+
+    setDeletingTemplateId(template.id)
+    setTemplateError(null)
+    try {
+      await deleteTicketTemplate(template.id)
+      const remaining = templates.filter(item => item.id !== template.id)
+      setTemplates(remaining)
+      if (selectedTemplateId === template.id) {
+        setSelectedTemplateId(remaining[0]?.id ?? null)
+      }
+      showToast('Ticket template deleted', 'success')
+    } catch (err) {
+      setTemplateError((err as Error).message)
+    } finally {
+      setDeletingTemplateId(null)
+    }
+  }
+
   async function handleSaveTemplate() {
     if (!selectedTemplate) return
     setSavingTemplate(true)
@@ -702,22 +734,43 @@ export default function TicketDesignerPage() {
               {templates.length === 0 ? (
                 <p className="text-sm text-[#64748B]">No ticket templates yet.</p>
               ) : (
-                templates.map(template => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => setSelectedTemplateId(template.id)}
-                    className={[
-                      'w-full text-left rounded border px-3 py-2 transition-colors',
-                      selectedTemplateId === template.id
-                        ? 'border-[#2563EB] bg-blue-50 dark:bg-blue-900/20 text-[#2563EB]'
-                        : 'border-[#E2E8F0] dark:border-[#334155] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] text-[#1E293B] dark:text-[#F1F5F9]',
-                    ].join(' ')}
-                  >
-                    <div className="text-sm font-semibold">{template.title}</div>
-                    <div className="mt-1 text-xs text-[#64748B]">{template.fieldCount} fields · {template.assignmentCount} assignments</div>
-                  </button>
-                ))
+                templates.map(template => {
+                  const isSelected = selectedTemplateId === template.id
+                  return (
+                    <div
+                      key={template.id}
+                      className={[
+                        'flex items-start gap-1 rounded border px-3 py-2 transition-colors',
+                        isSelected
+                          ? 'border-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
+                          : 'border-[#E2E8F0] dark:border-[#334155] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
+                      ].join(' ')}
+                    >
+                      {/* Two sibling buttons, not a button-in-a-button: a nested <button>
+                          is invalid markup and the inner one loses its own click. */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTemplateId(template.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className={`text-sm font-semibold ${isSelected ? 'text-[#2563EB]' : 'text-[#1E293B] dark:text-[#F1F5F9]'}`}>{template.title}</div>
+                        <div className="mt-1 text-xs text-[#64748B]">{template.fieldCount} fields · {template.assignmentCount} assignments</div>
+                      </button>
+                      {template.canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteTemplate(template)}
+                          disabled={deletingTemplateId === template.id}
+                          title="Delete ticket"
+                          aria-label={`Delete ${template.title}`}
+                          className="shrink-0 rounded p-1.5 text-[#64748B] hover:bg-red-50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] disabled:opacity-40 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
               )}
             </div>
           </div>
