@@ -2385,7 +2385,10 @@ export default function RecordsPage() {
               {response.values.length === 0 ? (
                 <p className="text-sm text-[#64748B]">No field values were submitted.</p>
               ) : (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                // Plain label/value rows: the label column is sized once for the whole
+                // list so every value starts on the same left edge, and there is no box
+                // per field — one card is already wrapped around the whole submission.
+                <dl className="divide-y divide-[#E2E8F0] dark:divide-[#334155]">
                   {response.values
                     .filter(answer => {
                       const f = resolveFieldForAnswer(answer)
@@ -2396,16 +2399,18 @@ export default function RecordsPage() {
                     return (
                       <div
                         key={`${response.id}-${answer.fieldId}`}
-                        className="rounded border border-[#E2E8F0] dark:border-[#334155] p-4 bg-[#F8FAFC] dark:bg-[#0F172A]"
+                        className="grid grid-cols-1 gap-x-4 gap-y-0.5 py-2 sm:grid-cols-[minmax(9rem,18rem)_1fr] sm:items-baseline"
                       >
-                        <p className="text-xs font-medium uppercase tracking-wide text-[#64748B] mb-2">
-                          {field?.label || answer.fieldLabel || `Field #${answer.fieldId}`}
-                        </p>
-                        {renderResponseValue(field, answer.value)}
+                        <dt className="text-sm font-medium text-[#64748B] dark:text-[#94A3B8] break-words">
+                          {field?.label || answer.fieldLabel || `Field #${answer.fieldId}`}:
+                        </dt>
+                        <dd className="min-w-0">
+                          {renderResponseValue(field, answer.value)}
+                        </dd>
                       </div>
                     )
                   })}
-                </div>
+                </dl>
               )}
 
               {staffFields.length > 0 && (
@@ -2446,49 +2451,52 @@ export default function RecordsPage() {
                   </div>
 
                   {expandedStaffResponseId !== response.id ? (
-                    // Read-only preview
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    // Read-only preview — same label/value rows as the submission fields,
+                    // with the amber label colour as the only thing marking them as staff.
+                    <dl className="space-y-1.5">
                       {staffFields.map(field => {
                         if (field.id === undefined) return null
                         const answer = findAnswerForField(response.values, field)
                         return (
                           <div
                             key={`staff-ro-${response.id}-${field.id}`}
-                            className="rounded border border-amber-200 dark:border-amber-800 p-3 bg-amber-50/40 dark:bg-amber-900/10"
+                            className="grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-[minmax(9rem,18rem)_1fr] sm:items-baseline"
                           >
-                            <p className="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-500 mb-1.5">
-                              {field.label || `Field #${field.id}`}
-                            </p>
-                            {answer?.value
-                              ? renderResponseValue(field, answer.value)
-                              : <p className="text-xs text-[#94A3B8] italic">Not set</p>}
-                            {answer?.staffUpdatedByName && (
-                              <p className="text-xs text-[#94A3B8] mt-1.5">
-                                Updated by {answer.staffUpdatedByName}
-                                {answer.staffUpdatedAt && (
-                                  <> · {new Date(answer.staffUpdatedAt).toLocaleString()}</>
-                                )}
-                              </p>
-                            )}
+                            <dt className="text-sm font-medium text-amber-700 dark:text-amber-400 break-words">
+                              {field.label || `Field #${field.id}`}:
+                            </dt>
+                            <dd className="min-w-0">
+                              {answer?.value
+                                ? renderResponseValue(field, answer.value)
+                                : <p className="text-sm text-[#94A3B8] italic">Not set</p>}
+                              {answer?.staffUpdatedByName && (
+                                <p className="text-xs text-[#94A3B8]">
+                                  Updated by {answer.staffUpdatedByName}
+                                  {answer.staffUpdatedAt && (
+                                    <> · {new Date(answer.staffUpdatedAt).toLocaleString()}</>
+                                  )}
+                                </p>
+                              )}
+                            </dd>
                           </div>
                         )
                       })}
-                    </div>
+                    </dl>
                   ) : (
-                    // Editable panel
+                    // Editable panel — the same rows, with the editor in the value slot.
                     <div className="space-y-3">
-                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      <div className="space-y-2">
                         {staffFields.map(field => {
                           if (field.id === undefined) return null
                           const currentValue = (staffEdits[response.id] ?? {})[field.id] ?? ''
                           return (
                             <div
                               key={`staff-edit-${response.id}-${field.id}`}
-                              className="rounded border border-amber-200 dark:border-amber-800 p-3 bg-amber-50/40 dark:bg-amber-900/10"
+                              className="grid grid-cols-1 items-start gap-x-4 gap-y-1 sm:grid-cols-[minmax(9rem,18rem)_1fr]"
                             >
-                              <p className="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-500 mb-1.5">
-                                {field.label || `Field #${field.id}`}
-                              </p>
+                              <span className="text-sm font-medium text-amber-700 dark:text-amber-400 break-words sm:pt-1.5">
+                                {field.label || `Field #${field.id}`}:
+                              </span>
                               <StaffFieldEditor
                                 field={field}
                                 value={currentValue}
