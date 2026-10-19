@@ -30,7 +30,7 @@ import type {
 import { useAuth } from '../contexts/AuthContext'
 
 type RecordsView = 'summary' | 'individual' | 'tickets' | 'ticket-export'
-type SubmissionTab = 'general' | 'comments'
+type SubmissionTab = 'general' | 'comments' | 'ticket'
 
 interface SummaryDatum {
   label: string
@@ -68,7 +68,12 @@ function ticketKey(responseId: number, templateId: number): string {
   return `${responseId}:${templateId}`
 }
 
-function getTicketButtonClasses({
+/**
+ * Underline tab styling for ticket templates in the submission tab bar. Ticket state
+ * (no ticket yet / in progress / closed) is carried by the text colour and the lock
+ * icon, because a tab's bottom border is already used for the active marker.
+ */
+function getTicketTabClasses({
   isActive,
   hasResponse,
   isClosed,
@@ -77,21 +82,16 @@ function getTicketButtonClasses({
   hasResponse: boolean
   isClosed: boolean
 }): string {
-  if (isClosed) {
-    return isActive
-      ? 'border-[#16A34A] bg-[#DCFCE7] text-[#166534] dark:border-[#4ADE80] dark:bg-[#14532D] dark:text-[#BBF7D0]'
-      : 'border-[#86EFAC] bg-[#F0FDF4] text-[#166534] hover:bg-[#DCFCE7] dark:border-[#166534] dark:bg-[#052E16] dark:text-[#86EFAC] dark:hover:bg-[#14532D]'
+  if (isActive) {
+    return isClosed
+      ? 'border-[#16A34A] text-[#166534] dark:text-[#4ADE80]'
+      : 'border-[#2563EB] text-[#2563EB]'
   }
 
-  if (hasResponse) {
-    return isActive
-      ? 'border-[#2563EB] bg-[#DBEAFE] text-[#1D4ED8] dark:border-[#60A5FA] dark:bg-[#1E3A8A] dark:text-[#BFDBFE]'
-      : 'border-[#93C5FD] bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] dark:border-[#1D4ED8] dark:bg-[#172554] dark:text-[#93C5FD] dark:hover:bg-[#1E3A8A]'
-  }
-
-  return isActive
-    ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
-    : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]'
+  const idle = 'border-transparent hover:text-[#1E293B] dark:hover:text-[#F1F5F9]'
+  if (isClosed) return `${idle} text-[#166534] dark:text-[#86EFAC]`
+  if (hasResponse) return `${idle} text-[#1D4ED8] dark:text-[#93C5FD]`
+  return `${idle} text-[#64748B]`
 }
 
 function formatSubmittedAt(value: string): string {
@@ -1384,6 +1384,9 @@ export default function RecordsPage() {
 
   function openTicketDrawer(responseId: number, templateId: number) {
     setTicketDrawer({ responseId, templateId })
+    setSubmissionTab(prev => ({ ...prev, [responseId]: 'ticket' }))
+    clearInterval(commentPollRef.current[responseId])
+    delete commentPollRef.current[responseId]
     loadResponseTickets(responseId)
     loadTicketFields(templateId)
     loadTicketRecord(responseId, templateId)
@@ -1455,6 +1458,7 @@ export default function RecordsPage() {
 
   function openCommentsTab(responseId: number) {
     setSubmissionTab(prev => ({ ...prev, [responseId]: 'comments' }))
+    setTicketDrawer(prev => (prev?.responseId === responseId ? null : prev))
     loadComments(responseId)
     // Start 60-second poll if not already running
     if (!commentPollRef.current[responseId]) {
@@ -2232,7 +2236,12 @@ export default function RecordsPage() {
       {!loadingResponses && selectedCollection && responses.length > 0 && view === 'individual' && individualLayout === 'card' && (
         <div className="space-y-4">
           {responses.map(response => {
-            const activeTab = submissionTab[response.id] === 'comments' ? 'comments' : 'general'
+            const activeTab: SubmissionTab =
+              submissionTab[response.id] === 'comments'
+                ? 'comments'
+                : submissionTab[response.id] === 'ticket' && ticketDrawer?.responseId === response.id
+                  ? 'ticket'
+                  : 'general'
             const comments = commentsByResponse[response.id] ?? []
             const workflow = response.workflow ?? null
             const activeWorkflowStage = getActiveWorkflowStage(workflow)
@@ -2347,37 +2356,177 @@ export default function RecordsPage() {
                   <MessageSquare size={13} />
                   Comments{comments.length > 0 && <span className="ml-0.5 text-xs bg-[#2563EB] text-white rounded-full px-1.5 py-0.5 leading-none">{comments.length}</span>}
                 </button>
+                {collectionTicketTemplates.map(template => {
+                  const responseTickets = responseTicketsByResponse[response.id]
+                  const summary = responseTickets !== 'loading'
+                    ? (responseTickets ?? []).find(item => item.templateId === template.id)
+                    : undefined
+                  const isActive = activeTab === 'ticket' && ticketDrawer?.responseId === response.id && ticketDrawer?.templateId === template.id
+                  const hasResponse = Boolean(summary?.response)
+                  const isClosed = Boolean(summary?.response?.finalized)
+
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => openTicketDrawer(response.id, template.id)}
+                      className={[
+                        'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-b-2 transition-colors -mb-px',
+                        getTicketTabClasses({ isActive, hasResponse, isClosed }),
+                      ].join(' ')}
+                    >
+                      <Clipboard size={13} />
+                      {template.title}
+                      {summary?.response?.finalized && <Lock size={11} className="text-green-600" />}
+                    </button>
+                  )
+                })}
               </div>
+              {/* Ticket tab — rendered inline so the submission card keeps its place and nothing scrolls behind an overlay */}
+              {activeTab === 'ticket' && activeTicketResponse && (
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-[#94A3B8]">
+                        <Clipboard size={13} />
+                        {collectionTicketTemplates.find(template => template.id === ticketDrawer?.templateId)?.title ?? 'Ticket'}
+                      </div>
+                      <p className="mt-1 text-xs text-[#64748B]">
+                        {activeTicketResponse?.respondentName || 'Anonymous'}
+                        {activeTicketResponse?.respondentEmail ? ` · ${activeTicketResponse.respondentEmail}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setTicketDrawer(null); setShowFinalizeConfirm(null) }}
+                      className="inline-flex items-center gap-1 text-xs text-[#64748B] hover:text-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
+                    >
+                      <X size={13} />
+                      Close
+                    </button>
+                  </div>
 
-              {collectionTicketTemplates.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {collectionTicketTemplates.map(template => {
-                    const responseTickets = responseTicketsByResponse[response.id]
-                    const summary = responseTickets !== 'loading'
-                      ? (responseTickets ?? []).find(item => item.templateId === template.id)
-                      : undefined
-                    const isActive = ticketDrawer?.responseId === response.id && ticketDrawer?.templateId === template.id
-                    const hasResponse = Boolean(summary?.response)
-                    const isClosed = Boolean(summary?.response?.finalized)
+            {activeTicketData === 'loading' && (
+              <p className="text-sm text-[#94A3B8]">Loading ticket…</p>
+            )}
 
+            {activeTicketFinalized && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400 font-medium">
+                  <Lock size={14} />
+                  Ticket closed
+                  {activeTicketFinalized.finalizedAt && (
+                    <span className="text-xs text-[#94A3B8] font-normal ml-1">
+                      {formatTicketHistoryTimestamp(activeTicketFinalized.finalizedAt)}
+                      {activeTicketFinalized.finalizedByName ? ` by ${activeTicketFinalized.finalizedByName}` : ''}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => activeTicketTemplateId !== null ? void handleFinalizeTicket(activeTicketResponse.id, activeTicketTemplateId) : undefined}
+                    disabled={activeTicketFinalizing}
+                    className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] dark:text-[#94A3B8] text-xs font-medium hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] disabled:opacity-50 transition-colors"
+                  >
+                    <LockOpen size={12} />
+                    {activeTicketFinalizing ? 'Re-opening…' : 'Re-open'}
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {activeTicketFields.map(field => {
+                    if (field.id === undefined) return null
+                    const val = activeTicketFinalized.values.find(v => v.fieldId === field.id)?.value ?? ''
                     return (
-                      <button
-                        key={template.id}
-                        type="button"
-                        onClick={() => openTicketDrawer(response.id, template.id)}
-                        className={[
-                          'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[2px] text-xs font-medium border transition-colors',
-                          getTicketButtonClasses({ isActive, hasResponse, isClosed }),
-                        ].join(' ')}
-                      >
-                        <Clipboard size={12} />
-                        {template.title}
-                        {summary?.response?.finalized && <Lock size={10} className="text-green-600" />}
-                      </button>
+                      <div key={field.id}>
+                        <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
+                          {field.label}
+                          {field.required && <span className="text-red-500 ml-0.5">*</span>}
+                        </label>
+                        <div className="rounded border border-[#E2E8F0] dark:border-[#334155] px-3 py-2.5 bg-[#F8FAFC] dark:bg-[#0F172A] min-h-[42px]">
+                          {renderTicketHistoryValue(field.type, val || null, field)}
+                        </div>
+                      </div>
                     )
                   })}
                 </div>
+              </div>
+            )}
+
+            {!activeTicketFinalized && activeTicketData !== 'loading' && (
+              <div className="space-y-4">
+                {activeTicketFields.map(field => {
+                  if (field.id === undefined) return null
+                  return (
+                    <div key={field.id}>
+                      <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
+                        {field.label}
+                        {field.required && <span className="text-red-500 ml-0.5">*</span>}
+                      </label>
+                      <TicketFieldEditor
+                        field={field}
+                        value={activeTicketEdits[field.id] ?? (activeTicketDraft ? (activeTicketDraft.values.find(v => v.fieldId === field.id)?.value ?? '') : '')}
+                        onChange={v => setTicketEdits(prev => ({
+                          ...prev,
+                          [activeTicketKey ?? ticketKey(activeTicketResponse.id, activeTicketTemplateId ?? 0)]: {
+                            ...(prev[activeTicketKey ?? ticketKey(activeTicketResponse.id, activeTicketTemplateId ?? 0)] ?? {}),
+                            [field.id as number]: v,
+                          },
+                        }))}
+                      />
+                    </div>
+                  )
+                })}
+                {activeTicketSave === 'error' && (
+                  <p className="text-xs text-red-500">Failed to save. Please try again.</p>
+                )}
+                <div className="flex items-center gap-3 pt-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => activeTicketTemplateId !== null ? void handleSaveTicketDraft(activeTicketResponse.id, activeTicketTemplateId) : undefined}
+                    disabled={activeTicketSave === 'saving'}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#2563EB] text-white text-sm font-medium hover:bg-[#1D4ED8] disabled:opacity-50 transition-colors"
+                  >
+                    <Save size={13} />
+                    {activeTicketSave === 'saving' ? 'Saving…' : activeTicketSave === 'saved' ? 'Saved!' : 'Save Draft'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowFinalizeConfirm(activeTicketKey)}
+                    disabled={activeTicketFinalizing}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-green-600 text-green-700 dark:text-green-400 text-sm font-medium hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-50 transition-colors"
+                  >
+                    <Lock size={13} />
+                    Close
+                  </button>
+                </div>
+                {showFinalizeConfirm === activeTicketKey && (
+                  <div className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-3">
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Close this ticket?</p>
+                    <p className="text-xs text-amber-700 dark:text-amber-400">Closing marks the ticket as done. It can be re-opened at any time.</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => activeTicketTemplateId !== null ? void handleFinalizeTicket(activeTicketResponse.id, activeTicketTemplateId) : undefined}
+                        disabled={activeTicketFinalizing}
+                        className="px-3 py-1.5 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+                      >
+                        {activeTicketFinalizing ? 'Closing…' : 'Yes, Close'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowFinalizeConfirm(null)}
+                        className="px-3 py-1.5 rounded border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-sm font-medium hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+                </div>
               )}
+
 
               {/* General tab */}
               {activeTab === 'general' && (
@@ -2609,180 +2758,6 @@ export default function RecordsPage() {
         </div>
       )}
 
-      {ticketDrawer && activeTicketResponse && (
-        <div className="fixed inset-0 z-50">
-          <button
-            type="button"
-            aria-label="Close ticket panel"
-            onClick={() => { setTicketDrawer(null); setShowFinalizeConfirm(null) }}
-            className="absolute inset-0 bg-slate-950/35"
-          />
-          <aside className="absolute right-0 top-0 h-full w-full max-w-2xl bg-white dark:bg-[#0F172A] border-l border-[#E2E8F0] dark:border-[#334155] shadow-2xl flex flex-col">
-            <div className="px-5 py-4 border-b border-[#E2E8F0] dark:border-[#334155] flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-[#94A3B8]">
-                  <Clipboard size={13} />
-                  {collectionTicketTemplates.find(template => template.id === activeTicketTemplateId)?.title ?? 'Ticket'}
-                </div>
-                <h2 className="mt-2 text-lg font-semibold text-[#1E293B] dark:text-[#F1F5F9]">Submission #{activeTicketResponse.id}</h2>
-                <p className="mt-1 text-sm text-[#64748B]">
-                  {activeTicketResponse.respondentName || 'Anonymous'}
-                  {activeTicketResponse.respondentEmail ? ` · ${activeTicketResponse.respondentEmail}` : ''}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setTicketDrawer(null); setShowFinalizeConfirm(null) }}
-                className="w-9 h-9 rounded-md flex items-center justify-center text-[#64748B] hover:text-[#1E293B] hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] dark:hover:text-[#F1F5F9] transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="px-5 py-3 border-b border-[#E2E8F0] dark:border-[#334155] flex flex-wrap gap-2">
-              {collectionTicketTemplates.map(template => (
-                <button
-                  key={template.id}
-                  type="button"
-                  onClick={() => openTicketDrawer(activeTicketResponse.id, template.id)}
-                  className={[
-                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[2px] text-xs font-medium border transition-colors',
-                    activeTicketTemplateId === template.id
-                      ? 'border-[#2563EB] text-[#2563EB] bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-[#CBD5E1] dark:border-[#334155] text-[#64748B] hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A]',
-                  ].join(' ')}
-                >
-                  <Clipboard size={12} />
-                  {template.title}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-5 py-5">
-              {activeTicketData === 'loading' && (
-                <p className="text-sm text-[#94A3B8]">Loading ticket…</p>
-              )}
-
-              {activeTicketFinalized && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400 font-medium">
-                    <Lock size={14} />
-                    Ticket closed
-                    {activeTicketFinalized.finalizedAt && (
-                      <span className="text-xs text-[#94A3B8] font-normal ml-1">
-                        {formatTicketHistoryTimestamp(activeTicketFinalized.finalizedAt)}
-                        {activeTicketFinalized.finalizedByName ? ` by ${activeTicketFinalized.finalizedByName}` : ''}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => activeTicketTemplateId !== null ? void handleFinalizeTicket(activeTicketResponse.id, activeTicketTemplateId) : undefined}
-                      disabled={activeTicketFinalizing}
-                      className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] dark:text-[#94A3B8] text-xs font-medium hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] disabled:opacity-50 transition-colors"
-                    >
-                      <LockOpen size={12} />
-                      {activeTicketFinalizing ? 'Re-opening…' : 'Re-open'}
-                    </button>
-                  </div>
-                  <div className="space-y-4">
-                    {activeTicketFields.map(field => {
-                      if (field.id === undefined) return null
-                      const val = activeTicketFinalized.values.find(v => v.fieldId === field.id)?.value ?? ''
-                      return (
-                        <div key={field.id}>
-                          <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
-                            {field.label}
-                            {field.required && <span className="text-red-500 ml-0.5">*</span>}
-                          </label>
-                          <div className="rounded border border-[#E2E8F0] dark:border-[#334155] px-3 py-2.5 bg-[#F8FAFC] dark:bg-[#0F172A] min-h-[42px]">
-                            {renderTicketHistoryValue(field.type, val || null, field)}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {!activeTicketFinalized && activeTicketData !== 'loading' && (
-                <div className="space-y-4">
-                  {activeTicketFields.map(field => {
-                    if (field.id === undefined) return null
-                    return (
-                      <div key={field.id}>
-                        <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
-                          {field.label}
-                          {field.required && <span className="text-red-500 ml-0.5">*</span>}
-                        </label>
-                        <TicketFieldEditor
-                          field={field}
-                          value={activeTicketEdits[field.id] ?? (activeTicketDraft ? (activeTicketDraft.values.find(v => v.fieldId === field.id)?.value ?? '') : '')}
-                          onChange={v => setTicketEdits(prev => ({
-                            ...prev,
-                            [activeTicketKey ?? ticketKey(activeTicketResponse.id, activeTicketTemplateId ?? 0)]: {
-                              ...(prev[activeTicketKey ?? ticketKey(activeTicketResponse.id, activeTicketTemplateId ?? 0)] ?? {}),
-                              [field.id as number]: v,
-                            },
-                          }))}
-                        />
-                      </div>
-                    )
-                  })}
-                  {activeTicketSave === 'error' && (
-                    <p className="text-xs text-red-500">Failed to save. Please try again.</p>
-                  )}
-                  <div className="flex items-center gap-3 pt-1 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => activeTicketTemplateId !== null ? void handleSaveTicketDraft(activeTicketResponse.id, activeTicketTemplateId) : undefined}
-                      disabled={activeTicketSave === 'saving'}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#2563EB] text-white text-sm font-medium hover:bg-[#1D4ED8] disabled:opacity-50 transition-colors"
-                    >
-                      <Save size={13} />
-                      {activeTicketSave === 'saving' ? 'Saving…' : activeTicketSave === 'saved' ? 'Saved!' : 'Save Draft'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowFinalizeConfirm(activeTicketKey)}
-                      disabled={activeTicketFinalizing}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-green-600 text-green-700 dark:text-green-400 text-sm font-medium hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-50 transition-colors"
-                    >
-                      <Lock size={13} />
-                      Close
-                    </button>
-                  </div>
-                  {showFinalizeConfirm === activeTicketKey && (
-                    <div className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-3">
-                      <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Close this ticket?</p>
-                      <p className="text-xs text-amber-700 dark:text-amber-400">Closing marks the ticket as done. It can be re-opened at any time.</p>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => activeTicketTemplateId !== null ? void handleFinalizeTicket(activeTicketResponse.id, activeTicketTemplateId) : undefined}
-                          disabled={activeTicketFinalizing}
-                          className="px-3 py-1.5 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-                        >
-                          {activeTicketFinalizing ? 'Closing…' : 'Yes, Close'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowFinalizeConfirm(null)}
-                          className="px-3 py-1.5 rounded border border-[#CBD5E1] dark:border-[#334155] text-[#64748B] text-sm font-medium hover:bg-[#F8FAFC] dark:hover:bg-[#0F172A] transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-            </div>
-          </aside>
-        </div>
-      )}
-
-      {/* ── Tickets view ─────────────────────────────────────────────────── */}
       {view === 'tickets' && selectedCollection && (
         <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">
           {(() => {

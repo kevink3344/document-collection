@@ -32,6 +32,7 @@ interface NavItem {
   to: string
   roles?: UserRole[]
   labelKey?: MenuLabelKey
+  badge?: string
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -41,7 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { icon: BarChart3,       label: 'Reports',         to: '/reports',         labelKey: 'reports'     },
   { icon: Sparkles,        label: 'AI Summary',      to: '/ai-summary',      roles: ['administrator'] },
   { icon: Settings,        label: 'Settings',        to: '/settings',        labelKey: 'settings',   roles: ['super_admin', 'administrator'] },
-  { icon: ClipboardList,   label: 'Tickets',         to: '/ticket-designer', labelKey: 'tickets'     },
+  { icon: ClipboardList,   label: 'Tickets',         to: '/ticket-designer', labelKey: 'tickets',    badge: 'beta' },
 ]
 
 const USER_NAV_ITEMS: NavItem[] = [
@@ -115,6 +116,14 @@ export default function SideNav({
     return item.label
   }
 
+  function BetaBadge({ label }: { label: string }) {
+    return (
+      <span className="shrink-0 rounded-[2px] border border-[#2563EB]/40 bg-[#EFF6FF] px-1 py-px text-[9px] font-semibold uppercase tracking-wide leading-none text-[#2563EB] dark:border-[#3B82F6]/40 dark:bg-[#1E3A8A]/40 dark:text-[#93C5FD]">
+        {label}
+      </span>
+    )
+  }
+
   const baseNavItems =
     user?.role === 'user'
       ? USER_NAV_ITEMS
@@ -151,7 +160,10 @@ export default function SideNav({
               }
             >
               <Icon size={18} className="shrink-0" />
-              <span className="hidden lg:block">{label}</span>
+              <span className="hidden lg:flex items-center gap-1.5">
+                {label}
+                {item.badge && <BetaBadge label={item.badge} />}
+              </span>
             </NavLink>
           )
         })}
@@ -198,7 +210,10 @@ export default function SideNav({
                     }
                   >
                     <Icon size={18} className="shrink-0" />
-                    <span>{label}</span>
+                    <span className="flex items-center gap-1.5">
+                      {label}
+                      {item.badge && <BetaBadge label={item.badge} />}
+                    </span>
                   </NavLink>
                 )
               })}
@@ -227,7 +242,10 @@ export default function SideNav({
               }
             >
               <Icon size={17} />
-              <span>{label}</span>
+              <span className="flex items-center gap-1">
+                {label}
+                {item.badge && <BetaBadge label={item.badge} />}
+              </span>
             </NavLink>
           )
         })}
