@@ -867,6 +867,15 @@ function CustomTableInput({
 
 // ── Main fill page ────────────────────────────────────────────
 
+/**
+ * The tab a respondent should land on. Instructions are only the default when the
+ * collection actually has some — a collection created with "Questions only" has none,
+ * so it must open straight on Questions rather than on an empty Instructions tab.
+ */
+function initialFillTab(col: { instructions?: string | null; instructionsDocUrl?: string | null } | null | undefined): 'instructions' | 'questions' {
+  return col?.instructions?.trim() || col?.instructionsDocUrl ? 'instructions' : 'questions'
+}
+
 export default function CollectionFillPage() {
   const { slug } = useParams<{ slug: string }>()
   const [searchParams] = useSearchParams()
@@ -919,7 +928,7 @@ export default function CollectionFillPage() {
         setSubmitError(null)
         setIsReviewing(false)
         setFormStartedAt(Date.now())
-        setActiveTab(col.instructions?.trim() || col.instructionsDocUrl ? 'instructions' : 'questions')
+        setActiveTab(initialFillTab(col))
         // Initialise default values
         const defaults: Record<number, string> = {}
         col.fields.forEach(f => {
@@ -1022,6 +1031,7 @@ export default function CollectionFillPage() {
   }, [visibleFields])
 
   const totalPages = pageNumbers.length
+  const hasInstructions = Boolean(collection?.instructions?.trim() || collection?.instructionsDocUrl)
   const currentPageNumber = pageNumbers[Math.min(currentPageIdx, totalPages - 1)]
   const fieldsOnCurrentPage = visibleFields.filter(
     f => normalizePage(f.page) === currentPageNumber
@@ -1099,7 +1109,7 @@ export default function CollectionFillPage() {
     }
     setIsReviewing(false)
     setFormStartedAt(Date.now())
-    setActiveTab(collection?.instructions?.trim() || collection?.instructionsDocUrl ? 'instructions' : 'questions')
+    setActiveTab(initialFillTab(collection))
     setLastSavedAt(null)
     setPendingDraft(null)
     setShowResumeBanner(false)
@@ -1338,7 +1348,7 @@ export default function CollectionFillPage() {
     setCurrentPageIdx(0)
     setIsReviewing(false)
     setFormStartedAt(Date.now())
-    setActiveTab(collection?.instructions?.trim() || collection?.instructionsDocUrl ? 'instructions' : 'questions')
+    setActiveTab(initialFillTab(collection))
     setSubmitted(false)
     setSubmitError(null)
     setPageError(null)
@@ -1697,6 +1707,10 @@ export default function CollectionFillPage() {
         </div>
 
         <form onSubmit={e => e.preventDefault()}>
+          {/* The Instructions tab only makes sense when there is something to show. A
+              collection created with "Questions only" has no instructions, so the tab
+              bar is dropped entirely and respondents go straight to the questions. */}
+          {hasInstructions && (
           <div className="border-b border-[#E2E8F0] dark:border-[#334155] mb-6">
             <div className="flex items-center gap-6">
               <button
@@ -1723,8 +1737,9 @@ export default function CollectionFillPage() {
               </button>
             </div>
           </div>
+          )}
 
-          {activeTab === 'instructions' ? (
+          {activeTab === 'instructions' && hasInstructions ? (
             <div className="space-y-4">
               {collection.instructions ? (
                 <div
