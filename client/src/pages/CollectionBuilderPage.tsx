@@ -241,6 +241,9 @@ export default function CollectionBuilderPage() {
   const isEdit = !!id
   const templateId = !isEdit ? searchParams.get('templateId') : null
   const collectionType = searchParams.get('type') === 'template' ? 'template' : 'standard'
+  // "Questions only" starting point: no Instructions card while creating. It is only a
+  // starting point, so the card comes back when the collection is edited later.
+  const questionsOnly = !isEdit && searchParams.get('instructions') === 'none'
   const { showToast } = useToast()
   const { user } = useAuth()
 
@@ -2645,9 +2648,12 @@ export default function CollectionBuilderPage() {
           </div>
         )}
 
-        {/* Two-column: Instructions + Field Designer (General tab only) */}
+        {/* Two-column: Instructions + Field Designer (General tab only). The "Questions
+            only" starting point drops the Instructions column so the designer gets the
+            full width. */}
         {detailsTab === 'general' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className={`grid grid-cols-1 gap-5 ${questionsOnly ? '' : 'lg:grid-cols-2'}`}>
+          {!questionsOnly && (
           <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-4">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
               Instructions
@@ -2686,6 +2692,7 @@ export default function CollectionBuilderPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* Field Designer */}
           <div className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg p-5 space-y-4">
