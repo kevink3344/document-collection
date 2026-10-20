@@ -2285,7 +2285,12 @@ router.put('/:id', authenticateToken, validate(collectionIdParamSchema, 'params'
   const requestedStatus = resolveRequestedStatus(body)
 
   try {
-    const responseCountRow = await db.queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ? AND collection_version_id = ?', [id, activeVersionId])
+    // Count responses across every version, not just the active one. Field rows are
+    // re-created per version but keep their field_key, and collection_response_values
+    // references the specific field row it was submitted against. So deleting the
+    // active version's fields fails whenever ANY version has responses — the
+    // active-version count alone is not a safe gate for the delete path below.
+    const responseCountRow = await db.queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM collection_responses WHERE collection_id = ?', [id])
     const responseCount = responseCountRow?.n ?? 0
 
     const [existingFields, existingColsByField] = await fetchFields(id, activeVersionId)
