@@ -711,6 +711,66 @@ export function createSchema(db: AppDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_signup_registrations_slot
       ON signup_registrations(slot_id);
   `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      key             TEXT    NOT NULL CHECK(key IN ('webhook-1', 'webhook-2')),
+      name            TEXT,
+      url             TEXT    NOT NULL,
+      secret          TEXT,
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      timeout_ms      INTEGER NOT NULL DEFAULT 5000,
+      response_shape  TEXT    NOT NULL DEFAULT 'json_boolean'
+                              CHECK(response_shape IN ('json_boolean', 'json_string', 'plain_text')),
+      response_key    TEXT    NOT NULL DEFAULT 'valid',
+      created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(organization_id, key)
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_webhooks_org ON webhooks(organization_id, key);
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      webhook_id    INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+      response_id   INTEGER REFERENCES collection_responses(id) ON DELETE SET NULL,
+      direction     TEXT    NOT NULL CHECK(direction IN ('validate', 'submit')),
+      status        TEXT    NOT NULL CHECK(status IN ('success', 'failed')),
+      http_status   INTEGER,
+      duration_ms   INTEGER,
+      error         TEXT,
+      response_body TEXT,
+      created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook
+      ON webhook_deliveries(webhook_id, created_at);
+  `)
+
+  // The field -> webhook binding lives here rather than on collection_fields so
+  // that adding the Student ID field type needs no table rebuild.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS webhook_field_bindings (
+      webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+      field_id   INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (webhook_id, field_id)
+    );
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_webhook_field_bindings_field
+      ON webhook_field_bindings(field_id);
+  `)
 }
 
 export function seedData(db: AppDatabase): void {

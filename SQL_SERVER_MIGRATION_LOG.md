@@ -209,3 +209,71 @@ Uses `SET IDENTITY_INSERT ON` + `DBCC CHECKIDENT RESEED` pattern. Identity resee
 | Server stability | ✅ Stable |
 | DB_MODE=sqlserver (Azure) | ✅ Active |
 | DB_MODE=turso (local dev) | ✅ Active |
+
+---
+
+## Manual DDL: Webhooks feature (2026-10-21)
+
+The production app login is read/write but **cannot CREATE TABLE**, so the webhooks tables
+must be created manually once by an account with DDL rights.
+
+**Script:** `server/scripts/webhooks-sqlserver.sql`
+
+### Steps for production
+
+1. Open the script: `server/scripts/webhooks-sqlserver.sql`
+2. Connect to the production database with a DDL-capable account:
+   - Azure Portal → your SQL database → **Query editor (preview)**
+   - or SSMS / Azure Data Studio / `sqlcmd -i scripts/webhooks-sqlserver.sql`
+3. Run the whole script. It is idempotent — every statement is guarded with
+   `IF OBJECT_ID(...) IS NULL`, so re-running is harmless.
+4. Verify all three tables exist (the script's final batch does not check, so confirm manually):
+
+   ```sql
+   SELECT name FROM sys.tables
+    WHERE name IN ('webhooks', 'webhook_deliveries', 'webhook_field_bindings');
+   -- expect 3 rows
+   ```
+
+5. Deploy the application code and restart the app.
+
+No code change is required — the app detects the tables on startup.
+
+### What the app does on startup
+
+`applySqlServerBootstrapScripts()` (called from `applySqlServerMigrations()`) checks whether
+all three tables already exist:
+
+- **Tables present** → logs `[db] Bootstrap DDL: webhooks-sqlserver.sql already applied, skipping`
+  and does nothing. This is the normal state after the manual step, and it means no
+  permission warning appears on every boot.
+- **Tables missing** → attempts to run the script. With a read/write-only login this fails
+  and logs a single line:
+  `[db] Bootstrap DDL skipped for webhooks-sqlserver.sql: the database login lacks CREATE TABLE permission. …`
+  Startup continues normally.
+
+Until the tables exist, `/api/webhooks` returns **503** with `code: "WEBHOOKS_TABLES_MISSING"`
+and the Settings panel shows that message instead of a generic 500.
+
+**To skip the startup attempt entirely:** set `SQLSERVER_BOOTSTRAP_DDL=false` in App Service
+application settings.
+
+**To apply from a workstation instead of the portal:**
+`cd server && node scripts/apply-webhooks-sqlserver.mjs` — reads `server/.env`.
+
+### Schema notes
+
+- All ID/FK columns are **`BIGINT`** to match the existing `organizations.id`, `users.id`,
+  `collection_fields.id`, and `collection_responses.id` (which are `bigint`, not `int`).
+  Using `INT` fails with *"Could not create constraint or index"*.
+- **No change to `collection_fields`.** The Student ID field type is stored as
+  `type = 'short_text'` + `display_style = 'student_id'`, so the `type` CHECK constraint is
+  untouched and no table rebuild is required.
+- Timestamps are `NVARCHAR(32)` populated by `GETDATE()`; the adapter rewrites
+  `datetime('now')` → `GETUTCDATE()` and `INSERT OR IGNORE` → `IF NOT EXISTS`.
+
+| Table | Purpose |
+|-------|---------|
+| `webhooks` | One row per organization per key (`webhook-1`, `webhook-2`); URL, optional secret, timeout, response shape/key |
+| `webhook_deliveries` | Delivery log (status, HTTP code, duration, error, raw response body); cascades from `webhooks` |
+| `webhook_field_bindings` | Field → webhook-1 binding; cascades from both `webhooks` and `collection_fields` |

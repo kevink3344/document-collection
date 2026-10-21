@@ -145,6 +145,7 @@ A full-stack document and survey collection platform built with React + TypeScri
 | **Matrix / Likert Scale** | Grid of rows × columns for scaled responses; fully responsive on mobile |
 | **Date** | Date picker input |
 | **Location** | Dropdown linked to org-scoped locations; supports optional authentication (public access or scoped) |
+| **Student ID** | Text field validated against a configured webhook when the respondent leaves the field. See [Webhooks](#14-webhooks). |
 | **Signature** | Canvas-based signature capture; renders as an inline image preview in Records |
 | **Comment (Read-Only)** | Non-interactive inline text block shown to respondents; supports a **rich-text editor** for formatting |
 | **List** | Column-list input type |
@@ -167,6 +168,7 @@ A full-stack document and survey collection platform built with React + TypeScri
 - **Signature** field with canvas drawing.
 - **"Other"** free-text input on single/multiple choice fields.
 - **Branching**: Single-choice answers can skip respondents to a specific page.
+- **Student ID validation**: Student ID fields are checked against the organization's validation webhook when the field loses focus. A rejected value shows *"Please enter a valid student id"* and blocks submission; the server re-validates on submit so the check cannot be bypassed.
 
 ---
 
@@ -335,7 +337,82 @@ Each submission card in Individual view has two tabs: **General** and **Comments
 
 ---
 
-## 13. Infrastructure & Database
+## 14. Webhooks
+
+Webhooks let an organization connect collection forms to external systems. Configure them in **Settings → Webhooks** (Administrators and Super Admins only). Each organization has at most one of each type.
+
+### Webhook 1 — Field Validation
+
+Called when a respondent leaves a **Student ID** field. The server proxies the call, so the URL and secret never reach the browser.
+
+**Request** — `POST <url>`, `Content-Type: application/json`:
+
+```json
+{
+  "value": "A12345678",
+  "fieldKey": "field-42",
+  "fieldLabel": "Student Id",
+  "collectionSlug": "enrollment-form",
+  "organizationId": 1
+}
+```
+
+`X-Webhook-Secret` is sent **only** when a secret is configured. Leave it blank for Power Automate and other unsigned endpoints.
+
+**Response** — HTTP 2xx plus a body in the configured *response shape*:
+
+| Shape | Expects |
+|-------|---------|
+| `JSON boolean` (default) | `{ "valid": true }` |
+| `JSON string` | `{ "valid": "true" }` |
+| `Plain text` | `true` |
+
+The JSON key is configurable (default `valid`), so `isValid`, `result`, etc. work without a code change. Accepted values (case-insensitive): `true/1/yes/y/valid` and `false/0/no/n/invalid`.
+
+### Webhook 2 — Submission Forwarding
+
+Called after a response is saved. Fire-and-forget: a slow or failing endpoint never blocks the respondent.
+
+```json
+{
+  "event": "submission.created",
+  "responseId": 1234,
+  "collectionId": 12,
+  "collectionSlug": "enrollment-form",
+  "collectionTitle": "Fall Enrollment",
+  "collectionVersionId": 34,
+  "organizationId": 1,
+  "submittedAt": "2026-10-20 18:22:03",
+  "respondent": { "name": "Jane Doe", "email": "jane@example.com" },
+  "values": [
+    { "fieldKey": "field-42", "label": "Student Id", "type": "short_text", "value": "A12345678" }
+  ]
+}
+```
+
+### Behaviour Notes
+
+- Every attempt is recorded in **Recent deliveries** (status, HTTP code, duration, raw response body). The newest 200 per webhook are kept.
+- **Test** sends a sample payload without creating a real submission.
+- Disabling webhook 1 makes Student ID fields always valid; disabling webhook 2 stops forwarding.
+- One validation webhook applies to every Student ID field in a form.
+
+### Where to configure it
+
+**Settings → Webhooks** (Administrators and Super Admins). It sits in the **General** tab next to *Ticket Activity*.
+
+### Production deployment
+
+The webhook tables are created automatically at startup on Azure App Service. If the app's database login lacks `CREATE TABLE` permission, the bootstrap logs a clear instruction and the feature returns **503 `WEBHOOKS_TABLES_MISSING`** until an admin runs `server/scripts/webhooks-sqlserver.sql` once. See `SQL_SERVER_MIGRATION_LOG.md`. Set `SQLSERVER_BOOTSTRAP_DDL=false` to skip the startup attempt.
+
+> **Adding a new Settings panel later?** Three separate lists must be updated, or the panel will be invisible or unusable:
+> 1. `PanelId` / `PANEL_LABELS` / `ALL_PANEL_IDS` / `DEFAULT_PANEL_LAYOUT` in `SettingsPage.tsx`
+> 2. `VISIBILITY_CHECKLIST_IDS` in `server/src/routes/settings.ts`
+> 3. `VISIBILITY_ADDED_LATER` in `server/src/routes/settings.ts` — otherwise a previously saved visibility list silently hides the new panel for non-super-admins.
+
+---
+
+## 15. Infrastructure & Database
 
 ### Database
 - **libSQL (Turso)** remote database as the primary store; falls back to a local **SQLite** file for development.

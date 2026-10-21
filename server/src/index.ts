@@ -28,6 +28,7 @@ import exportCsvRouter from './routes/export-csv'
 import approvalsRouter from './routes/approvals'
 import groupsRouter from './routes/groups'
 import signupSlotsRouter from './routes/signup-slots'
+import webhooksRouter from './routes/webhooks'
 import { dispatchPendingEmailNotifications, generateDueDateNotifications } from './services/notifications'
 import { processWorkflowEscalations } from './services/approvalWorkflows'
 import { dueDateNotificationsEnabled, workflowTimedChecksEnabled } from './env'
@@ -64,7 +65,17 @@ const NOTIFICATION_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
 // ── Middleware ───────────────────────────────────────────────
 if (!IS_PROD) {
-  app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'], credentials: true }))
+  app.use(
+    cors({
+      origin: [
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:5175',
+        'http://127.0.0.1:5175',
+      ],
+      credentials: true,
+    }),
+  )
 }
 app.use(cookieParser())
 app.use(express.json({ limit: '10mb' }))
@@ -169,6 +180,7 @@ app.use('/api/export-csv', exportCsvRouter)
 app.use('/api/approvals', approvalsRouter)
 app.use('/api/groups', groupsRouter)
 app.use('/api/signup-slots', signupSlotsRouter)
+app.use('/api/webhooks', webhooksRouter)
 app.use('/api', healthRouter)
 
 // Health check for platform probes (non-API path)

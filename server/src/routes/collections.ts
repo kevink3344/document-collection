@@ -7,7 +7,7 @@ import type { DbAdapter } from '../database/types'
 import { timestampSortExpr } from '../database/sql'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
 import { validate } from '../middleware/validate'
-import { createCollectionSchema, collectionIdParamSchema } from '../lib/schemas'
+import { createCollectionSchema, collectionIdParamSchema, validateFieldSchema } from '../lib/schemas'
 import { loadRequestUserContext, isAdministrator, isAdminOrSuperAdmin, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
 import { parseAttachmentValue, stringifyAttachmentValue, type AttachmentReference } from '../lib/attachmentValue'
 import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
@@ -20,6 +20,16 @@ import {
   serializeWorkflowDefinition,
   type ApprovalWorkflowDefinition,
 } from '../services/approvalWorkflows'
+import {
+  callValidationWebhook,
+  getBindingsForFields,
+  getWebhookForField,
+  getWebhookForOrg,
+  isStudentIdField,
+  logDelivery,
+  sendSubmissionWebhook,
+  type SubmissionWebhookPayload,
+} from '../services/webhooks'
 
 const router = Router()
 const attachmentUpload = multer({
@@ -59,6 +69,8 @@ type FieldType =
   | 'document'
   | 'attachment' | 'signature' | 'confirmation' | 'custom_table' | 'rating' | 'comment' | 'matrix_likert_scale'
   | 'location'
+
+const STUDENT_ID_DISPLAY_STYLE = 'student_id'
 
 type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 
@@ -203,6 +215,7 @@ interface FieldInput {
   sortOrder?: number
   staffOnly?: boolean
   locationFilterEnabled?: boolean
+  studentIdWebhookId?: number | null
 }
 
 function buildAttachmentDownloadUrl(attachmentId: number): string {
@@ -402,6 +415,13 @@ function resolveFieldDisplayStyle(type: FieldType, displayStyle?: string): strin
     return displayStyle === 'numbers' ? 'numbers' : 'stars'
   }
 
+  // Student ID is a short-text field distinguished by display_style. Storing it
+  // this way avoids adding a value to the collection_fields.type CHECK
+  // constraint, which would require a full table rebuild.
+  if (type === 'short_text') {
+    return displayStyle === STUDENT_ID_DISPLAY_STYLE ? STUDENT_ID_DISPLAY_STYLE : 'radio'
+  }
+
   return 'radio'
 }
 
@@ -576,7 +596,8 @@ async function fetchAccessibleCollectionById(
 function toApiCollection(
   c: DbCollection,
   fields: DbField[],
-  colsByField: Map<number, DbTableColumn[]>
+  colsByField: Map<number, DbTableColumn[]>,
+  bindingsByField: Map<number, number> = new Map()
 ) {
   return {
     id: c.id,
@@ -618,6 +639,8 @@ function toApiCollection(
       required: f.required === 1,
       options: f.options ? (JSON.parse(f.options) as string[]) : null,
       displayStyle: resolveFieldDisplayStyle(f.type, f.display_style),
+      isStudentId: isStudentIdField(f),
+      studentIdWebhookId: bindingsByField.get(f.id) ?? null,
       branchRules: parseBranchRules(f.branch_rules),
       sortOrder: f.sort_order,
       staffOnly: f.staff_only === 1,
@@ -653,6 +676,7 @@ function dbFieldsToFieldInput(fields: DbField[], colsByField: Map<number, DbTabl
     required: f.required === 1,
     options: f.options ? (JSON.parse(f.options) as string[]) : undefined,
     displayStyle: resolveFieldDisplayStyle(f.type, f.display_style),
+    isStudentId: isStudentIdField(f),
     branchRules: parseBranchRules(f.branch_rules) ?? undefined,
     sortOrder: f.sort_order,
     staffOnly: f.staff_only === 1,
@@ -673,6 +697,77 @@ function dbFieldsToFieldInput(fields: DbField[], colsByField: Map<number, DbTabl
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+
+/**
+ * Persist Student ID -> webhook-1 bindings for a collection's fields.
+ * Bindings live in webhook_field_bindings so collection_fields is never altered.
+ * Enforces the "one validation webhook per form" rule.
+ */
+async function reconcileFieldBindings(
+  collectionId: number,
+  organizationId: number,
+  fields: FieldInput[],
+): Promise<void> {
+  const studentIdFields = fields.filter(f => isStudentIdField({ type: f.type, displayStyle: f.displayStyle }))
+  const requestedWebhookIds = new Set(
+    studentIdFields
+      .map(f => f.studentIdWebhookId)
+      .filter((v): v is number => typeof v === 'number' && v > 0)
+  )
+
+  if (requestedWebhookIds.size > 1) {
+    throw new Error('Only one validation webhook may be used per form')
+  }
+
+  const db = await getDbAsync()
+  let webhookId: number | null = null
+
+  if (requestedWebhookIds.size === 1) {
+    const [candidate] = Array.from(requestedWebhookIds)
+    const hook = await db.queryOne<{ id: number }>(
+      `SELECT id FROM webhooks
+        WHERE id = ? AND organization_id = ? AND key = 'webhook-1'`,
+      [candidate, organizationId],
+    )
+    if (!hook) {
+      throw new Error('The selected validation webhook does not belong to this organization')
+    }
+    webhookId = hook.id
+  }
+
+  const collectionFields = await db.queryAll<{ id: number; type: string; display_style: string | null }>(
+    'SELECT id, type, display_style FROM collection_fields WHERE collection_id = ?',
+    [collectionId],
+  )
+
+  const studentIdFieldIds = collectionFields
+    .filter(f => isStudentIdField(f))
+    .map(f => f.id)
+
+  if (studentIdFieldIds.length === 0) return
+
+  const placeholders = studentIdFieldIds.map(() => '?').join(',')
+
+  if (webhookId === null) {
+    await db.execute(
+      `DELETE FROM webhook_field_bindings WHERE field_id IN (${placeholders})`,
+      studentIdFieldIds,
+    )
+    return
+  }
+
+  // Clear any stale bindings for these fields, then bind them all to the chosen webhook.
+  await db.execute(
+    `DELETE FROM webhook_field_bindings WHERE field_id IN (${placeholders})`,
+    studentIdFieldIds,
+  )
+  for (const fieldId of studentIdFieldIds) {
+    await db.execute(
+      'INSERT OR IGNORE INTO webhook_field_bindings (webhook_id, field_id) VALUES (?, ?)',
+      [webhookId, fieldId],
+    )
+  }
+}
 
 async function fetchFields(
   collectionId: number,
@@ -1173,7 +1268,97 @@ router.get('/public/:slug', optionalAuthenticateToken, async (req: Request, res:
   const [allFields, colsByField] = await fetchFields(c.id, c.active_version_id)
   // Strip staff-only fields — the fill page is for submitters, not staff
   const publicFields = allFields.filter(f => !f.staff_only)
-  res.json(toApiCollection(c, publicFields, colsByField))
+  // The public payload exposes isStudentId but never the internal webhook id.
+  res.json(toApiCollection(c, publicFields, colsByField, new Map()))
+})
+
+// ── POST /api/collections/public/:slug/validate-field ──────────────────────
+// Proxies a Student ID value to the configured webhook-1 so the URL and secret
+// never reach the browser (and CORS is never an issue).
+const validationRateLimit = new Map<string, { count: number; resetAt: number }>()
+const VALIDATION_WINDOW_MS = 60_000
+const VALIDATION_MAX_PER_WINDOW = 20
+
+function isValidationRateLimited(key: string): boolean {
+  const now = Date.now()
+  const entry = validationRateLimit.get(key)
+  if (!entry || now > entry.resetAt) {
+    validationRateLimit.set(key, { count: 1, resetAt: now + VALIDATION_WINDOW_MS })
+    return false
+  }
+  entry.count += 1
+  return entry.count > VALIDATION_MAX_PER_WINDOW
+}
+
+router.post('/public/:slug/validate-field', optionalAuthenticateToken, validate(validateFieldSchema), async (req: Request, res: Response) => {
+  const db = await getDbAsync()
+  const col = await db.queryOne<{ id: number; status: string; organization_id: number }>(
+    'SELECT id, status, organization_id FROM collections WHERE slug = ?',
+    [req.params.slug],
+  )
+
+  if (!col || col.status !== 'published') {
+    res.status(404).json({ error: 'Collection not found' })
+    return
+  }
+
+  const { fieldId, value } = req.body as { fieldId: number; value: string }
+
+  const field = await db.queryOne<{ id: number; type: string; display_style: string | null; label: string; field_key: string | null }>(
+    'SELECT id, type, display_style, label, field_key FROM collection_fields WHERE id = ? AND collection_id = ?',
+    [fieldId, col.id],
+  )
+
+  if (!field) {
+    res.status(404).json({ error: 'Field not found' })
+    return
+  }
+
+  if (!isStudentIdField(field)) {
+    res.status(400).json({ error: 'Field is not a Student ID field' })
+    return
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    res.json({ valid: false, reason: 'invalid' })
+    return
+  }
+
+  const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown'
+  if (isValidationRateLimited(`${req.params.slug}:${fieldId}:${clientIp}`)) {
+    res.status(429).json({ error: 'Too many validation attempts. Please wait a moment and try again.' })
+    return
+  }
+
+  const hook = await getWebhookForField(field.id)
+  if (!hook || !hook.enabled) {
+    res.json({ valid: true, skipped: true })
+    return
+  }
+
+  const result = await callValidationWebhook(hook, {
+    value: trimmed,
+    fieldKey: field.field_key ?? `field-${field.id}`,
+    fieldLabel: field.label,
+    collectionSlug: req.params.slug,
+    organizationId: col.organization_id,
+  })
+
+  await logDelivery({
+    webhookId: hook.id,
+    direction: 'validate',
+    status: result.reason === 'error' ? 'failed' : 'success',
+    httpStatus: result.httpStatus,
+    durationMs: result.durationMs,
+    error: result.error,
+    responseBody: result.rawBody,
+  })
+
+  res.json({
+    valid: result.reason === 'ok',
+    reason: result.reason === 'ok' ? undefined : result.reason,
+  })
 })
 
 router.get('/public/:slug/cover-photo', async (req: Request, res: Response) => {
@@ -1645,6 +1830,44 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
     const [collectionFields] = await fetchFields(col.id, col.active_version_id)
     const fieldById = new Map(collectionFields.map(field => [field.id, field]))
 
+    // Server-side re-validation of Student ID fields. The client check is
+    // advisory; this prevents a crafted payload from bypassing it.
+    for (const val of body.values ?? []) {
+      const field = fieldById.get(val.fieldId)
+      if (!field || !isStudentIdField(field)) continue
+      const trimmed = (val.value ?? '').trim()
+      if (!trimmed) continue
+
+      const hook = await getWebhookForField(field.id)
+      if (!hook || !hook.enabled) continue
+
+      const result = await callValidationWebhook(hook, {
+        value: trimmed,
+        fieldKey: field.field_key ?? `field-${field.id}`,
+        fieldLabel: field.label,
+        collectionSlug: req.params.slug,
+        organizationId: col.organization_id,
+      })
+
+      await logDelivery({
+        webhookId: hook.id,
+        direction: 'validate',
+        status: result.reason === 'error' ? 'failed' : 'success',
+        httpStatus: result.httpStatus,
+        durationMs: result.durationMs,
+        error: result.error,
+        responseBody: result.rawBody,
+      })
+
+      if (result.reason !== 'ok') {
+        res.status(422).json({
+          error: 'Please enter a valid student id',
+          fieldId: val.fieldId,
+        })
+        return
+      }
+    }
+
     const editWindowHours = col.allow_submission_edits === 1
       ? col.submission_edit_window_hours
       : null
@@ -1826,6 +2049,44 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
       } catch (err) {
         console.error('[collections] copy-of-answers email build error:', err)
       }
+    }
+
+    // Forward the submission to webhook-2. Fire-and-forget: a slow or broken
+    // endpoint must never make the form appear to fail.
+    const submitHook = col.organization_id
+      ? await getWebhookForOrg(col.organization_id, 'webhook-2')
+      : null
+    if (submitHook?.enabled) {
+      const payload: SubmissionWebhookPayload = {
+        event: 'submission.created',
+        responseId,
+        collectionId: col.id,
+        collectionSlug: req.params.slug,
+        collectionTitle: col.title,
+        collectionVersionId: col.active_version_id,
+        organizationId: col.organization_id,
+        submittedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+        respondent: {
+          name: authenticatedRespondent?.name ?? body.respondentName?.trim() ?? null,
+          email: authenticatedRespondent?.email ?? body.respondentEmail?.trim() ?? null,
+        },
+        values: (body.values ?? [])
+          .filter(val => {
+            const field = fieldById.get(val.fieldId)
+            return field ? field.type !== 'comment' && field.type !== 'document' : false
+          })
+          .map(val => {
+            const field = fieldById.get(val.fieldId)!
+            return {
+              fieldKey: field.field_key ?? `field-${field.id}`,
+              label: field.label,
+              type: field.type,
+              value: val.value ?? null,
+            }
+          }),
+      }
+      void sendSubmissionWebhook(submitHook, payload, responseId)
+        .catch(err => console.error('[collections] submission webhook error:', err))
     }
 
     res.status(201).json({ id: responseId, submitted: true })
@@ -2098,7 +2359,9 @@ router.post('/', authenticateToken, validate(createCollectionSchema), async (req
       return
     }
     const [fields, colsByField] = await fetchFields(id, c.active_version_id)
-    res.status(201).json(toApiCollection(c, fields, colsByField))
+    await reconcileFieldBindings(id, c.organization_id, body.fields ?? [])
+    const bindingsByField = await getBindingsForFields(fields.map(f => f.id))
+    res.status(201).json(toApiCollection(c, fields, colsByField, bindingsByField))
   } catch (err) {
     console.error('[collections] create:', err)
     res.status(500).json({ error: 'Failed to create collection' })
@@ -2356,7 +2619,9 @@ router.put('/:id', authenticateToken, validate(collectionIdParamSchema, 'params'
       return
     }
     const [fields, colsByField] = await fetchFields(id, c.active_version_id)
-    res.json(toApiCollection(c, fields, colsByField))
+    await reconcileFieldBindings(id, c.organization_id, body.fields ?? [])
+    const bindingsByField = await getBindingsForFields(fields.map(f => f.id))
+    res.json(toApiCollection(c, fields, colsByField, bindingsByField))
   } catch (err) {
     console.error('[collections] update:', err)
     res.status(500).json({ error: 'Failed to update collection' })

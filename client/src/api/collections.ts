@@ -7,6 +7,7 @@ import type {
   CollectionShare,
   CollectionStatus,
   CollectionVersion,
+  FieldValidationResult,
   SubmissionComment,
 } from '../types'
 import { authHeaders, handleUnauthorizedResponse } from './authEvents'
@@ -198,7 +199,15 @@ export async function submitResponse(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return handleResponse<{ id: number; submitted: boolean }>(res)
+  if (!res.ok) {
+    // Surface fieldId so the fill page can jump to the offending field
+    // (e.g. a Student ID rejected by the server-side re-check).
+    const body = await res.json().catch(() => ({})) as { error?: string; fieldId?: number }
+    const err = new Error(body.error ?? `Request failed: ${res.status}`) as Error & { fieldId?: number }
+    if (typeof body.fieldId === 'number') err.fieldId = body.fieldId
+    throw err
+  }
+  return res.json() as Promise<{ id: number; submitted: boolean }>
 }
 
 export async function getResponses(collectionId: number): Promise<CollectionResponse[]> {
@@ -302,4 +311,26 @@ export async function saveCollectionShares(
     body: JSON.stringify(payload),
   })
   return handleResponse<void>(res)
+}
+
+/**
+ * Validate a Student ID value against the collection's webhook-1.
+ * The server proxies the call so the webhook URL/secret never reach the browser.
+ */
+export async function validateStudentId(
+  slug: string,
+  fieldId: number,
+  value: string,
+): Promise<FieldValidationResult> {
+  const res = await fetch(`/api/collections/public/${encodeURIComponent(slug)}/validate-field`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fieldId, value }),
+  })
+
+  if (!res.ok) {
+    return { valid: false, reason: 'error' }
+  }
+
+  return res.json() as Promise<FieldValidationResult>
 }

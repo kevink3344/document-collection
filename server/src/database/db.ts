@@ -864,6 +864,62 @@ function applyIncrementalSchema(database: AppDatabase): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_settings_tabs_sort ON settings_tabs(sort_order)
   `)
+  // Webhooks. Created here (not only in schema.ts) because the Turso path runs
+  // applyIncrementalSchema without calling createSchema.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      key             TEXT    NOT NULL CHECK(key IN ('webhook-1', 'webhook-2')),
+      name            TEXT,
+      url             TEXT    NOT NULL,
+      secret          TEXT,
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      timeout_ms      INTEGER NOT NULL DEFAULT 5000,
+      response_shape  TEXT    NOT NULL DEFAULT 'json_boolean'
+                              CHECK(response_shape IN ('json_boolean', 'json_string', 'plain_text')),
+      response_key    TEXT    NOT NULL DEFAULT 'valid',
+      created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(organization_id, key)
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_webhooks_org ON webhooks(organization_id, key)
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      webhook_id    INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+      response_id   INTEGER REFERENCES collection_responses(id) ON DELETE SET NULL,
+      direction     TEXT    NOT NULL CHECK(direction IN ('validate', 'submit')),
+      status        TEXT    NOT NULL CHECK(status IN ('success', 'failed')),
+      http_status   INTEGER,
+      duration_ms   INTEGER,
+      error         TEXT,
+      response_body TEXT,
+      created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook
+      ON webhook_deliveries(webhook_id, created_at)
+  `)
+  // The field -> webhook binding lives here rather than on collection_fields so
+  // that adding the Student ID field type needs no table rebuild.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS webhook_field_bindings (
+      webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+      field_id   INTEGER NOT NULL REFERENCES collection_fields(id) ON DELETE CASCADE,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (webhook_id, field_id)
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_webhook_field_bindings_field
+      ON webhook_field_bindings(field_id)
+  `)
   // Direct remote connection � no embedded replica sync-lag to wait out.
   // Seed the default tabs once, right after ensuring the table exists.
   const settingsTabsCount = (
@@ -1046,6 +1102,99 @@ async function applySqlServerMigrations(): Promise<void> {
   // Azure SQL and must never be altered or backfilled from here. Only verify
   // connectivity (read-only) so the DB can be marked ready on startup.
   await verifySqlServerConnectivity()
+  await applySqlServerBootstrapScripts()
+}
+
+/**
+ * Applies idempotent, additive DDL scripts from server/scripts at startup.
+ *
+ * These create tables that are new to the application (e.g. webhooks). Every
+ * statement is guarded with IF OBJECT_ID(...) IS NULL, so this is safe to run
+ * on every boot and never touches existing tables or rows.
+ *
+ * Opt out with SQLSERVER_BOOTSTRAP_DDL=false. Failures are logged but never
+ * block startup — the server still boots and serves static assets.
+ *
+ * If the login lacks CREATE TABLE permission (common for production app
+ * accounts), this logs a one-line instruction at most and the feature reports
+ * itself as unavailable (503 WEBHOOKS_TABLES_MISSING) rather than throwing
+ * confusing SQL errors at request time.
+ */
+async function applySqlServerBootstrapScripts(): Promise<void> {
+  if (process.env.SQLSERVER_BOOTSTRAP_DDL?.trim().toLowerCase() === 'false') {
+    console.log('[db] SQL Server bootstrap DDL disabled (SQLSERVER_BOOTSTRAP_DDL=false)')
+    return
+  }
+
+  const fs = await import('fs')
+  const path = await import('path')
+  const scriptsDir = path.resolve(__dirname, '..', '..', 'scripts')
+  const files = ['webhooks-sqlserver.sql']
+
+  for (const file of files) {
+    const fullPath = path.join(scriptsDir, file)
+    if (!fs.existsSync(fullPath)) {
+      console.warn(`[db] Bootstrap DDL skipped, file not found: ${fullPath}`)
+      continue
+    }
+
+    // Skip the attempt entirely when the tables already exist (the normal case
+    // once an admin has applied the script). Avoids a permission-denied warning
+    // on every boot for read/write-only production logins.
+    const alreadyApplied = await bootstrapTablesExist(file)
+    if (alreadyApplied) {
+      console.log(`[db] Bootstrap DDL: ${file} already applied, skipping`)
+      continue
+    }
+
+    try {
+      await runSqlServerSeedFile(fullPath)
+    } catch (err) {
+      const message = (err as Error).message ?? ''
+      const isPermissionError = /CREATE TABLE permission denied|permission was denied|not have permission/i.test(message)
+      if (isPermissionError) {
+        console.warn(
+          `[db] Bootstrap DDL skipped for ${file}: the database login lacks CREATE TABLE permission. ` +
+          `Apply ${file} manually with a DDL-capable account; the webhooks feature stays unavailable until then.`,
+        )
+      } else {
+        console.error(`[db] Bootstrap DDL failed for ${file}:`, message)
+      }
+    }
+  }
+}
+
+/**
+ * Returns true when every table a bootstrap script creates already exists.
+ * Only the webhooks script is known here; unknown files always return false.
+ */
+async function bootstrapTablesExist(file: string): Promise<boolean> {
+  if (file !== 'webhooks-sqlserver.sql') return false
+
+  const target = resolveDbTarget()
+  if (!target || target.mode !== 'sqlserver') return false
+
+  const sql = await import('mssql')
+  const pool = new sql.ConnectionPool({
+    server: target.server,
+    database: target.database,
+    user: target.user,
+    password: target.password,
+    options: { encrypt: true, trustServerCertificate: false },
+  })
+
+  try {
+    await pool.connect()
+    const result = await pool.request().query(`
+      SELECT COUNT(*) AS n FROM sys.tables
+       WHERE name IN ('webhooks', 'webhook_deliveries', 'webhook_field_bindings')
+    `)
+    return Number(result.recordset?.[0]?.n ?? 0) === 3
+  } catch {
+    return false
+  } finally {
+    await pool.close().catch(() => {})
+  }
 }
 
 export function setupDatabase(): void {

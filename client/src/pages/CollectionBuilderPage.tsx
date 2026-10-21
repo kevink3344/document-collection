@@ -41,7 +41,8 @@ import { getCollectionTicketTemplatesAll, saveCollectionTicketTemplates, setColl
 import { listTicketTemplates } from '../api/ticketTemplates'
 import { listCategories } from '../api/categories'
 import { listUsers, type AppUser } from '../api/users'
-import type { Category, Collection, CollectionField, CollectionShare, CollectionTicketTemplate, GalleryAsset, Group, TicketTemplate } from '../types'
+import { listWebhooks } from '../api/webhooks'
+import type { Category, Collection, CollectionField, CollectionShare, CollectionTicketTemplate, GalleryAsset, Group, TicketTemplate, Webhook } from '../types'
 import type {
   ApprovalWorkflowCondition,
   ApprovalWorkflowDefinition,
@@ -80,7 +81,10 @@ interface BuilderField {
   tableColumns: TableColumn[]
   staffOnly: boolean
   locationFilterEnabled: boolean
+  studentIdWebhookId: number | null
 }
+
+const STUDENT_ID_DISPLAY_STYLE = 'student_id'
 
 function resolveDisplayStyle(type: FieldType, displayStyle?: string | null): FieldDisplayStyle {
   if (type === 'single_choice') {
@@ -89,6 +93,10 @@ function resolveDisplayStyle(type: FieldType, displayStyle?: string | null): Fie
 
   if (type === 'rating') {
     return displayStyle === 'numbers' ? 'numbers' : 'stars'
+  }
+
+  if (type === 'short_text') {
+    return displayStyle === STUDENT_ID_DISPLAY_STYLE ? STUDENT_ID_DISPLAY_STYLE : 'radio'
   }
 
   return 'radio'
@@ -113,6 +121,7 @@ function blankField(page = 1): BuilderField {
     tableColumns: [],
     staffOnly: false,
     locationFilterEnabled: false,
+    studentIdWebhookId: null,
   }
 }
 
@@ -142,6 +151,7 @@ function mapCollectionToBuilderFields(collection: Collection): BuilderField[] {
     })),
     staffOnly: f.staffOnly ?? false,
     locationFilterEnabled: f.locationFilterEnabled ?? false,
+    studentIdWebhookId: f.studentIdWebhookId ?? null,
   }))
 }
 
@@ -285,6 +295,7 @@ export default function CollectionBuilderPage() {
   // Fields
   const [fields, setFields] = useState<BuilderField[]>([blankField()])
   const [activeBuilderPage, setActiveBuilderPage] = useState(1)
+  const [validationWebhooks, setValidationWebhooks] = useState<Webhook[]>([])
 
   // UI state
   const [saving, setSaving] = useState(false)
@@ -425,6 +436,7 @@ export default function CollectionBuilderPage() {
           })),
           staffOnly: f.staffOnly ?? false,
           locationFilterEnabled: f.locationFilterEnabled ?? false,
+          studentIdWebhookId: f.studentIdWebhookId ?? null,
         }))
 
     return JSON.stringify({
@@ -589,6 +601,12 @@ export default function CollectionBuilderPage() {
     listUsers()
       .then(setWorkflowUsers)
       .catch(() => setWorkflowUsers([]))
+  }, [])
+
+  useEffect(() => {
+    listWebhooks()
+      .then(hooks => setValidationWebhooks(hooks.filter(hook => hook.key === 'webhook-1')))
+      .catch(() => setValidationWebhooks([]))
   }, [])
 
   useEffect(() => {
@@ -969,6 +987,7 @@ export default function CollectionBuilderPage() {
           sortOrder: i,
           staffOnly: f.staffOnly,
           locationFilterEnabled: f.locationFilterEnabled,
+          studentIdWebhookId: f.studentIdWebhookId,
         })),
     }
   }
@@ -2760,6 +2779,15 @@ export default function CollectionBuilderPage() {
                   onRemoveOption={i => removeOption(field._key, i)}
                   onConfigureTable={() => setWizardField(field._key)}
                   onConfigureMatrix={() => setMatrixConfigField(field._key)}
+                  validationWebhooks={validationWebhooks}
+                  onBindStudentIdWebhook={webhookId => {
+                    // One validation webhook per form: apply to every Student ID field.
+                    setFields(prev => prev.map(item =>
+                      item.displayStyle === STUDENT_ID_DISPLAY_STYLE
+                        ? { ...item, studentIdWebhookId: webhookId }
+                        : item
+                    ))
+                  }}
                   isPendingRemove={pendingRemoveKey === field._key}
                   collectionStatus={status}
                   onConfirmRemove={() => confirmRemoveField(field)}
@@ -2801,6 +2829,8 @@ interface FieldCardProps {
   onRemoveOption: (idx: number) => void
   onConfigureTable: () => void
   onConfigureMatrix: () => void
+  validationWebhooks?: Webhook[]
+  onBindStudentIdWebhook?: (webhookId: number | null) => void
   hideStaffOnly?: boolean
   isPendingRemove?: boolean
   collectionStatus?: CollectionStatus
@@ -2829,6 +2859,8 @@ function FieldCard({
   onRemoveOption,
   onConfigureTable,
   onConfigureMatrix,
+  validationWebhooks = [],
+  onBindStudentIdWebhook,
   hideStaffOnly = false,
   isPendingRemove = false,
   collectionStatus = 'draft',
@@ -2900,9 +2932,21 @@ function FieldCard({
           {index + 1}
         </span>
         <select
-          value={field.type}
+          value={field.displayStyle === STUDENT_ID_DISPLAY_STYLE ? 'student_id_preset' : field.type}
           onChange={e => {
-            const t = e.target.value as FieldType
+            const raw = e.target.value
+            if (raw === 'student_id_preset') {
+              onUpdate({
+                type: 'short_text',
+                options: [],
+                tableColumns: [],
+                displayStyle: STUDENT_ID_DISPLAY_STYLE,
+                branchRules: [],
+                required: field.required,
+              })
+              return
+            }
+            const t = raw as FieldType
             onUpdate({
               type: t,
               options: [],
@@ -2910,6 +2954,7 @@ function FieldCard({
               displayStyle: resolveDisplayStyle(t),
               branchRules: [],
               required: t === 'document' ? false : field.required,
+              studentIdWebhookId: null,
             })
           }}
           className={`${FIELD_INPUT} flex-1`}
@@ -2921,6 +2966,7 @@ function FieldCard({
               </option>
             )
           )}
+          <option value="student_id_preset">Student ID</option>
         </select>
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -3233,6 +3279,44 @@ function FieldCard({
               </span>
             )}
           </button>
+        </div>
+      )}
+
+      {/* Student ID validation webhook (one per form) */}
+      {field.displayStyle === STUDENT_ID_DISPLAY_STYLE && (
+        <div className="pl-7">
+          <div className="rounded border border-indigo-200 dark:border-indigo-900/40 bg-indigo-50 dark:bg-indigo-900/10 px-3 py-2.5 space-y-2">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-indigo-900 dark:text-indigo-200">
+                Validation webhook
+              </label>
+              <select
+                value={field.studentIdWebhookId ?? ''}
+                onChange={e => {
+                  const next = e.target.value === '' ? null : Number(e.target.value)
+                  onBindStudentIdWebhook?.(next)
+                }}
+                className={`${FIELD_INPUT} w-full`}
+              >
+                <option value="">— None (always valid) —</option>
+                {validationWebhooks.map(hook => (
+                  <option key={hook.id} value={hook.id}>
+                    {hook.name || 'Webhook 1'}
+                    {hook.enabled ? '' : ' (disabled)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-indigo-600 dark:text-indigo-400">
+              Validated when the respondent leaves the field. Must return <code>true</code> for the form to submit.
+              One validation webhook applies to every Student ID field in this form.
+            </p>
+            {validationWebhooks.length === 0 && (
+              <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                No validation webhook is configured. Add one in Settings → Webhooks first.
+              </p>
+            )}
+          </div>
         </div>
       )}
 

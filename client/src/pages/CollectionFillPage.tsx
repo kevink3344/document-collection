@@ -3,7 +3,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import type { CSSProperties } from 'react'
 import { Building2, Calendar, Tag, CheckCircle, AlertCircle, Maximize2, X, History, ArrowLeft, Paperclip, Trash2, Upload } from 'lucide-react'
 import { deletePendingAttachment, uploadAttachment } from '../api/attachments'
-import { getPublicCollection, submitResponse } from '../api/collections'
+import { getPublicCollection, submitResponse, validateStudentId } from '../api/collections'
 import { updateMySubmission } from '../api/mySubmissions'
 import { getPublicLocations } from '../api/locations'
 import { getPublicSetting } from '../api/settings'
@@ -899,6 +899,7 @@ export default function CollectionFillPage() {
 
   // Field values: fieldId → string (JSON for complex types)
   const [values, setValues] = useState<Record<number, string>>({})
+  const [studentIdStatus, setStudentIdStatus] = useState<Record<number, StudentIdStatus>>({})
 
   // Submission
   const [submitting, setSubmitting] = useState(false)
@@ -1187,6 +1188,21 @@ export default function CollectionFillPage() {
     return null
   }
 
+  function getStudentIdValidationError(fieldsToCheck: CollectionField[]): string | null {
+    for (const field of fieldsToCheck) {
+      if (field.displayStyle !== 'student_id' || field.id === undefined) continue
+      const value = (values[field.id] ?? '').trim()
+      if (!value) continue
+      const status = studentIdStatus[field.id] ?? 'idle'
+      // 'idle' means "typed but not yet blurred" — the server re-checks on submit.
+      if (status === 'invalid') return 'Please enter a valid student id'
+      if (status === 'error') {
+        return "We couldn't verify this student id right now. Please try again in a moment."
+      }
+    }
+    return null
+  }
+
   function handleNextPage() {
     if (!collection) return
     setPageError(null)
@@ -1208,6 +1224,12 @@ export default function CollectionFillPage() {
     if (firstFieldError) {
       const val = firstFieldError.id !== undefined ? values[firstFieldError.id] ?? '' : ''
       setPageError(getFieldValidationError(firstFieldError, val) ?? 'Please complete all required fields on this page.')
+      return
+    }
+
+    const studentIdError = getStudentIdValidationError(fieldsOnCurrentPage)
+    if (studentIdError) {
+      setPageError(studentIdError)
       return
     }
 
@@ -1237,6 +1259,19 @@ export default function CollectionFillPage() {
       return
     }
 
+    const studentIdError = getStudentIdValidationError(visibleFields)
+    if (studentIdError) {
+      const badField = visibleFields.find(
+        f => f.displayStyle === 'student_id' && f.id !== undefined && (studentIdStatus[f.id] === 'invalid' || studentIdStatus[f.id] === 'error')
+      )
+      if (badField) {
+        const targetPage = pageNumbers.indexOf(normalizePage(badField.page))
+        if (targetPage >= 0) setCurrentPageIdx(targetPage)
+      }
+      setSubmitError(studentIdError)
+      return
+    }
+
     setIsReviewing(true)
   }
 
@@ -1262,6 +1297,21 @@ export default function CollectionFillPage() {
       setIsReviewing(false)
       setActiveTab('questions')
       setSubmitError(getFieldValidationError(invalidField, val) ?? 'Please complete all required fields before submitting.')
+      return
+    }
+
+    const studentIdError = getStudentIdValidationError(visibleFields)
+    if (studentIdError) {
+      const badField = visibleFields.find(
+        f => f.displayStyle === 'student_id' && f.id !== undefined && (studentIdStatus[f.id] === 'invalid' || studentIdStatus[f.id] === 'error')
+      )
+      if (badField) {
+        const targetPage = pageNumbers.indexOf(normalizePage(badField.page))
+        if (targetPage >= 0) setCurrentPageIdx(targetPage)
+      }
+      setIsReviewing(false)
+      setActiveTab('questions')
+      setSubmitError(studentIdError)
       return
     }
 
@@ -1302,7 +1352,20 @@ export default function CollectionFillPage() {
       clearDraft(slug)
       setSubmitted(true)
     } catch (err) {
-      setSubmitError((err as Error).message)
+      const message = (err as Error).message
+      const invalidFieldId = (err as Error & { fieldId?: number }).fieldId
+      if (invalidFieldId !== undefined) {
+        // The server re-checked a Student ID and rejected it.
+        setStudentIdStatus(prev => ({ ...prev, [invalidFieldId]: 'invalid' }))
+        const badField = collection.fields.find(f => f.id === invalidFieldId)
+        if (badField) {
+          const targetPage = pageNumbers.indexOf(normalizePage(badField.page))
+          if (targetPage >= 0) setCurrentPageIdx(targetPage)
+        }
+        setIsReviewing(false)
+        setActiveTab('questions')
+      }
+      setSubmitError(message)
     } finally {
       setSubmitting(false)
     }
@@ -1342,6 +1405,7 @@ export default function CollectionFillPage() {
       const defaults: Record<number, string> = {}
       collection.fields.forEach(f => { if (f.id !== undefined) defaults[f.id] = '' })
       setValues(defaults)
+      setStudentIdStatus({})
     }
     setRespName('')
     setRespEmail('')
@@ -1927,6 +1991,10 @@ export default function CollectionFillPage() {
                         disabled={false}
                         collectionSlug={slug ?? ''}
                         previewMode={isPreview}
+                        onStudentIdStatusChange={status => setStudentIdStatus(prev => {
+                          if (prev[field.id!] === status) return prev
+                          return { ...prev, [field.id!]: status }
+                        })}
                       />
                     ) : null
                   )}
@@ -2168,6 +2236,97 @@ function AttachmentFieldInput({
 
 // ── Field renderer ────────────────────────────────────────────
 
+type StudentIdStatus = 'idle' | 'checking' | 'valid' | 'invalid' | 'error'
+
+/**
+ * Student ID input. Validates on blur against the collection's webhook-1 and
+ * reports its status up so the parent can gate page navigation and submission.
+ */
+function StudentIdFieldInput({
+  value,
+  onChange,
+  onStatusChange,
+  disabled,
+  collectionSlug,
+  fieldId,
+  previewMode,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onStatusChange: (status: StudentIdStatus) => void
+  disabled: boolean
+  collectionSlug: string
+  fieldId: number
+  previewMode: boolean
+}) {
+  const [status, setStatus] = useState<StudentIdStatus>('idle')
+  const lastChecked = useRef<string>('')
+
+  function applyStatus(next: StudentIdStatus) {
+    setStatus(next)
+    onStatusChange(next)
+  }
+
+  async function handleBlur() {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      lastChecked.current = ''
+      applyStatus('idle')
+      return
+    }
+    if (previewMode) return
+    if (trimmed === lastChecked.current && status === 'valid') return
+
+    lastChecked.current = trimmed
+    applyStatus('checking')
+    try {
+      const result = await validateStudentId(collectionSlug, fieldId, trimmed)
+      if (result.valid) applyStatus('valid')
+      else if (result.reason === 'error') applyStatus('error')
+      else applyStatus('invalid')
+    } catch {
+      applyStatus('error')
+    }
+  }
+
+  function handleChange(next: string) {
+    onChange(next)
+    // Editing after a check invalidates it; re-checked on the next blur.
+    if (status !== 'idle') {
+      lastChecked.current = ''
+      applyStatus('idle')
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          onChange={e => handleChange(e.target.value)}
+          onBlur={() => { void handleBlur() }}
+          className={`${INPUT} ${status === 'invalid' ? 'border-red-400 focus:ring-red-400' : ''}`}
+          disabled={disabled}
+          aria-invalid={status === 'invalid'}
+        />
+        <span className="absolute inset-y-0 right-3 flex items-center text-xs">
+          {status === 'checking' && <span className="text-[#94A3B8]">Checking…</span>}
+          {status === 'valid' && <CheckCircle size={16} className="text-green-500" />}
+        </span>
+      </div>
+      {status === 'invalid' && (
+        <p className="text-sm text-red-500">Please enter a valid student id</p>
+      )}
+      {status === 'error' && (
+        <p className="text-sm text-amber-600 dark:text-amber-400">
+          We couldn&apos;t verify this student id right now. Please try again in a moment.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function FieldRenderer({
   field,
   value,
@@ -2175,6 +2334,7 @@ function FieldRenderer({
   disabled,
   collectionSlug,
   previewMode,
+  onStudentIdStatusChange,
 }: {
   field: CollectionField
   value: string
@@ -2182,6 +2342,7 @@ function FieldRenderer({
   disabled: boolean
   collectionSlug: string
   previewMode: boolean
+  onStudentIdStatusChange?: (status: StudentIdStatus) => void
 }) {
   const required = field.required && !disabled
   const optionList = field.options ?? []
@@ -2234,7 +2395,7 @@ function FieldRenderer({
         <p className="text-sm text-[#64748B] dark:text-[#94A3B8] -mt-0.5">{field.subtitle}</p>
       )}
 
-      {field.type === 'short_text' && (
+      {field.type === 'short_text' && field.displayStyle !== 'student_id' && (
         <input
           type="text"
           value={value}
@@ -2242,6 +2403,18 @@ function FieldRenderer({
           className={INPUT}
           required={required}
           disabled={disabled}
+        />
+      )}
+
+      {field.type === 'short_text' && field.displayStyle === 'student_id' && field.id !== undefined && (
+        <StudentIdFieldInput
+          value={value}
+          onChange={onChange}
+          onStatusChange={status => onStudentIdStatusChange?.(status)}
+          disabled={disabled}
+          collectionSlug={collectionSlug}
+          fieldId={field.id}
+          previewMode={previewMode}
         />
       )}
 

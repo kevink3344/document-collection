@@ -202,6 +202,46 @@ export const updateSettingSchema = z.object({
   value: z.string(),
 })
 
+// ── Webhooks ───────────────────────────────────────────────────────────────
+
+export const webhookKeySchema = z.enum(['webhook-1', 'webhook-2'])
+
+export const webhookResponseShapeSchema = z.enum(['json_boolean', 'json_string', 'plain_text'])
+
+export const upsertWebhookSchema = z.object({
+  organizationId: positiveInt.optional(),
+  name: z.string().trim().max(120).nullable().optional(),
+  url: z
+    .string()
+    .trim()
+    .min(1, 'URL is required')
+    .refine(u => /^https?:\/\//i.test(u), 'URL must start with http:// or https://')
+    .refine(u => {
+      try {
+        new URL(u)
+        return true
+      } catch {
+        return false
+      }
+    }, 'Must be a valid URL'),
+  // Omit to leave unchanged, send "" to clear, send a value to replace.
+  secret: z.string().max(512).optional(),
+  enabled: z.boolean().optional(),
+  timeoutMs: z.number().int().min(500).max(30000).optional(),
+  responseShape: webhookResponseShapeSchema.optional(),
+  responseKey: z.string().trim().min(1).max(64).optional(),
+})
+
+export const validateFieldSchema = z.object({
+  fieldId: positiveInt,
+  value: z.string().max(2000),
+})
+
+export const bindWebhookFieldSchema = z.object({
+  fieldId: positiveInt,
+  bound: z.boolean(),
+})
+
 // ── Invitations ────────────────────────────────────────────────────────────
 
 export const createInvitationSchema = z.object({
@@ -249,6 +289,7 @@ export const fieldInputSchema = z.object({
   sortOrder: z.number().int().optional(),
   staffOnly: z.boolean().optional(),
   locationFilterEnabled: z.boolean().optional(),
+  studentIdWebhookId: z.number().int().positive().nullable().optional(),
 })
 
 export const createCollectionSchema = z.object({

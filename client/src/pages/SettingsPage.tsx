@@ -42,6 +42,7 @@ import { listUsers, createUser, deleteUser, updateUser, resetUserPassword, type 
 import { getUserLocations, updateUserLocations, listLocations, createLocation, deleteLocation, updateLocation, importLocationsFromJson, setLocationShared, setAllLocationsShared } from '../api/locations'
 import { listGroups, createGroup, updateGroup, deleteGroup, listGroupMembers, addGroupMember, removeGroupMember } from '../api/groups'
 import { LocationTypeahead } from '../components/common/LocationTypeahead'
+import WebhooksPanel from '../components/settings/WebhooksPanel'
 import RichTextEditor from '../components/common/RichTextEditor'
 import { useAuth } from '../contexts/AuthContext'
 import type { Category, Collection, GalleryAsset, Group, GroupMember, Location, MembershipRole, Organization } from '../types'
@@ -87,12 +88,13 @@ type PanelId =
   | 'manage-tabs'
   | 'visibility-settings'
   | 'ticket-activity'
+  | 'webhooks'
 
 type PanelLayout = Record<string, PanelId[]>
 
 const SETTINGS_LAYOUT_PREF = 'settings_panel_layout'
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
-  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections', 'ticket-activity', 'visibility-settings'],
+  general: ['organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections', 'ticket-activity', 'webhooks', 'visibility-settings'],
   other: ['qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed'],
 }
 const PANEL_LABELS: Record<PanelId, string> = {
@@ -116,12 +118,13 @@ const PANEL_LABELS: Record<PanelId, string> = {
   'manage-tabs': 'Manage Tabs',
   'visibility-settings': 'Visibility Settings',
   'ticket-activity': 'Ticket Activity',
+  webhooks: 'Webhooks',
 }
 
 
 const ALL_PANEL_IDS: PanelId[] = [
   'organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels', 'users', 'groups', 'locations', 'gallery', 'archived-collections',
-  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs', 'visibility-settings', 'ticket-activity',
+  'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed', 'manage-tabs', 'visibility-settings', 'ticket-activity', 'webhooks',
 ]
 
 const VISIBILITY_EXCLUDED: PanelId[] = ['manage-tabs', 'visibility-settings']
@@ -5216,6 +5219,9 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+      )
+      case 'webhooks': return user?.role !== 'super_admin' && user?.role !== 'administrator' ? null : (
+      <WebhooksPanel />
       )
       case 'ticket-activity': return user?.role !== 'super_admin' ? null : (
       <section className="bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] rounded-lg overflow-hidden">

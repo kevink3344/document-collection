@@ -70,7 +70,7 @@ export type FieldType =
 export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionType = 'standard' | 'signup_sheet'
 export type CollectionStatus = 'draft' | 'published' | 'archived'
-export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers'
+export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers' | 'student_id'
 export type ApprovalAssignmentType = 'user' | 'role'
 export type ApprovalConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_or_equal' | 'less_than' | 'less_or_equal' | 'contains' | 'not_empty' | 'is_empty'
 export type ApprovalWorkflowStatus = 'not_started' | 'pending' | 'approved' | 'rejected' | 'cancelled' | 'escalated'
@@ -177,6 +177,8 @@ export interface CollectionField {
   tableColumns: TableColumn[] | null
   staffOnly?: boolean
   locationFilterEnabled?: boolean
+  isStudentId?: boolean
+  studentIdWebhookId?: number | null
 }
 
 export interface Collection {
@@ -506,5 +508,62 @@ export interface ExportCsvPreset {
   ticketColumns: string[]
   createdAt: string
   updatedAt: string
+}
+
+// ── Webhooks ──────────────────────────────────────────────────
+
+export type WebhookKey = 'webhook-1' | 'webhook-2'
+export type WebhookResponseShape = 'json_boolean' | 'json_string' | 'plain_text'
+
+export interface Webhook {
+  id: number
+  organizationId: number
+  key: WebhookKey
+  name: string | null
+  url: string
+  hasSecret: boolean
+  enabled: boolean
+  timeoutMs: number
+  responseShape: WebhookResponseShape
+  responseKey: string
+  boundFieldIds: number[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WebhookInput {
+  name?: string | null
+  url: string
+  secret?: string
+  enabled?: boolean
+  timeoutMs?: number
+  responseShape?: WebhookResponseShape
+  responseKey?: string
+}
+
+export interface WebhookTestResult {
+  ok: boolean
+  httpStatus: number | null
+  durationMs: number
+  parsed?: boolean | null
+  rawBody: string
+  error: string | null
+}
+
+export interface WebhookDelivery {
+  id: number
+  direction: 'validate' | 'submit'
+  status: 'success' | 'failed'
+  httpStatus: number | null
+  durationMs: number | null
+  error: string | null
+  responseBody: string | null
+  createdAt: string
+}
+
+export interface FieldValidationResult {
+  valid: boolean
+  reason?: 'invalid' | 'error'
+  skipped?: boolean
 }
 

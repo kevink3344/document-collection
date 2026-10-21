@@ -291,12 +291,25 @@ const VISIBILITY_CHECKLIST_IDS = [
   'organizations', 'categories', 'notifications', 'login-page', 'navigation', 'menu-labels',
   'users', 'groups', 'locations', 'gallery', 'archived-collections',
   'qr-code', 'logo-padding', 'database-mode', 'document-storage', 'api', 'seed',
+  'ticket-activity', 'webhooks',
 ] as const
 const VISIBILITY_ALLOWLIST = new Set<string>(VISIBILITY_CHECKLIST_IDS as readonly string[])
 
+/**
+ * Panels introduced after a visibility list was last saved. Without this, a
+ * stored list would silently hide every panel added later, because the filter
+ * below only keeps ids that were explicitly saved.
+ */
+const VISIBILITY_ADDED_LATER = ['ticket-activity', 'webhooks'] as const
+
 function normalizeVisibleIds(ids: unknown): string[] {
   if (!Array.isArray(ids)) return []
-  return ids.filter((v): v is string => typeof v === 'string' && VISIBILITY_ALLOWLIST.has(v))
+  const saved = ids.filter((v): v is string => typeof v === 'string' && VISIBILITY_ALLOWLIST.has(v))
+  const present = new Set(saved)
+  for (const id of VISIBILITY_ADDED_LATER) {
+    if (!present.has(id)) saved.push(id)
+  }
+  return saved
 }
 
 /**
