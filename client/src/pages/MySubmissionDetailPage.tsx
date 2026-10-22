@@ -282,6 +282,12 @@ export default function MySubmissionDetailPage() {
         <p className="text-xs text-[#64748B]">
           Submitted {timeAgo(detail.submittedAt)} &middot; {new Date(detail.submittedAt).toLocaleString()}
         </p>
+        {detail.webhook2TicketNo && (
+          <p className="text-xs text-[#64748B]">
+            Ticket number{' '}
+            <span className="font-mono font-medium text-[#1E293B] dark:text-[#F1F5F9]">{detail.webhook2TicketNo}</span>
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           {detail.canEdit && detail.editableUntil ? (
             <span className="text-[11px] font-medium px-2 py-0.5 rounded-[2px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">

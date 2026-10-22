@@ -15,6 +15,7 @@ BEGIN
     timeout_ms      INT NOT NULL CONSTRAINT DF_webhooks_timeout DEFAULT (5000),
     response_shape  NVARCHAR(20) NOT NULL CONSTRAINT DF_webhooks_shape DEFAULT ('json_boolean'),
     response_key    NVARCHAR(64) NOT NULL CONSTRAINT DF_webhooks_key DEFAULT ('valid'),
+    response_example NVARCHAR(MAX) NULL,
     created_by      BIGINT NULL,
     created_at      NVARCHAR(32) NOT NULL CONSTRAINT DF_webhooks_created DEFAULT (CONVERT(NVARCHAR(32), GETDATE(), 120)),
     updated_at      NVARCHAR(32) NOT NULL CONSTRAINT DF_webhooks_updated DEFAULT (CONVERT(NVARCHAR(32), GETDATE(), 120)),
@@ -79,4 +80,13 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_webhook_field_bindings_field' AND object_id = OBJECT_ID('dbo.webhook_field_bindings'))
   CREATE INDEX idx_webhook_field_bindings_field ON dbo.webhook_field_bindings(field_id);
+GO
+
+-- Columns added after the tables were first created. Guarded so re-running is safe.
+IF COL_LENGTH('dbo.webhooks', 'response_example') IS NULL
+  ALTER TABLE dbo.webhooks ADD response_example NVARCHAR(MAX) NULL;
+GO
+
+IF COL_LENGTH('dbo.collection_responses', 'webhook2_ticket_no') IS NULL
+  ALTER TABLE dbo.collection_responses ADD webhook2_ticket_no NVARCHAR(64) NULL;
 GO

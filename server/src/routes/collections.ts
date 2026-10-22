@@ -2086,6 +2086,19 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
           }),
       }
       void sendSubmissionWebhook(submitHook, payload, responseId)
+        .then(async ticketNo => {
+          if (!ticketNo) return
+          // Store the ticket number returned by webhook-2 alongside the response.
+          try {
+            const db2 = await getDbAsync()
+            await db2.execute(
+              'UPDATE collection_responses SET webhook2_ticket_no = ? WHERE id = ?',
+              [ticketNo, responseId],
+            )
+          } catch (err) {
+            console.error('[collections] failed to store webhook-2 ticket number:', (err as Error).message)
+          }
+        })
         .catch(err => console.error('[collections] submission webhook error:', err))
     }
 
@@ -3230,6 +3243,7 @@ router.get('/:id/responses', authenticateToken, async (req: Request, res: Respon
       respondentName: r.respondent_name,
       respondentEmail: r.respondent_email,
       submittedAt: r.submitted_at,
+      webhook2TicketNo: (r as typeof r & { webhook2_ticket_no?: string | null }).webhook2_ticket_no ?? null,
       workflow: await getWorkflowSummaryForResponse(r.id, db),
       values: (valsByResponse.get(r.id) ?? []).map(v => ({
         fieldId: v.field_id,

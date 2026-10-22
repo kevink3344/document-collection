@@ -11,6 +11,7 @@ export interface MySubmission {
   lastEditedAt: string | null
   canEdit: boolean
   submittedAt: string
+  webhook2TicketNo?: string | null
 }
 
 export interface MySubmissionValue {

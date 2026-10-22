@@ -72,6 +72,11 @@ export default function MySubmissionsPage() {
                           )}
                         </div>
                         <p className="text-xs text-[#64748B] mt-0.5">{timeAgo(sub.submittedAt)}</p>
+                        {sub.webhook2TicketNo && (
+                          <p className="text-[11px] text-[#64748B] mt-0.5">
+                            Ticket <span className="font-mono font-medium text-[#1E293B] dark:text-[#F1F5F9]">{sub.webhook2TicketNo}</span>
+                          </p>
+                        )}
                         {sub.canEdit && sub.editableUntil && (
                           <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5">
                             Editable until {new Date(sub.editableUntil).toLocaleString()}

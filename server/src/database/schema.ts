@@ -183,6 +183,7 @@ export function createSchema(db: AppDatabase): void {
       respondent_email TEXT,
       editable_until   TEXT,
       last_edited_at   TEXT,
+      webhook2_ticket_no TEXT,
       submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     );
   `)
@@ -725,6 +726,8 @@ export function createSchema(db: AppDatabase): void {
       response_shape  TEXT    NOT NULL DEFAULT 'json_boolean'
                               CHECK(response_shape IN ('json_boolean', 'json_string', 'plain_text')),
       response_key    TEXT    NOT NULL DEFAULT 'valid',
+      -- Free-form JSON the admin edits to document what the endpoint returns.
+      response_example TEXT,
       created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
       updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),

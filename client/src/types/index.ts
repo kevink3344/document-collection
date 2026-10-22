@@ -260,6 +260,7 @@ export interface CollectionResponse {
   respondentName: string | null
   respondentEmail: string | null
   submittedAt: string
+  webhook2TicketNo?: string | null
   workflow?: ApprovalWorkflowSummary | null
   values: {
     fieldId: number
@@ -526,6 +527,7 @@ export interface Webhook {
   timeoutMs: number
   responseShape: WebhookResponseShape
   responseKey: string
+  responseExample: string | null
   boundFieldIds: number[]
   createdAt: string
   updatedAt: string
@@ -539,6 +541,7 @@ export interface WebhookInput {
   timeoutMs?: number
   responseShape?: WebhookResponseShape
   responseKey?: string
+  responseExample?: string | null
 }
 
 export interface WebhookTestResult {
@@ -546,6 +549,7 @@ export interface WebhookTestResult {
   httpStatus: number | null
   durationMs: number
   parsed?: boolean | null
+  extracted?: string | null
   rawBody: string
   error: string | null
 }

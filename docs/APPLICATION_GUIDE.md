@@ -401,6 +401,30 @@ Called after a response is saved. Fire-and-forget: a slow or failing endpoint ne
 
 **Settings → Webhooks** (Administrators and Super Admins). It sits in the **General** tab next to *Ticket Activity*.
 
+Each webhook card is split into three tabs:
+
+| Tab | Contents |
+|-----|----------|
+| **General** | URL, name, timeout, secret, and the enabled toggle. |
+| **Request** | Read-only JSON showing exactly what the app will POST, plus a field reference and the headers sent. |
+| **Response** | The response shape/key and an **editable** expected-response body. Webhook 1 reads a true/false result; webhook 2 reads a ticket number. |
+
+The expected response is documentation you control — edit it to record what your endpoint actually returns, and **Reset to default** regenerates it from the current shape/key. Changing the shape or key updates the example automatically unless you've customised it.
+
+### Webhook 2 ticket numbers
+
+Webhook 2 is expected to return a ticket number, e.g.:
+
+```json
+{ "ticket_no": "123456789" }
+```
+
+The app reads the property named by the **Key** field (default `ticket_no`) and stores it on the submission. It appears on the Records page, My Submissions, and the submission detail view. The **Test** button reports `Ticket: …` when the value parses successfully.
+
+If the key is missing or empty, the submission still succeeds — only the ticket number is absent.
+
+The Request tab is read-only reference. The Response tab is editable — both the shape/key and the expected-response body.
+
 ### Production deployment
 
 The webhook tables are created automatically at startup on Azure App Service. If the app's database login lacks `CREATE TABLE` permission, the bootstrap logs a clear instruction and the feature returns **503 `WEBHOOKS_TABLES_MISSING`** until an admin runs `server/scripts/webhooks-sqlserver.sql` once. See `SQL_SERVER_MIGRATION_LOG.md`. Set `SQLSERVER_BOOTSTRAP_DDL=false` to skip the startup attempt.

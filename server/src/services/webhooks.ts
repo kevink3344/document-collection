@@ -14,6 +14,7 @@ export interface DbWebhook {
   timeout_ms: number
   response_shape: WebhookResponseShape
   response_key: string
+  response_example: string | null
   created_by: number | null
   created_at: string
   updated_at: string
@@ -264,6 +265,42 @@ export async function callValidationWebhook(
   }
 }
 
+/**
+ * Extract a string value from a webhook-2 response using the configured
+ * shape/key — e.g. `{ "ticket_no": "123456789" }` with key `ticket_no`.
+ * Returns null when the body can't be read or the key is absent/empty.
+ */
+export function extractResponseValue(
+  hook: { response_shape?: string | null; response_key?: string | null },
+  bodyText: string,
+): string | null {
+  const shape = hook.response_shape ?? 'json_boolean'
+  const key = hook.response_key?.trim() || 'ticket_no'
+
+  if (shape === 'plain_text') {
+    const trimmed = bodyText.trim()
+    return trimmed || null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(bodyText)
+  } catch {
+    return null
+  }
+
+  if (parsed === null || typeof parsed !== 'object') {
+    const scalar = String(parsed ?? '').trim()
+    return scalar || null
+  }
+
+  const raw = (parsed as Record<string, unknown>)[key]
+  if (raw === null || raw === undefined) return null
+  if (typeof raw === 'string') return raw.trim() || null
+  if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw)
+  return null
+}
+
 export interface SubmissionWebhookPayload {
   event: 'submission.created'
   responseId: number
@@ -279,13 +316,16 @@ export interface SubmissionWebhookPayload {
 
 /**
  * Fire-and-forget submission forwarding. Failures are logged, never thrown.
+ * Returns the ticket number parsed from the response, if one was configured.
  */
 export async function sendSubmissionWebhook(
   hook: DbWebhook,
   payload: SubmissionWebhookPayload,
   responseId: number,
-): Promise<void> {
+): Promise<string | null> {
   const result = await postJson(hook.url, hook.secret, hook.timeout_ms || 5000, payload)
+  const ticketNo = result.ok ? extractResponseValue(hook, result.body) : null
+
   await logDelivery({
     webhookId: hook.id,
     responseId,
@@ -296,4 +336,6 @@ export async function sendSubmissionWebhook(
     error: result.error,
     responseBody: result.body,
   })
+
+  return ticketNo
 }

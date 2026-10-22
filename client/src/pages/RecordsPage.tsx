@@ -1,7 +1,7 @@
 import { parseAttachmentValue } from '../utils/attachmentValue'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, ClipboardList, Clipboard, LayoutGrid, Lock, LockOpen, Mail, MessageSquare, Save, Table2, Tag, Trash2, User as UserIcon, Download, X } from 'lucide-react'
+import { Calendar, ClipboardList, Clipboard, LayoutGrid, Lock, LockOpen, Mail, MessageSquare, Save, Table2, Tag, Ticket, Trash2, User as UserIcon, Download, X } from 'lucide-react'
 import { approveResponseWorkflow, getCollection, getComments, addComment, deleteComment, getResponses, listCollections, rejectResponseWorkflow, upsertStaffFields } from '../api/collections'
 import {
   getCollectionTicketTemplates,
@@ -2270,6 +2270,12 @@ export default function RecordsPage() {
                       <span className="flex items-center gap-1">
                         <Mail size={12} />
                         {response.respondentEmail}
+                      </span>
+                    )}
+                    {response.webhook2TicketNo && (
+                      <span className="flex items-center gap-1">
+                        <Ticket size={12} />
+                        <span className="font-mono">{response.webhook2TicketNo}</span>
                       </span>
                     )}
                   </div>

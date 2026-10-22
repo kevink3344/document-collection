@@ -230,6 +230,7 @@ export const upsertWebhookSchema = z.object({
   timeoutMs: z.number().int().min(500).max(30000).optional(),
   responseShape: webhookResponseShapeSchema.optional(),
   responseKey: z.string().trim().min(1).max(64).optional(),
+  responseExample: z.string().max(20000).nullable().optional(),
 })
 
 export const validateFieldSchema = z.object({

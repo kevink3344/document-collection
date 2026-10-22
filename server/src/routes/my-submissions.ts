@@ -22,6 +22,7 @@ interface DbSubmissionRow {
   version_number: number | null
   editable_until: string | null
   last_edited_at: string | null
+  webhook2_ticket_no: string | null
   submitted_at: string
 }
 
@@ -85,6 +86,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
            cv.version_number,
            cr.editable_until,
            cr.last_edited_at,
+           cr.webhook2_ticket_no,
            cr.submitted_at
          FROM collection_responses cr
          JOIN collections c ON c.id = cr.collection_id
@@ -106,6 +108,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         lastEditedAt: r.last_edited_at ? toIsoUtc(r.last_edited_at) : null,
         canEdit: isEditableNow(r.editable_until),
         submittedAt: toIsoUtc(r.submitted_at),
+        webhook2TicketNo: r.webhook2_ticket_no ?? null,
       }))
     )
   } catch (err) {

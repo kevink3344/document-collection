@@ -6,6 +6,7 @@ import { loadRequestUserContext, isAdminOrSuperAdmin, isAdministrator } from '..
 import { upsertWebhookSchema, bindWebhookFieldSchema, webhookKeySchema } from '../lib/schemas'
 import {
   callValidationWebhook,
+  extractResponseValue,
   logDelivery,
   type DbWebhook,
   type WebhookKey,
@@ -57,6 +58,7 @@ function toApiWebhook(row: WebhookRow, boundFieldIds: number[] = []) {
     timeoutMs: row.timeout_ms,
     responseShape: row.response_shape ?? 'json_boolean',
     responseKey: row.response_key ?? 'valid',
+    responseExample: row.response_example ?? null,
     boundFieldIds,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -151,6 +153,7 @@ router.put('/:key', authenticateToken, validate(upsertWebhookSchema), withWebhoo
     timeoutMs?: number
     responseShape?: 'json_boolean' | 'json_string' | 'plain_text'
     responseKey?: string
+    responseExample?: string | null
   }
 
   const db = await getDbAsync()
@@ -177,21 +180,24 @@ router.put('/:key', authenticateToken, validate(upsertWebhookSchema), withWebhoo
   const nextTimeout = body.timeoutMs ?? existing?.timeout_ms ?? 5000
   const nextShape = body.responseShape ?? existing?.response_shape ?? 'json_boolean'
   const nextKey = body.responseKey?.trim() || existing?.response_key || 'valid'
+  const nextExample = body.responseExample === undefined
+    ? existing?.response_example ?? null
+    : (body.responseExample?.trim() || null)
 
   if (existing) {
     await db.execute(
       `UPDATE webhooks
           SET name = ?, url = ?, secret = ?, enabled = ?, timeout_ms = ?,
-              response_shape = ?, response_key = ?, updated_at = datetime('now')
+              response_shape = ?, response_key = ?, response_example = ?, updated_at = datetime('now')
         WHERE id = ?`,
-      [nextName, body.url.trim(), nextSecret, nextEnabled, nextTimeout, nextShape, nextKey, existing.id],
+      [nextName, body.url.trim(), nextSecret, nextEnabled, nextTimeout, nextShape, nextKey, nextExample, existing.id],
     )
   } else {
     await db.execute(
       `INSERT INTO webhooks
-         (organization_id, key, name, url, secret, enabled, timeout_ms, response_shape, response_key, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [organizationId, key, nextName, body.url.trim(), nextSecret, nextEnabled, nextTimeout, nextShape, nextKey, req.user?.sub ?? null],
+         (organization_id, key, name, url, secret, enabled, timeout_ms, response_shape, response_key, response_example, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [organizationId, key, nextName, body.url.trim(), nextSecret, nextEnabled, nextTimeout, nextShape, nextKey, nextExample, req.user?.sub ?? null],
     )
   }
 
@@ -304,6 +310,7 @@ router.post('/:key/test', authenticateToken, withWebhookTableGuard(async (req: R
       ok: res2.ok,
       httpStatus: res2.status,
       durationMs: Date.now() - startedAt,
+      extracted: res2.ok ? extractResponseValue(hook, body) : null,
       rawBody: body.slice(0, 1000),
       error: res2.ok ? null : `HTTP ${res2.status}`,
     })

@@ -879,6 +879,7 @@ function applyIncrementalSchema(database: AppDatabase): void {
       response_shape  TEXT    NOT NULL DEFAULT 'json_boolean'
                               CHECK(response_shape IN ('json_boolean', 'json_string', 'plain_text')),
       response_key    TEXT    NOT NULL DEFAULT 'valid',
+      response_example TEXT,
       created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
       updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -1632,6 +1633,12 @@ function runMigrations(db: AppDatabase): void {
   if (!responseColNames.has('last_edited_at')) {
     db.exec(`ALTER TABLE collection_responses ADD COLUMN last_edited_at TEXT`)
     console.log('[db] Migration: added collection_responses.last_edited_at')
+  }
+
+  // Ticket number returned by webhook-2, stored alongside the submission.
+  if (!responseColNames.has('webhook2_ticket_no')) {
+    db.exec(`ALTER TABLE collection_responses ADD COLUMN webhook2_ticket_no TEXT`)
+    console.log('[db] Migration: added collection_responses.webhook2_ticket_no')
   }
 
   if (
