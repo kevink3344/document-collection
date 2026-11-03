@@ -15,7 +15,7 @@ import { PLACEHOLDER_COVER_URL, getCoverPhotoKind } from '../utils/coverPhoto'
 import { useAuth } from '../contexts/AuthContext'
 import RichTextEditor from '../components/common/RichTextEditor'
 import QRCode from 'qrcode'
-import type { AttachmentReference, Collection, CollectionField } from '../types'
+import type { AttachmentReference, Collection, CollectionField, MatrixLikertConfig } from '../types'
 
 // ── Style tokens ──────────────────────────────────────────────
 
@@ -284,19 +284,48 @@ interface MatrixLikertScaleInputProps {
   disabled: boolean
 }
 
-function MatrixLikertScaleInput({ field, value, onChange, disabled }: MatrixLikertScaleInputProps) {
-  let config: { rows: string[]; columns: string[] } | null = null
+/** Parse the matrix config stored as JSON in `options[0]`. */
+function getMatrixConfig(field: CollectionField): MatrixLikertConfig | null {
   try {
-    if (field.options && field.options.length > 0 && typeof field.options[0] === 'string') {
-      config = JSON.parse(field.options[0])
+    const first = field.options?.[0]
+    if (typeof first === 'string' && first.startsWith('{')) {
+      const parsed = JSON.parse(first) as MatrixLikertConfig
+      if (Array.isArray(parsed?.rows) && Array.isArray(parsed?.columns)) return parsed
     }
   } catch {
-    // Fail silently
+    // fall through
   }
+  return null
+}
+
+/**
+ * True when any row marked required is unanswered. Row rules only apply when
+ * the field itself is required — an optional question never enforces them.
+ */
+function hasUnansweredRequiredRows(field: CollectionField, value: string): boolean {
+  if (!field.required) return false
+  const config = getMatrixConfig(field)
+  if (!config?.requiredRows?.length) return false
+
+  let responses: Record<string, string> = {}
+  try {
+    responses = value ? (JSON.parse(value) as Record<string, string>) : {}
+  } catch {
+    responses = {}
+  }
+
+  return config.requiredRows.some(idx => (responses[idx] ?? '').trim() === '')
+}
+
+function MatrixLikertScaleInput({ field, value, onChange, disabled }: MatrixLikertScaleInputProps) {
+  const config = getMatrixConfig(field)
 
   if (!config) {
     return <div className="text-xs text-red-500">Invalid matrix configuration</div>
   }
+
+  const requiredRows = field.required ? (config.requiredRows ?? []) : []
+  const isRequiredRow = (rowIdx: number) => requiredRows.includes(rowIdx)
 
   let responses: Record<number, string> = {}
   try {
@@ -324,7 +353,10 @@ function MatrixLikertScaleInput({ field, value, onChange, disabled }: MatrixLike
             key={rowIdx}
             className="rounded-lg border border-[#CBD5E1] dark:border-[#334155] bg-white dark:bg-[#0B1220] p-3"
           >
-            <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">{row}</p>
+            <p className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
+              {row}
+              {isRequiredRow(rowIdx) && <span className="text-red-500 ml-0.5">*</span>}
+            </p>
             <div className="mt-2 space-y-2">
               {config.columns.map((col, colIdx) => (
                 <label
@@ -368,6 +400,7 @@ function MatrixLikertScaleInput({ field, value, onChange, disabled }: MatrixLike
               <tr key={rowIdx}>
                 <td className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-3 font-medium text-[#1E293B] dark:text-[#F1F5F9]">
                   {row}
+                  {isRequiredRow(rowIdx) && <span className="text-red-500 ml-0.5">*</span>}
                 </td>
                 {config.columns.map((col, colIdx) => (
                   <td
@@ -1157,6 +1190,10 @@ export default function CollectionFillPage() {
         return parseAttachmentValue(value).length > 0 || value.trim() !== ''
       case 'confirmation':
         return value === 'true'
+      case 'matrix_likert_scale':
+        // Row-level rules take precedence; otherwise fall back to "at least one row".
+        if (hasUnansweredRequiredRows(field, value)) return false
+        return value.trim() !== ''
       default:
         return value.trim() !== ''
     }
@@ -1179,6 +1216,10 @@ export default function CollectionFillPage() {
       } catch {
         // ignore malformed value, required validator handles invalid JSON
       }
+    }
+
+    if (field.type === 'matrix_likert_scale' && hasUnansweredRequiredRows(field, value)) {
+      return 'Please answer all required rows.'
     }
 
     if (!isRequiredFieldFilled(field, value)) {

@@ -42,7 +42,7 @@ import { listTicketTemplates } from '../api/ticketTemplates'
 import { listCategories } from '../api/categories'
 import { listUsers, type AppUser } from '../api/users'
 import { listWebhooks } from '../api/webhooks'
-import type { Category, Collection, CollectionField, CollectionShare, CollectionTicketTemplate, GalleryAsset, Group, TicketTemplate, Webhook } from '../types'
+import type { Category, Collection, CollectionField, CollectionShare, CollectionTicketTemplate, GalleryAsset, Group, MatrixLikertConfig, TicketTemplate, Webhook } from '../types'
 import type {
   ApprovalWorkflowCondition,
   ApprovalWorkflowDefinition,
@@ -3265,22 +3265,42 @@ function FieldCard({
       )}
 
       {/* Matrix Likert config */}
-      {field.type === 'matrix_likert_scale' && (
-        <div className="pl-7">
-          <button
-            onClick={() => onConfigureMatrix()}
-            className="flex items-center gap-1.5 text-xs bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-3 py-1.5 rounded transition-colors"
-          >
-            <Settings2 size={13} />
-            Configure Matrix
-            {field.options && field.options.length > 0 && (
-              <span className="ml-1 text-white font-medium">
-                ({field.options.length} rows)
-              </span>
+      {field.type === 'matrix_likert_scale' && (() => {
+        // options[0] holds the whole matrix config as JSON, so its length is
+        // always 1 — read the real row count from the parsed config.
+        let matrixConfig: MatrixLikertConfig | null = null
+        try {
+          const first = field.options?.[0]
+          if (typeof first === 'string' && first.startsWith('{')) {
+            matrixConfig = JSON.parse(first) as MatrixLikertConfig
+          }
+        } catch {
+          matrixConfig = null
+        }
+        const requiredCount = matrixConfig?.requiredRows?.length ?? 0
+
+        return (
+          <div className="pl-7 space-y-1.5">
+            <button
+              onClick={() => onConfigureMatrix()}
+              className="flex items-center gap-1.5 text-xs bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-3 py-1.5 rounded transition-colors"
+            >
+              <Settings2 size={13} />
+              Configure Matrix
+              {matrixConfig && matrixConfig.rows.length > 0 && (
+                <span className="ml-1 text-white font-medium">
+                  ({matrixConfig.rows.length} rows{requiredCount > 0 ? `, ${requiredCount} required` : ''})
+                </span>
+              )}
+            </button>
+            {requiredCount > 0 && !field.required && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Row requirements only apply when this question is marked required.
+              </p>
             )}
-          </button>
-        </div>
-      )}
+          </div>
+        )
+      })()}
 
       {/* Student ID validation webhook (one per form) */}
       {field.displayStyle === STUDENT_ID_DISPLAY_STYLE && (

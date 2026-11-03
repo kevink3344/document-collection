@@ -1,10 +1,8 @@
 import { useState } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
+import type { MatrixLikertConfig } from '../../types'
 
-interface MatrixConfig {
-  rows: string[]
-  columns: string[]
-}
+type MatrixConfig = MatrixLikertConfig
 
 interface Props {
   config: MatrixConfig | null
@@ -26,16 +24,30 @@ export default function MatrixLikertConfigModal({ config, onSave, onClose }: Pro
   const [rows, setRows] = useState<string[]>(config?.rows && config.rows.length > 0 ? [...config.rows] : [...defaultConfig.rows])
   const [columns, setColumns] = useState<string[]>(config?.columns && config.columns.length > 0 ? [...config.columns] : [...defaultConfig.columns])
 
+  // Kept index-aligned with `rows` so a required flag follows its row when rows
+  // are added or removed, rather than pointing at a stale index.
+  const [requiredFlags, setRequiredFlags] = useState<boolean[]>(() => {
+    const initialRows = config?.rows && config.rows.length > 0 ? config.rows : defaultConfig.rows
+    const required = config?.requiredRows ?? []
+    return initialRows.map((_, i) => required.includes(i))
+  })
+
   function updateRow(idx: number, val: string) {
     setRows(prev => prev.map((r, i) => (i === idx ? val : r)))
   }
 
   function addRow() {
     setRows(prev => [...prev, ''])
+    setRequiredFlags(prev => [...prev, false])
   }
 
   function removeRow(idx: number) {
     setRows(prev => prev.filter((_, i) => i !== idx))
+    setRequiredFlags(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function toggleRequired(idx: number, checked: boolean) {
+    setRequiredFlags(prev => prev.map((v, i) => (i === idx ? checked : v)))
   }
 
   function updateColumn(idx: number, val: string) {
@@ -51,15 +63,30 @@ export default function MatrixLikertConfigModal({ config, onSave, onClose }: Pro
   }
 
   function handleSave() {
-    const validRows = rows.filter(r => r.trim() !== '').map(r => r.trim())
+    // Blank rows are dropped, so required indices must be recomputed against the
+    // surviving rows rather than the editor's current positions.
+    const kept: Array<{ label: string; required: boolean }> = []
+    rows.forEach((row, i) => {
+      const label = row.trim()
+      if (label) kept.push({ label, required: requiredFlags[i] ?? false })
+    })
     const validColumns = columns.filter(c => c.trim() !== '').map(c => c.trim())
 
-    if (validRows.length === 0 || validColumns.length === 0) {
+    if (kept.length === 0 || validColumns.length === 0) {
       alert('Please add at least one row and one column.')
       return
     }
 
-    onSave({ rows: validRows, columns: validColumns })
+    const requiredRows = kept
+      .map((row, idx) => (row.required ? idx : -1))
+      .filter(idx => idx >= 0)
+
+    onSave({
+      rows: kept.map(r => r.label),
+      columns: validColumns,
+      // Omit when nothing is required so existing configs stay unchanged.
+      ...(requiredRows.length > 0 ? { requiredRows } : {}),
+    })
   }
 
   return (
@@ -82,9 +109,13 @@ export default function MatrixLikertConfigModal({ config, onSave, onClose }: Pro
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
           {/* Rows section */}
           <div>
-            <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] mb-3">
+            <h3 className="text-sm font-semibold text-[#1E293B] dark:text-[#F1F5F9] mb-1">
               Rows (Left side labels)
             </h3>
+            <p className="text-xs text-[#64748B] mb-3">
+              Tick <span className="font-medium">Required</span> on any row that must be answered. Leave all unticked
+              to require the whole matrix only when the question itself is marked required.
+            </p>
             <div className="space-y-2">
               {rows.map((row, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -95,9 +126,20 @@ export default function MatrixLikertConfigModal({ config, onSave, onClose }: Pro
                     onChange={e => updateRow(i, e.target.value)}
                     className={`${INPUT} flex-1`}
                   />
+                  <label className="flex items-center gap-1.5 shrink-0 text-xs text-[#475569] dark:text-[#CBD5E1] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={requiredFlags[i] ?? false}
+                      onChange={e => toggleRequired(i, e.target.checked)}
+                      className="h-3.5 w-3.5 accent-[#2563EB]"
+                      aria-label={`Mark row ${i + 1} required`}
+                    />
+                    Required
+                  </label>
                   <button
                     onClick={() => removeRow(i)}
                     className="text-[#94A3B8] hover:text-red-500 transition-colors shrink-0"
+                    aria-label={`Remove row ${i + 1}`}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -171,6 +213,7 @@ export default function MatrixLikertConfigModal({ config, onSave, onClose }: Pro
                     <tr key={i}>
                       <td className="border border-[#CBD5E1] dark:border-[#334155] bg-[#F1F5F9] dark:bg-[#0F172A] p-2 font-semibold text-[#1E293B] dark:text-[#F1F5F9]">
                         {row || `Row ${i + 1}`}
+                        {requiredFlags[i] && <span className="text-red-500 ml-0.5">*</span>}
                       </td>
                       {columns.map((_, j) => (
                         <td

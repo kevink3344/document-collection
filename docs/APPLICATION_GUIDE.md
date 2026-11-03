@@ -142,7 +142,7 @@ A full-stack document and survey collection platform built with React + TypeScri
 | **Single Choice** | Radio-button group; supports configurable display styles and branching logic |
 | **Multiple Choice** | Checkbox group; supports an **"Other" free-text option**; responses display as a bullet list in Records |
 | **Rating** | Star/numeric rating; configurable **display style** (stars, numbers, etc.) |
-| **Matrix / Likert Scale** | Grid of rows × columns for scaled responses; fully responsive on mobile |
+| **Matrix / Likert Scale** | Grid of rows × columns for scaled responses; fully responsive on mobile. Individual rows can be marked **Required** — see below. |
 | **Date** | Date picker input |
 | **Location** | Dropdown linked to org-scoped locations; supports optional authentication (public access or scoped) |
 | **Student ID** | Text field validated against a configured webhook when the respondent leaves the field. See [Webhooks](#14-webhooks). |
@@ -155,6 +155,14 @@ A full-stack document and survey collection platform built with React + TypeScri
 
 ### Staff-Only Fields
 - Fields can be marked **staff-only**, making them invisible to respondents and only editable by administrators/reviewers in Records.
+
+### Matrix / Likert: Per-Row Required
+- In **Configure Matrix**, each row has a **Required** checkbox. Tick the rows that must be answered; leave the rest unticked to keep them optional.
+- Row requirements apply **only when the question itself is marked required**. If the question is optional, rows are not enforced (the builder shows a hint when this is the case).
+- When at least one row is required, answering those rows satisfies the question — optional rows may be left blank. Respondents see a red asterisk next to required rows.
+- If a required row is unanswered, submission is blocked with *"Please answer all required rows."*
+- Leaving every row unticked preserves the original behaviour: a required matrix needs at least one row answered.
+- Validation is client-side, consistent with all other field types.
 
 ---
 

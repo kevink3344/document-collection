@@ -71,6 +71,17 @@ export type ColType = 'text' | 'number' | 'date' | 'checkbox' | 'list'
 export type CollectionType = 'standard' | 'signup_sheet'
 export type CollectionStatus = 'draft' | 'published' | 'archived'
 export type FieldDisplayStyle = 'radio' | 'dropdown' | 'stars' | 'numbers' | 'student_id'
+
+/**
+ * Matrix / Likert config, stored as JSON in `collection_fields.options[0]`.
+ * `requiredRows` holds row indices that must be answered; absent/empty means
+ * no per-row requirement (the field-level `required` flag governs instead).
+ */
+export interface MatrixLikertConfig {
+  rows: string[]
+  columns: string[]
+  requiredRows?: number[]
+}
 export type ApprovalAssignmentType = 'user' | 'role'
 export type ApprovalConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_or_equal' | 'less_than' | 'less_or_equal' | 'contains' | 'not_empty' | 'is_empty'
 export type ApprovalWorkflowStatus = 'not_started' | 'pending' | 'approved' | 'rejected' | 'cancelled' | 'escalated'

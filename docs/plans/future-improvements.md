@@ -69,6 +69,20 @@ Show inline validation errors on the fill page so respondents catch issues befor
 
 ---
 
+## 5. Per-Row Required on Custom Table Fields
+
+**The Gap:** Matrix / Likert questions gained per-row required rules (see [matrix-likert-required-rows.md](./matrix-likert-required-rows.md)). Custom Table fields still only support a single field-level `required` flag, so staff cannot require specific columns or rows.
+
+**The Improvement:** Extend the same idea to `custom_table` — mark individual columns (and/or rows) as required, validated client-side in `CollectionFillPage`, with a generic "Please answer all required rows" style message.
+
+**Files to Modify:**
+
+- `client/src/components/collections/TableWizardModal.tsx` — per-column required toggle
+- `client/src/pages/CollectionFillPage.tsx` — validation in `isRequiredFieldFilled`
+- `client/src/pages/CollectionBuilderPage.tsx` — summary badge
+
+---
+
 ## Summary
 
 | Improvement | Primary Beneficiary | Effort | Impact |
@@ -77,5 +91,6 @@ Show inline validation errors on the fill page so respondents catch issues befor
 | User dashboard activity | End Users | Medium | High — engagement & clarity |
 | Field validation rules | Admins (data quality) | Medium-High | High — reduces bad data |
 | Print/PDF per submission | Admins | Medium | Medium-High — compliance/sharing |
+| Per-row required on Custom Table | Admins (data quality) | Medium | Medium — consistency with Matrix |
 
 These improvements address clear gaps in functionality that exist in comparable form-builder platforms (Typeform, JotForm, Google Forms) but are currently missing here.
