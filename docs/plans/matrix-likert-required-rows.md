@@ -182,11 +182,25 @@ export interface MatrixLikertConfig {
 
 ---
 
-### Step 3: Builder — show required rows
+### Step 3: Builder — restore the Required toggle for matrix fields
 
 **File:** `client/src/pages/CollectionBuilderPage.tsx`
 
-1. Fix the misleading row count on the "Configure Matrix" button (line ~3270). It currently reads `field.options.length`, which is always `1`:
+> **Bug found during review (2026-11-03):** the field-level **Required** checkbox was
+> explicitly hidden for `matrix_likert_scale` (line ~3031, carried over from the original
+> matrix feature). With no way to mark a matrix required, per-row rules could never apply —
+> the builder only showed the "row requirements only apply when marked required" hint.
+> The exclusion must be removed.
+
+1. Remove `field.type !== 'matrix_likert_scale'` from the Required checkbox condition:
+
+   ```tsx
+   {field.type !== 'comment' && field.type !== 'document' && (
+   ```
+
+   `comment` and `document` stay excluded (they are non-input types).
+
+2. Fix the misleading row count on the "Configure Matrix" button (line ~3270). It currently reads `field.options.length`, which is always `1`:
 
    ```tsx
    {matrixConfigFromField && (
@@ -201,9 +215,9 @@ export interface MatrixLikertConfig {
 
    `matrixConfigFromField` is already computed at line ~1310 — it just isn't in scope in `FieldCard`. Pass it down as a prop (e.g. `matrixConfig`) or parse `field.options[0]` inside `FieldCard`.
 
-2. When the field-level `required` toggle is **off** but `requiredRows` is non-empty, show a hint under the button:
+3. When the field-level `required` toggle is **off** but `requiredRows` is non-empty, show an actionable hint under the button:
 
-   > *"Row requirements only apply when this question is marked required."*
+   > *"Row requirements only apply when this question is marked required — tick **Required** above to enforce them."*
 
    This prevents the silent no-op described in D4.
 

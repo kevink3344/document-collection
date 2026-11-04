@@ -3028,7 +3028,7 @@ function FieldCard({
           />
         )}
         <div className="flex items-center gap-4 flex-wrap">
-          {field.type !== 'comment' && field.type !== 'matrix_likert_scale' && field.type !== 'document' && (
+          {field.type !== 'comment' && field.type !== 'document' && (
           <label className="flex items-center gap-1 text-xs text-[#64748B] cursor-pointer">
             <input
               type="checkbox"
@@ -3295,7 +3295,8 @@ function FieldCard({
             </button>
             {requiredCount > 0 && !field.required && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                Row requirements only apply when this question is marked required.
+                Row requirements only apply when this question is marked required — tick{' '}
+                <span className="font-semibold">Required</span> above to enforce them.
               </p>
             )}
           </div>
