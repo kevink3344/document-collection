@@ -169,8 +169,9 @@ router.get('/', authenticateToken, async (req: Request, res: Response): Promise<
       )
     const overdueCount = overdueRow?.overdueCount ?? 0
 
-    const totalRow = await db.queryOne<{ totalSubmissions: number }>(`SELECT COUNT(*) AS totalSubmissions FROM collection_responses cr ${submissionJoin}`, collectionParams)
-    const totalSubmissions = totalRow?.totalSubmissions ?? 0
+    const totalRow = await db.queryOne<{ totalSubmissions: number | string }>(`SELECT COUNT(*) AS totalSubmissions FROM collection_responses cr ${submissionJoin}`, collectionParams)
+    // SQL Server returns COUNT(*) as a BIGINT digit string; coerce before arithmetic.
+    const totalSubmissions = Number(totalRow?.totalSubmissions ?? 0)
 
     const weekRow = await db.queryOne<{ submissionsThisWeek: number }>(
         `SELECT COUNT(*) AS submissionsThisWeek
@@ -253,10 +254,11 @@ router.get('/reports', authenticateToken, async (req: Request, res: Response): P
     const subWhere = dateThreshold
       ? `WHERE ${!isAdministrator(context!) && context?.organizationId ? 'c.organization_id = ? AND ' : !isAdministrator(context!) ? '1 = 0 AND ' : ''}cr.submitted_at >= ${dateThreshold}${upperClause}`
       : (!isAdministrator(context!) && context?.organizationId ? 'WHERE c.organization_id = ?' : !isAdministrator(context!) ? 'WHERE 1 = 0' : '')
-    const { totalSubmissions } = (await db.queryOne<{ totalSubmissions: number }>(
+    const totalRow2 = await db.queryOne<{ totalSubmissions: number | string }>(
         `SELECT COUNT(*) AS totalSubmissions FROM collection_responses cr JOIN collections c ON c.id = cr.collection_id ${subWhere}`,
         scopeParam
-      )) ?? { totalSubmissions: 0 }
+      )
+    const totalSubmissions = Number(totalRow2?.totalSubmissions ?? 0)
 
     const { activeCollections } = (await db.queryOne<{ activeCollections: number }>(
         `SELECT COUNT(*) AS activeCollections FROM collections c WHERE status = 'published' ${collectionScopeAnd}`,
@@ -452,10 +454,11 @@ router.post('/reports/summary-ai', authenticateToken, async (req: Request, res: 
     const subWhere = responseWhereParts.length > 0 ? `WHERE ${responseWhereParts.join(' AND ')}` : ''
 
     // ── Gather aggregates (same logic as /reports) ───────────
-    const { totalSubmissions } = (await db.queryOne<{ totalSubmissions: number }>(
+    const totalRow3 = await db.queryOne<{ totalSubmissions: number | string }>(
         `SELECT COUNT(*) AS totalSubmissions FROM collection_responses cr JOIN collections c ON c.id = cr.collection_id ${subWhere}`,
         responseParams
-      )) ?? { totalSubmissions: 0 }
+      )
+    const totalSubmissions = Number(totalRow3?.totalSubmissions ?? 0)
 
     const activeCollections = selectedCollection
       ? selectedCollection.status === 'published' ? 1 : 0

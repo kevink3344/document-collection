@@ -900,7 +900,11 @@ async function createCollectionVersion(
 ): Promise<{ versionId: number; versionNumber: number }> {
   const db = await getDbAsync()
   const row = await db.queryOne<{ maxVersion: number }>('SELECT COALESCE(MAX(version_number), 0) AS maxVersion FROM collection_versions WHERE collection_id = ?', [collectionId])
-  const versionNumber = (row?.maxVersion ?? 0) + 1
+  // SQL Server returns aggregate results as BIGINT digit strings ("1"), and the
+  // adapter's column-name coercion does not cover the `maxVersion` alias — so
+  // `"1" + 1` would concatenate to "11". Coerce explicitly.
+  const maxVersion = Number(row?.maxVersion ?? 0)
+  const versionNumber = (Number.isFinite(maxVersion) ? maxVersion : 0) + 1
   const inserted = await db.execute(
       `INSERT INTO collection_versions (collection_id, version_number, status, title, reason, created_by, published_at)
        VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`,
@@ -2972,6 +2976,9 @@ router.delete('/:id/versions/:versionId', authenticateToken, async (req: Request
         [next.id, 'draft', id]
       )
     }
+    // collection_fields.version_id is NO_ACTION in SQL Server, so the version's
+    // field rows must go first or the delete violates the FK.
+    await db.execute('DELETE FROM collection_fields WHERE version_id = ?', [versionId])
     await db.execute('DELETE FROM collection_versions WHERE id = ?', [versionId])
     res.status(204).send()
   } catch (err) {

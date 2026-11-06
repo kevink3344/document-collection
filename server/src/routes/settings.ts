@@ -101,14 +101,16 @@ router.post('/tabs', authenticateToken, validate(createSettingsTabSchema), async
     return
   }
 
-  // Get max sort_order
-  const maxOrder = await db.queryOne<{ maxSort: number }>(
+  // Get max sort_order. SQL Server returns aggregates as BIGINT digit strings,
+  // so coerce before using it in arithmetic.
+  const maxOrder = await db.queryOne<{ maxSort: number | string }>(
     'SELECT COALESCE(MAX(sort_order), -1) + 1 AS maxSort FROM settings_tabs'
   )
+  const nextSortOrder = Number(maxOrder?.maxSort ?? 0)
 
   const result = await db.execute(
     'INSERT INTO settings_tabs (name, slug, sort_order, visible_to) VALUES (?, ?, ?, ?)',
-    [name.trim(), slug.trim(), maxOrder?.maxSort ?? 0, visibleTo]
+    [name.trim(), slug.trim(), Number.isFinite(nextSortOrder) ? nextSortOrder : 0, visibleTo]
   )
 
   const created = await db.queryOne<SettingsTabRow>(
