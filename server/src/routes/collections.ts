@@ -8,6 +8,7 @@ import { timestampSortExpr } from '../database/sql'
 import { authenticateToken, JWT_SECRET, optionalAuthenticateToken } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import { createCollectionSchema, collectionIdParamSchema, validateFieldSchema } from '../lib/schemas'
+import { webhooksEnabled } from '../env'
 import { loadRequestUserContext, isAdministrator, isAdminOrSuperAdmin, canViewResponses, canViewAllResponses, type RequestUserContext } from '../middleware/organizationAccess'
 import { parseAttachmentValue, stringifyAttachmentValue, type AttachmentReference } from '../lib/attachmentValue'
 import { deleteDriveFile, downloadDriveFile, isGoogleDriveConfigured, uploadBufferToDrive } from '../services/googleDrive'
@@ -720,6 +721,25 @@ async function reconcileFieldBindings(
   }
 
   const db = await getDbAsync()
+
+  const collectionFields = await db.queryAll<{ id: number; type: string; display_style: string | null }>(
+    'SELECT id, type, display_style FROM collection_fields WHERE collection_id = ?',
+    [collectionId],
+  )
+
+  const studentIdFieldIds = collectionFields
+    .filter(f => isStudentIdField(f))
+    .map(f => f.id)
+
+  // Nothing to reconcile when no field is a Student ID. Returning here also keeps
+  // collection saves working on a database where the webhook tables have not been
+  // created yet, since the queries below would otherwise fail.
+  if (studentIdFieldIds.length === 0) return
+
+  // Feature disabled: leave existing bindings untouched but never query the
+  // webhook tables, so saves work on databases without them.
+  if (!webhooksEnabled()) return
+
   let webhookId: number | null = null
 
   if (requestedWebhookIds.size === 1) {
@@ -734,17 +754,6 @@ async function reconcileFieldBindings(
     }
     webhookId = hook.id
   }
-
-  const collectionFields = await db.queryAll<{ id: number; type: string; display_style: string | null }>(
-    'SELECT id, type, display_style FROM collection_fields WHERE collection_id = ?',
-    [collectionId],
-  )
-
-  const studentIdFieldIds = collectionFields
-    .filter(f => isStudentIdField(f))
-    .map(f => f.id)
-
-  if (studentIdFieldIds.length === 0) return
 
   const placeholders = studentIdFieldIds.map(() => '?').join(',')
 
@@ -1329,6 +1338,13 @@ router.post('/public/:slug/validate-field', optionalAuthenticateToken, validate(
     return
   }
 
+  // Feature disabled: treat the field as always valid rather than querying the
+  // webhook tables, which may not exist on this environment.
+  if (!webhooksEnabled()) {
+    res.json({ valid: true, skipped: true })
+    return
+  }
+
   const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown'
   if (isValidationRateLimited(`${req.params.slug}:${fieldId}:${clientIp}`)) {
     res.status(429).json({ error: 'Too many validation attempts. Please wait a moment and try again.' })
@@ -1837,6 +1853,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
     // Server-side re-validation of Student ID fields. The client check is
     // advisory; this prevents a crafted payload from bypassing it.
     for (const val of body.values ?? []) {
+      if (!webhooksEnabled()) break
       const field = fieldById.get(val.fieldId)
       if (!field || !isStudentIdField(field)) continue
       const trimmed = (val.value ?? '').trim()
@@ -2057,7 +2074,7 @@ router.post('/public/:slug/responses', optionalAuthenticateToken, async (req: Re
 
     // Forward the submission to webhook-2. Fire-and-forget: a slow or broken
     // endpoint must never make the form appear to fail.
-    const submitHook = col.organization_id
+    const submitHook = webhooksEnabled() && col.organization_id
       ? await getWebhookForOrg(col.organization_id, 'webhook-2')
       : null
     if (submitHook?.enabled) {
@@ -2641,6 +2658,13 @@ router.put('/:id', authenticateToken, validate(collectionIdParamSchema, 'params'
     res.json(toApiCollection(c, fields, colsByField, bindingsByField))
   } catch (err) {
     console.error('[collections] update:', err)
+    const message = (err as Error).message ?? ''
+    // Surface schema/permission problems directly — a generic 500 leaves the
+    // admin with no way to tell a stale CHECK constraint from a real bug.
+    if (/CHECK constraint|conflicted with the (CHECK|REFERENCE) constraint|Invalid column name|Invalid object name|permission was denied/i.test(message)) {
+      res.status(500).json({ error: `Failed to save collection: ${message}` })
+      return
+    }
     res.status(500).json({ error: 'Failed to update collection' })
   }
 })

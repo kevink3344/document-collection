@@ -278,6 +278,7 @@ export default function CollectionBuilderPage() {
   const [workflowStages, setWorkflowStages] = useState<ApprovalWorkflowStageDefinition[]>([blankWorkflowStage(0)])
   const [workflowUsers, setWorkflowUsers] = useState<AppUser[]>([])
   const [approvalWorkflowFeatureEnabled, setApprovalWorkflowFeatureEnabled] = useState(true)
+  const [webhooksFeatureEnabled, setWebhooksFeatureEnabled] = useState(false)
   // env ∧ master switch ∧ enabled in the active organization. Replaces the two
   // separate ticket flags this page used to fetch for itself.
   const { ticketActivityGateEnabled } = useTicketActivityEnabled()
@@ -508,9 +509,10 @@ export default function CollectionBuilderPage() {
 
   useEffect(() => {
     fetch('/api/info')
-      .then(r => r.json() as Promise<{ approvalWorkflowEnabled?: boolean; ticketSystemEnabled?: boolean; defaultImageLogoUrl?: string | null }>)
+      .then(r => r.json() as Promise<{ approvalWorkflowEnabled?: boolean; ticketSystemEnabled?: boolean; webhooksEnabled?: boolean; defaultImageLogoUrl?: string | null }>)
       .then(info => {
         setApprovalWorkflowFeatureEnabled(info.approvalWorkflowEnabled !== false)
+        setWebhooksFeatureEnabled(info.webhooksEnabled === true)
         if (!isEdit && info.defaultImageLogoUrl) {
           setLogoUrl(current => current || info.defaultImageLogoUrl!)
         }
@@ -604,10 +606,14 @@ export default function CollectionBuilderPage() {
   }, [])
 
   useEffect(() => {
+    if (!webhooksFeatureEnabled) {
+      setValidationWebhooks([])
+      return
+    }
     listWebhooks()
       .then(hooks => setValidationWebhooks(hooks.filter(hook => hook.key === 'webhook-1')))
       .catch(() => setValidationWebhooks([]))
-  }, [])
+  }, [webhooksFeatureEnabled])
 
   useEffect(() => {
     if (!id) return
@@ -2780,6 +2786,7 @@ export default function CollectionBuilderPage() {
                   onConfigureTable={() => setWizardField(field._key)}
                   onConfigureMatrix={() => setMatrixConfigField(field._key)}
                   validationWebhooks={validationWebhooks}
+                  webhooksEnabled={webhooksFeatureEnabled}
                   onBindStudentIdWebhook={webhookId => {
                     // One validation webhook per form: apply to every Student ID field.
                     setFields(prev => prev.map(item =>
@@ -2831,6 +2838,7 @@ interface FieldCardProps {
   onConfigureMatrix: () => void
   validationWebhooks?: Webhook[]
   onBindStudentIdWebhook?: (webhookId: number | null) => void
+  webhooksEnabled?: boolean
   hideStaffOnly?: boolean
   isPendingRemove?: boolean
   collectionStatus?: CollectionStatus
@@ -2861,6 +2869,7 @@ function FieldCard({
   onConfigureMatrix,
   validationWebhooks = [],
   onBindStudentIdWebhook,
+  webhooksEnabled = false,
   hideStaffOnly = false,
   isPendingRemove = false,
   collectionStatus = 'draft',
@@ -2966,7 +2975,7 @@ function FieldCard({
               </option>
             )
           )}
-          <option value="student_id_preset">Student ID</option>
+          {webhooksEnabled && <option value="student_id_preset">Student ID</option>}
         </select>
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -3304,7 +3313,7 @@ function FieldCard({
       })()}
 
       {/* Student ID validation webhook (one per form) */}
-      {field.displayStyle === STUDENT_ID_DISPLAY_STYLE && (
+      {webhooksEnabled && field.displayStyle === STUDENT_ID_DISPLAY_STYLE && (
         <div className="pl-7">
           <div className="rounded border border-indigo-200 dark:border-indigo-900/40 bg-indigo-50 dark:bg-indigo-900/10 px-3 py-2.5 space-y-2">
             <div className="flex flex-col gap-1.5">

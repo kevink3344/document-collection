@@ -933,6 +933,7 @@ export default function CollectionFillPage() {
   // Field values: fieldId → string (JSON for complex types)
   const [values, setValues] = useState<Record<number, string>>({})
   const [studentIdStatus, setStudentIdStatus] = useState<Record<number, StudentIdStatus>>({})
+  const [webhooksFeatureEnabled, setWebhooksFeatureEnabled] = useState(false)
 
   // Submission
   const [submitting, setSubmitting] = useState(false)
@@ -1003,6 +1004,15 @@ export default function CollectionFillPage() {
     getPublicSetting('qr_code_enabled')
       .then(value => setShowQrCode(value === 'true'))
       .catch(() => setShowQrCode(false))
+  }, [])
+
+  useEffect(() => {
+    // Webhooks are opt-in; when off, Student ID fields render as plain text and
+    // are never validated.
+    fetch('/api/info')
+      .then(r => r.json() as Promise<{ webhooksEnabled?: boolean }>)
+      .then(info => setWebhooksFeatureEnabled(info.webhooksEnabled === true))
+      .catch(() => setWebhooksFeatureEnabled(false))
   }, [])
 
   useEffect(() => {
@@ -1230,6 +1240,7 @@ export default function CollectionFillPage() {
   }
 
   function getStudentIdValidationError(fieldsToCheck: CollectionField[]): string | null {
+    if (!webhooksFeatureEnabled) return null
     for (const field of fieldsToCheck) {
       if (field.displayStyle !== 'student_id' || field.id === undefined) continue
       const value = (values[field.id] ?? '').trim()
@@ -2032,6 +2043,7 @@ export default function CollectionFillPage() {
                         disabled={false}
                         collectionSlug={slug ?? ''}
                         previewMode={isPreview}
+                        webhooksEnabled={webhooksFeatureEnabled}
                         onStudentIdStatusChange={status => setStudentIdStatus(prev => {
                           if (prev[field.id!] === status) return prev
                           return { ...prev, [field.id!]: status }
@@ -2376,6 +2388,7 @@ function FieldRenderer({
   collectionSlug,
   previewMode,
   onStudentIdStatusChange,
+  webhooksEnabled = false,
 }: {
   field: CollectionField
   value: string
@@ -2384,6 +2397,7 @@ function FieldRenderer({
   collectionSlug: string
   previewMode: boolean
   onStudentIdStatusChange?: (status: StudentIdStatus) => void
+  webhooksEnabled?: boolean
 }) {
   const required = field.required && !disabled
   const optionList = field.options ?? []
@@ -2436,7 +2450,7 @@ function FieldRenderer({
         <p className="text-sm text-[#64748B] dark:text-[#94A3B8] -mt-0.5">{field.subtitle}</p>
       )}
 
-      {field.type === 'short_text' && field.displayStyle !== 'student_id' && (
+      {field.type === 'short_text' && (field.displayStyle !== 'student_id' || !webhooksEnabled) && (
         <input
           type="text"
           value={value}
@@ -2447,7 +2461,7 @@ function FieldRenderer({
         />
       )}
 
-      {field.type === 'short_text' && field.displayStyle === 'student_id' && field.id !== undefined && (
+      {field.type === 'short_text' && field.displayStyle === 'student_id' && field.id !== undefined && webhooksEnabled && (
         <StudentIdFieldInput
           value={value}
           onChange={onChange}

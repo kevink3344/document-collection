@@ -285,6 +285,8 @@ Each submission card in Individual view has two tabs: **General** and **Comments
 
 ## 13. Approval Workflows
 
+> **Feature flag — opt-in.** The Approval Workflow panel only appears when `APPROVAL_WORKFLOW_ENABLED=true` is set in the environment. Unset, empty, or misspelled values leave it hidden. Existing workflows in the database are untouched; only the UI is gated.
+
 ### Collection-Level Workflow Design
 - Approval workflows are configured on the **Collection**, not on individual submissions.
 - A collection workflow acts as the reusable **template definition** for how requests should be approved.
@@ -346,6 +348,12 @@ Each submission card in Individual view has two tabs: **General** and **Comments
 ---
 
 ## 14. Webhooks
+
+> **Feature flag — opt-in.** Webhooks are hidden unless `WEBHOOKS_ENABLED=true` is set in the environment. When off:
+> - the Settings → Webhooks panel is hidden
+> - the **Student ID** field type is not offered in the Collection Builder
+> - existing Student ID fields render as plain text and are never validated
+> - no code path queries the webhook tables, so environments that have not run `server/scripts/webhooks-sqlserver.sql` are unaffected
 
 Webhooks let an organization connect collection forms to external systems. Configure them in **Settings → Webhooks** (Administrators and Super Admins only). Each organization has at most one of each type.
 

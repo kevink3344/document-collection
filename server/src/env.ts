@@ -46,3 +46,26 @@ export function dueDateNotificationsEnabled(): boolean {
 export function workflowTimedChecksEnabled(): boolean {
   return isOptInFlag('WORKFLOW_TIMED_CHECKS_ENABLED')
 }
+
+/**
+ * The Approval Workflow feature (builder panel, response workflow surfaces).
+ *
+ * Opt-in: an unset, empty, or misspelled value leaves it OFF. Previously this
+ * defaulted to ON, so any deployment that never set the variable — staging and
+ * production included — silently showed the panel.
+ */
+export function approvalWorkflowEnabled(): boolean {
+  return isOptInFlag('APPROVAL_WORKFLOW_ENABLED')
+}
+
+/**
+ * The Webhooks feature (Settings panel, Student ID field type and validation,
+ * submission forwarding).
+ *
+ * Opt-in: an unset, empty, or misspelled value leaves it OFF. Also avoids the
+ * feature's database dependency — with the flag off, no code path touches the
+ * webhook tables, so environments that never ran the DDL are unaffected.
+ */
+export function webhooksEnabled(): boolean {
+  return isOptInFlag('WEBHOOKS_ENABLED')
+}

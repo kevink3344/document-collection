@@ -543,6 +543,8 @@ export default function SettingsPage() {
   // changes nothing is a worse outcome than not offering it. Assumed enabled until
   // /api/info says otherwise, so an older server never hides a live control.
   const [dueDateNotificationsEnabled, setDueDateNotificationsEnabled] = useState(true)
+  // Webhooks are opt-in (WEBHOOKS_ENABLED=true); default hidden until /api/info says otherwise.
+  const [webhooksFeatureEnabled, setWebhooksFeatureEnabled] = useState(false)
   const [qrCodeEnabled, setQrCodeEnabled] = useState(false)
   const [loginMode, setLoginMode] = useState<'select' | 'password' | 'maintenance'>('select')
   const [loginModeSaving, setLoginModeSaving] = useState(false)
@@ -675,10 +677,11 @@ export default function SettingsPage() {
       .then(val => setLoginMode(val === 'password' ? 'password' : val === 'maintenance' ? 'maintenance' : 'select'))
       .catch(() => setLoginMode('select'))
     fetch('/api/info')
-      .then(r => r.json() as Promise<{ loginModeOverride: string | null; dueDateNotificationsEnabled?: boolean }>)
+      .then(r => r.json() as Promise<{ loginModeOverride: string | null; dueDateNotificationsEnabled?: boolean; webhooksEnabled?: boolean }>)
       .then(info => {
         setLoginModeOverride(info.loginModeOverride)
         setDueDateNotificationsEnabled(info.dueDateNotificationsEnabled !== false)
+        setWebhooksFeatureEnabled(info.webhooksEnabled === true)
       })
       .catch(() => {})
     getPublicSetting('maintenance_message')
@@ -5220,7 +5223,7 @@ export default function SettingsPage() {
         )}
       </section>
       )
-      case 'webhooks': return user?.role !== 'super_admin' && user?.role !== 'administrator' ? null : (
+      case 'webhooks': return !webhooksFeatureEnabled || (user?.role !== 'super_admin' && user?.role !== 'administrator') ? null : (
       <WebhooksPanel />
       )
       case 'ticket-activity': return user?.role !== 'super_admin' ? null : (

@@ -1,4 +1,5 @@
 import { getDbAsync } from '../database/db'
+import { webhooksEnabled } from '../env'
 
 export type WebhookKey = 'webhook-1' | 'webhook-2'
 export type WebhookResponseShape = 'json_boolean' | 'json_string' | 'plain_text'
@@ -121,6 +122,9 @@ export async function getWebhookForField(fieldId: number): Promise<DbWebhook | n
 export async function getBindingsForFields(fieldIds: number[]): Promise<Map<number, number>> {
   const result = new Map<number, number>()
   if (fieldIds.length === 0) return result
+  // Feature disabled: report no bindings rather than querying tables that may
+  // not exist on this environment.
+  if (!webhooksEnabled()) return result
 
   const db = await getDbAsync()
   const placeholders = fieldIds.map(() => '?').join(',')

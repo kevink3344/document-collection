@@ -4,6 +4,7 @@ import { authenticateToken } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import { loadRequestUserContext, isAdminOrSuperAdmin, isAdministrator } from '../middleware/organizationAccess'
 import { upsertWebhookSchema, bindWebhookFieldSchema, webhookKeySchema } from '../lib/schemas'
+import { webhooksEnabled } from '../env'
 import {
   callValidationWebhook,
   extractResponseValue,
@@ -13,6 +14,17 @@ import {
 } from '../services/webhooks'
 
 const router = Router()
+
+// The whole feature is opt-in. When WEBHOOKS_ENABLED is not "true", every route
+// reports 404 as if it did not exist — which also means no query ever touches
+// the webhook tables on an environment that has not run the DDL.
+router.use((_req, res, next) => {
+  if (!webhooksEnabled()) {
+    res.status(404).json({ error: 'Not found' })
+    return
+  }
+  next()
+})
 
 interface WebhookRow extends DbWebhook {}
 
